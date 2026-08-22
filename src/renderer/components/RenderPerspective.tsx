@@ -260,7 +260,8 @@ interface Props {}
 
 function RenderPerspective(props: Props) {
   const { currentLocationId } = useCurrentLocationContext();
-  const { currentPerspective, currentDirectory } = useDirectoryContentContext();
+  const { currentPerspective, currentDirectory, isSearchMode } =
+    useDirectoryContentContext();
   const currentDirectoryPath = currentDirectory?.path;
   const { openPerspectiveOnboarding } = usePerspectiveOnboardingContext();
   const seenOnboardings = useSelector(getSeenPerspectiveOnboardings);
@@ -281,7 +282,10 @@ function RenderPerspective(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPerspective, currentLocationId]);
 
-  const showWelcomePanel = !currentLocationId;
+  // In search mode results may reference entries from multiple locations
+  // (global search) or none at all (Everything search with no location
+  // opened) — the perspective must render even without a current location.
+  const showWelcomePanel = !currentLocationId && !isSearchMode;
 
   function getPerspectiveComponent() {
     const wrap = (id: string, node: React.ReactNode) => (

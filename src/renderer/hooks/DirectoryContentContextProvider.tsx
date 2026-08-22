@@ -1367,6 +1367,10 @@ export const DirectoryContentContextProvider = ({
     } else {
       isSearchMode.current = true;
       searchQuery.current = sQuery;
+      // Clear a leftover search FILTER (SearchAutocomplete 'filter:' action) —
+      // otherwise SortedDirContextProvider keeps filtering the fresh results
+      // by the stale needle and the result list appears empty.
+      dispatch(AppActions.setSearchFilter(undefined));
       forceUpdate();
     }
   }

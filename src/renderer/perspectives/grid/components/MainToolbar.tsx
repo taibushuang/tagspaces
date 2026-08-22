@@ -33,11 +33,13 @@ import {
   SortingIcon,
   TagIcon,
   UnSelectedIcon,
+  VersionCleanupIcon,
 } from '-/components/CommonIcons';
 import TsToolbarButton from '-/components/TsToolbarButton';
 import ZoomComponent from '-/components/ZoomComponent';
 import { useAiGenerationDialogContext } from '-/components/dialogs/hooks/useAiGenerationDialogContext';
 import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
+import { useFileVersionCleanupDialogContext } from '-/components/dialogs/hooks/useFileVersionCleanupDialogContext';
 import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
@@ -87,7 +89,7 @@ function MainToolbar(props: Props) {
   const theme = useTheme();
   const { openEntry, openedEntry, fileChanged, actuallyCloseFiles } =
     useOpenedEntryContext();
-  const { loadParentDirectoryContent, currentDirectoryPath } =
+  const { loadParentDirectoryContent, currentDirectoryPath, isSearchMode } =
     useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const { downloadFsEntry } = useIOActionsContext();
@@ -96,6 +98,7 @@ function MainToolbar(props: Props) {
   const { currentLocation } = useCurrentLocationContext();
   const { openDeleteMultipleEntriesDialog } =
     useDeleteMultipleEntriesDialogContext();
+  const { openFileVersionCleanupDialog } = useFileVersionCleanupDialogContext();
 
   function showProperties() {
     if (openedEntry?.path === currentDirectoryPath) {
@@ -253,6 +256,19 @@ function MainToolbar(props: Props) {
             <DeleteIcon />
           </TsToolbarButton>
         )}
+        {isSearchMode &&
+          !currentLocation?.isReadOnly &&
+          selectedEntries.length > 0 && (
+            <TsToolbarButton
+              tooltip={t('core:fileVersionCleanupTooltip')}
+              title={t('core:fileVersionCleanup')}
+              aria-label={t('core:fileVersionCleanup')}
+              data-tid={prefixDataTID + 'PerspectiveVersionCleanup'}
+              onClick={() => openFileVersionCleanupDialog(selectedEntries)}
+            >
+              <VersionCleanupIcon />
+            </TsToolbarButton>
+          )}
         {!hideProFeatures &&
           Pro &&
           currentLocation?.haveObjectStoreSupport() && (

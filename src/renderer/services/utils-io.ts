@@ -1249,7 +1249,10 @@ export function mergeByPath(
       return {
         ...e,
         meta: { ...(e.meta || {}), ...extraMeta },
-        ...(extraMeta.id && { uuid: extraMeta.id }),
+        // Only adopt the meta id when the entry has no uuid of its own —
+        // buildMetaLookup generates a random id for meta without one, which
+        // would otherwise churn the entry's identity on every enhance pass.
+        ...(extraMeta.id && !e.uuid && { uuid: extraMeta.id }),
       };
     }
     return e;

@@ -1,0 +1,90 @@
+name: Package Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to package (e.g. 6.13.10)'
+        required: false
+        default: ''
+  push:
+    branches: [develop, master]
+    paths:
+      - 'release/app/package.json'
+      - 'src/**'
+      - 'resources/builder.json'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  package-windows:
+    name: Package TagSpaces for Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          submodules: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            release/app/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json', 'release/app/package-lock.json') }}
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd release/app && npm install && cd ../..
+
+      - name: Generate extensions
+        run: npm run generate-extensions
+
+      - name: Build application
+        run: |
+          npx ts-node ./.erb/scripts/clean.js
+          npm run build
+
+      - name: Package for Windows
+        run: npm run package-win
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: tagspaces-win-x64
+          path: builds/tagspaces-win-x64-*.zip
+          if-no-files-found: error
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: tagspaces-win-x64-installer
+          path: builds/tagspaces-win-x64-*.exe
+          if-no-files-found: ignore
+
+      - name: Verify koffi module included
+        shell: pwsh
+        run: |
+          $zipPath = Get-ChildItem -Path builds/tagspaces-win-x64-*.zip | Select-Object -First 1
+          if (-not $zipPath) {
+            Write-Error "No zip file found in builds/"
+            exit 1
+          }
+          Write-Host "Checking koffi in $zipPath..."
+          $entries = & unzip -l $zipPath.FullName | Select-String -Pattern "koffi"
+          if ($entries) {
+            Write-Host "✅ koffi module found:"
+            $entries | ForEach-Object { Write-Host $_ }
+          } else {
+            Write-Error "❌ koffi module NOT found in package!"
+            exit 1
+          }

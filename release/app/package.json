@@ -1,7 +1,7 @@
 {
   "name": "tagspaces",
   "productName": "TagSpaces",
-  "version": "6.13.9",
+  "version": "6.15.9",
   "description": "Offline file organizer and browser with tagging support.",
   "homepage": "https://www.tagspaces.org",
   "author": {
@@ -20,6 +20,7 @@
     "@tagspaces/extensions": "1.0.254",
     "@tagspaces/tagspaces-common-node": "4.8.8",
     "@tagspaces/tagspaces-ws": "4.8.8",
+    "koffi": "3.1.4",
     "wasm-vips": "0.0.17",
     "ws": "8.19.0"
   },

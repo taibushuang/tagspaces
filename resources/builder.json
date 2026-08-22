@@ -55,7 +55,7 @@
   "copyright": "Copyright © 2026 TagSpaces GmbH",
   "artifactName": "${name}-${os}-${arch}-${version}.${ext}",
   "win": {
-    "target": ["nsis", "zip"],
+    "target": ["zip"],
     "icon": "assets/icon.ico"
   },
   "nsis": {
@@ -79,9 +79,18 @@
   },
   "linux": {
     "target": [
-      { "target": "deb", "arch": ["x64", "arm64"] },
-      { "target": "tar.gz", "arch": ["x64", "arm64"] },
-      { "target": "appImage", "arch": ["x64"] }
+      {
+        "target": "deb",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "tar.gz",
+        "arch": ["x64", "arm64"]
+      },
+      {
+        "target": "appImage",
+        "arch": ["x64"]
+      }
     ],
     "category": "Office",
     "icon": "assets/icon.icns"
@@ -102,11 +111,16 @@
   "appImage": {
     "license": "resources/license_en.txt"
   },
-
   "directories": {
     "app": "release/app",
     "buildResources": "assets",
     "output": "../builds"
   },
-  "extraResources": ["./assets/**"]
+  "extraResources": [
+    "./assets/**",
+    {
+      "from": "resources/everything",
+      "to": "everything"
+    }
+  ]
 }

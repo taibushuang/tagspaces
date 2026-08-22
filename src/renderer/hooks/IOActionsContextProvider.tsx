@@ -98,6 +98,11 @@ type IOActionsContextData = {
     open?: boolean,
     skipSelection?: boolean,
   ) => Promise<boolean>;
+  createFolderSymlink: (
+    targetPath: string,
+    linkName: string,
+    directoryPath: string,
+  ) => Promise<boolean>;
   deleteEntries: (...entries: TS.FileSystemEntry[]) => Promise<boolean>;
   deleteDirectory: (directoryPath: string) => Promise<boolean>;
   deleteFile: (filePath: string, uuid: string) => Promise<boolean>;
@@ -270,6 +275,7 @@ type IOActionsContextData = {
 
 export const IOActionsContext = createContext<IOActionsContextData>({
   createDirectory: undefined,
+  createFolderSymlink: undefined,
   deleteEntries: undefined,
   deleteDirectory: undefined,
   deleteFile: undefined,
@@ -339,7 +345,7 @@ export const IOActionsContextProvider = ({
     deleteEntriesPromise,
   } = usePlatformFacadeContext();
   const { setActions } = usePerspectiveActionsContext();
-  const { setReflectActions } = useEditedEntryContext();
+  const { setReflectActions, reflectAddEntry } = useEditedEntryContext();
   const { setReflectMetaActions } = useEditedEntryMetaContext();
   const {
     currentDirectoryPath,
@@ -433,6 +439,63 @@ export const IOActionsContextProvider = ({
         return false;
         // dispatch stopLoadingAnimation
       });
+  }
+
+  function createFolderSymlink(
+    targetPath: string,
+    linkName: string,
+    directoryPath: string,
+  ): Promise<boolean> {
+    const linkPath = joinPaths(
+      currentLocation.getDirSeparator(),
+      directoryPath,
+      linkName,
+    );
+    return currentLocation.checkDirExist(linkPath).then((exist) => {
+      if (exist) {
+        showNotification(
+          t('core:directoryExistsAlert', { path: linkPath }),
+          'warning',
+          true,
+        );
+        return false;
+      }
+      return currentLocation
+        .createSymlinkPromise(targetPath, linkPath)
+        .then((result) => {
+          if (result && result.success) {
+            return getAllPropertiesPromise(linkPath).then(
+              (fsEntry: TS.FileSystemEntry) => {
+                reflectAddEntry(fsEntry, false);
+                showNotification(
+                  t('core:createFolderReferenceSuccess', { name: linkName }),
+                  'default',
+                  true,
+                );
+                return true;
+              },
+            );
+          }
+          const errorMsg =
+            result && result.error ? result.error : 'Unknown error';
+          showNotification(
+            t('core:createFolderReferenceFailed', { error: errorMsg }),
+            'error',
+            true,
+          );
+          return false;
+        })
+        .catch((error) => {
+          showNotification(
+            t('core:createFolderReferenceFailed', {
+              error: error.message || error,
+            }),
+            'error',
+            true,
+          );
+          return false;
+        });
+    });
   }
 
   function deleteEntries(...entries: TS.FileSystemEntry[]): Promise<boolean> {
@@ -2908,6 +2971,7 @@ export const IOActionsContextProvider = ({
   const context = useMemo(() => {
     return {
       createDirectory,
+      createFolderSymlink,
       deleteEntries,
       deleteDirectory,
       deleteFile,

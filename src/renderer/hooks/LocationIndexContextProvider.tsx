@@ -23,8 +23,13 @@ import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
 import { useFSWatcherContext } from '-/hooks/useFSWatcherContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { Pro } from '-/pro';
-import { getEnableWS, getTagDelimiter } from '-/reducers/settings';
+import {
+  getEnableWS,
+  getEverythingPath,
+  getTagDelimiter,
+} from '-/reducers/settings';
 import Search from '-/services/search';
+import { searchWithEverything } from '-/services/everythingSearch';
 import { extractPDFcontent } from '-/services/thumbsgenerator';
 import {
   executePromisesInBatches,
@@ -105,7 +110,7 @@ type LocationIndexContextData = {
 };
 
 export const LocationIndexContext = createContext<LocationIndexContextData>({
-  //index: [],
+  // index: [],
   indexLoadedOn: undefined,
   indexExpired: () => true,
   isIndexing: undefined,
@@ -128,9 +133,9 @@ export type LocationIndexContextProviderProps = {
   children: React.ReactNode;
 };
 
-export const LocationIndexContextProvider = ({
+export function LocationIndexContextProvider({
   children,
-}: LocationIndexContextProviderProps) => {
+}: LocationIndexContextProviderProps) {
   const { t } = useTranslation();
 
   const {
@@ -149,6 +154,10 @@ export const LocationIndexContextProvider = ({
 
   const enableWS = useSelector(getEnableWS);
   const tagDelimiter: string = useSelector(getTagDelimiter);
+  const useEverythingSearch = useSelector(
+    (state: any) => state.settings?.useEverythingSearch !== false,
+  );
+  const everythingPath = useSelector(getEverythingPath);
 
   const isIndexing = useRef<string>(undefined);
   const [indexingProgress, setIndexingProgress] = useState<
@@ -309,7 +318,8 @@ export const LocationIndexContextProvider = ({
         // and re-enhance the file from disk every time.
         setIndex(directoryIndex);
         return directoryIndex;
-      } else if (!location?.isReadOnly) {
+      }
+      if (!location?.isReadOnly) {
         // Read-only locations have no way to produce or persist a fresh
         // index, so falling through to createLocationIndex only risks
         // returning an empty/failed walker result. Prefer returning
@@ -359,7 +369,7 @@ export const LocationIndexContextProvider = ({
               foundEntriesLinkingToId.push(entry);
             }
           } catch (e) {
-            console.log('Link not valid: ' + link.href);
+            console.log(`Link not valid: ${link.href}`);
           }
         }
       }),
@@ -436,12 +446,13 @@ export const LocationIndexContextProvider = ({
             .then((result) => {
               if (result && result.success) {
                 return loadIndexFromDisk(dirPath, param.locationID);
-              } else if (result && result.error) {
+              }
+              if (result && result.error) {
                 if (result.error === 'AbortError') {
                   return undefined;
                 }
                 console.error(
-                  'createDirectoryIndexInWorker failed:' + result.error,
+                  `createDirectoryIndexInWorker failed:${result.error}`,
                 );
               } else {
                 console.error(
@@ -509,7 +520,7 @@ export const LocationIndexContextProvider = ({
       if (entryDir === lastDir) return;
       lastDir = entryDir;
       const shortDir =
-        entryDir.length > 60 ? '…' + entryDir.slice(-59) : entryDir;
+        entryDir.length > 60 ? `…${entryDir.slice(-59)}` : entryDir;
       setIndexingProgress({ count, folder: shortDir });
     };
 
@@ -542,7 +553,7 @@ export const LocationIndexContextProvider = ({
         ...e,
         path: cleanRootPath(e.path, param.path, sep),
       }));
-      console.log('Attempting incremental index for: ' + param.path);
+      console.log(`Attempting incremental index for: ${param.path}`);
       const result = await createIncrementalIndex(
         indexParam,
         mode,
@@ -567,7 +578,7 @@ export const LocationIndexContextProvider = ({
     if (!loc.isReadOnly) {
       persistIndex(param, directoryIndex).then((success) => {
         if (success) {
-          console.log('Index generated in folder: ' + param.path);
+          console.log(`Index generated in folder: ${param.path}`);
         }
       });
     }
@@ -599,9 +610,9 @@ export const LocationIndexContextProvider = ({
         return index;
       })
       .catch((err) => {
-        //lastError.current = err;
-        console.log('Error loading text content ' + err);
-        return false; //switchCurrentLocationType();
+        // lastError.current = err;
+        console.log(`Error loading text content ${err}`);
+        return false; // switchCurrentLocationType();
       });
   }
 
@@ -673,7 +684,7 @@ export const LocationIndexContextProvider = ({
         .catch((err) => {
           isIndexing.current = undefined;
           setIndexingProgress(undefined);
-          //lastError.current = err;
+          // lastError.current = err;
           forceUpdate();
           return false;
         });
@@ -688,11 +699,11 @@ export const LocationIndexContextProvider = ({
     const searchingLocation = workSpace
       ? locations.filter((l) => l.workSpaceId === workSpace.uuid)
       : locations;
-    for (let location of searchingLocation) {
+    for (const location of searchingLocation) {
       try {
         if (!location.disableIndexing) {
           const locationPath = await getLocationPath(location);
-          isIndexing.current = location.uuid; //locationPath
+          isIndexing.current = location.uuid; // locationPath
           forceUpdate();
           await createDirectoryIndexWrapper(
             { path: locationPath, locationID: location.uuid },
@@ -893,7 +904,7 @@ export const LocationIndexContextProvider = ({
       .catch((err) => {
         console.log('Searching Index failed: ', err);
         showNotification(
-          t('core:searchingFailed') + ' ' + err.message,
+          `${t('core:searchingFailed')} ${err.message}`,
           'warning',
           true,
         );
@@ -908,9 +919,60 @@ export const LocationIndexContextProvider = ({
       return;
     }
 
+    // Try Everything search first on Windows for local locations
+    if (
+      AppConfig.isElectron &&
+      AppConfig.isWin &&
+      useEverythingSearch &&
+      currentLocation.type !== locationType.TYPE_CLOUD &&
+      !currentLocation.haveObjectStoreSupport() &&
+      !currentLocation.haveWebDavSupport()
+    ) {
+      getLocationPath(currentLocation)
+        .then((currentPath) => {
+          searchWithEverything(
+            searchQuery,
+            locations,
+            currentPath,
+            index.current,
+            everythingPath,
+          )
+            .then((response) => {
+              if (response.available) {
+                setSearchResults(response.results);
+                enhanceSearchEntries(response.results);
+                hideNotifications();
+                return;
+              }
+              // Fall back to index-based search, keeping the reason visible
+              console.warn(
+                'Everything not available, falling back to index search:',
+                response.error,
+              );
+              fallbackSearchLocationIndex(searchQuery, response.error);
+            })
+            .catch((err) => {
+              console.warn('Everything search failed, falling back:', err);
+              fallbackSearchLocationIndex(searchQuery, err?.message);
+            });
+        })
+        .catch((err) => {
+          console.warn('Everything search failed, falling back:', err);
+          fallbackSearchLocationIndex(searchQuery, err?.message);
+        });
+      return;
+    }
+
+    fallbackSearchLocationIndex(searchQuery);
+  }
+
+  function fallbackSearchLocationIndex(
+    searchQuery: TS.SearchQuery,
+    everythingError: string = undefined,
+  ) {
     const isCloudLocation = currentLocation.type === locationType.TYPE_CLOUD;
     showNotification(
-      t('core:searching') + ': ' + currentLocation.name,
+      `${t('core:searching')}: ${currentLocation.name}`,
       'default',
       false,
       'TIDSearching',
@@ -949,7 +1011,7 @@ export const LocationIndexContextProvider = ({
               index.current.length < 1 ||
               indexAge > maxIndexAge.current)))
       ) {
-        console.log('Start creating index for : ' + currentPath);
+        console.log(`Start creating index for : ${currentPath}`);
         // Surface the indexing snackbar (with live progress + cancel)
         // while the walker runs. Without this, search-triggered re-index
         // on Electron + S3 walks silently because PageNotification gates
@@ -986,6 +1048,16 @@ export const LocationIndexContextProvider = ({
       });
 
       hideNotifications();
+      if (everythingError) {
+        // Sticky (autohide=false): the user needs time to read/copy the reason
+        showNotification(
+          t('core:everythingSearchUnavailable', {
+            reason: everythingError,
+          }),
+          'warning',
+          false,
+        );
+      }
     }, 50);
   }
 
@@ -997,6 +1069,60 @@ export const LocationIndexContextProvider = ({
     setSearchResults([]);
     showNotification(t('core:searching'), 'default', false, 'TIDSearching');
 
+    // Try Everything search first on Windows
+    if (AppConfig.isElectron && AppConfig.isWin && useEverythingSearch) {
+      searchWithEverything(
+        searchQuery,
+        locations,
+        undefined,
+        index.current,
+        everythingPath,
+      )
+        .then((response) => {
+          if (response.available) {
+            setSearchResults(response.results);
+            enhanceSearchEntries(response.results);
+            console.timeEnd('globalSearch');
+            if (
+              response.totalCount &&
+              response.totalCount > (searchQuery.maxSearchResults || 200)
+            ) {
+              showNotification(
+                `Global search finished. Showing ${response.results.length} of ${response.totalCount} matches.`,
+                'default',
+                true,
+              );
+            } else {
+              showNotification(t('Global search completed'), 'default', true);
+            }
+            console.log('Global search completed via Everything!');
+            isIndexing.current = undefined;
+            setIndexingProgress(undefined);
+            forceUpdate();
+            return;
+          }
+          // Fall back to index-based search, keeping the reason visible
+          console.warn(
+            'Everything not available, falling back to index search:',
+            response.error,
+          );
+          fallbackSearchAllLocations(searchQuery, workSpace, response.error);
+        })
+        .catch((err) => {
+          console.warn('Everything search failed, falling back:', err);
+          fallbackSearchAllLocations(searchQuery, workSpace, err?.message);
+        });
+      return;
+    }
+
+    fallbackSearchAllLocations(searchQuery, workSpace);
+  }
+
+  function fallbackSearchAllLocations(
+    searchQuery: TS.SearchQuery,
+    workSpace: TS.WorkSpace = undefined,
+    everythingError: string = undefined,
+  ) {
     walkingRef.current = true;
     let searchResults = [];
     let maxSearchResultReached = false;
@@ -1016,7 +1142,7 @@ export const LocationIndexContextProvider = ({
       const isCloudLocation = location.type === locationType.TYPE_CLOUD;
       let directoryIndex = await loadIndexFromDisk(nextPath, location.uuid);
       showNotification(
-        t('core:searching') + ' ' + location.name,
+        `${t('core:searching')} ${location.name}`,
         'default',
         false,
         'TIDSearching',
@@ -1028,7 +1154,7 @@ export const LocationIndexContextProvider = ({
           directoryIndex.length < 1 ||
           searchQuery.forceIndexing)
       ) {
-        console.log('Creating index for : ' + nextPath);
+        console.log(`Creating index for : ${nextPath}`);
         // Set per-location so the snackbar shows the currently-active
         // name; the single global clear happens after the whole batch
         // below (CONCURRENCY > 1 means a per-location clear would hide
@@ -1076,11 +1202,33 @@ export const LocationIndexContextProvider = ({
       .then(() => {
         enhanceSearchEntries(searchResults);
         console.timeEnd('globalSearch');
-        if (maxSearchResultReached) {
+        if (searchingLocations.length === 0) {
+          // Nothing was searched at all — tell the user why instead of
+          // the misleading "Global search completed" message.
+          // Sticky so the reason can be read and copied.
           showNotification(
-            'Global search finished, reaching the max. search results. The first ' +
-              searchResults.length +
-              ' entries are listed.',
+            (everythingError
+              ? `${t('core:everythingSearchUnavailable', {
+                  reason: everythingError,
+                })} `
+              : '') + t('core:noLocationsForSearch'),
+            'warning',
+            false,
+          );
+        } else if (everythingError) {
+          // Sticky so the reason can be read and copied.
+          showNotification(
+            t('core:everythingSearchUnavailable', {
+              reason: everythingError,
+            }),
+            'warning',
+            false,
+          );
+        } else if (maxSearchResultReached) {
+          showNotification(
+            `Global search finished, reaching the max. search results. The first ${
+              searchResults.length
+            } entries are listed.`,
             'default',
             true,
           );
@@ -1119,7 +1267,7 @@ export const LocationIndexContextProvider = ({
     const parentExists = await cLocation.checkDirExist(directoryPath);
     if (!parentExists) {
       console.log(
-        'Skipping index persist — directory does not exist: ' + directoryPath,
+        `Skipping index persist — directory does not exist: ${directoryPath}`,
       );
       return false;
     }
@@ -1164,12 +1312,12 @@ export const LocationIndexContextProvider = ({
         )
         .then(() => {
           console.log(
-            'Index persisted for: ' + directoryPath + ' to ' + folderIndexPath,
+            `Index persisted for: ${directoryPath} to ${folderIndexPath}`,
           );
           return true;
         })
         .catch((err) => {
-          console.log('Error saving the index for ' + folderIndexPath, err);
+          console.log(`Error saving the index for ${folderIndexPath}`, err);
         });
 
       if (hasFullText) {
@@ -1180,11 +1328,11 @@ export const LocationIndexContextProvider = ({
             true,
           )
           .then(() => {
-            console.log('Fulltext index persisted to ' + folderFullTextPath);
+            console.log(`Fulltext index persisted to ${folderFullTextPath}`);
           })
           .catch((err) => {
             console.log(
-              'Error saving fulltext index for ' + folderFullTextPath,
+              `Error saving fulltext index for ${folderFullTextPath}`,
               err,
             );
           });
@@ -1260,7 +1408,7 @@ export const LocationIndexContextProvider = ({
                   );
                 })
                 .catch((e) => {
-                  console.log('cannot load json:' + folderPath, e);
+                  console.log(`cannot load json:${folderPath}`, e);
                   return undefined;
                 });
             }
@@ -1295,4 +1443,4 @@ export const LocationIndexContextProvider = ({
       {children}
     </LocationIndexContext.Provider>
   );
-};
+}

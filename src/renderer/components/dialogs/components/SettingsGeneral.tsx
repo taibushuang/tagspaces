@@ -84,6 +84,8 @@ import MenuItem from '@mui/material/MenuItem';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import {
+  Suspense,
+  lazy,
   useContext,
   useEffect,
   useMemo,
@@ -94,6 +96,11 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import MapTileServerDialog from '../MapTileServerDialog';
+
+// Lazy-loaded to avoid an import cycle (dialog → Ts* components → settings).
+const EverythingDebugDialog = lazy(
+  () => import('-/components/dialogs/EverythingDebugDialog'),
+);
 
 function SettingsGeneral() {
   const { i18n, t } = useTranslation();
@@ -122,6 +129,8 @@ function SettingsGeneral() {
   }>({ available: false, weak: false });
   const [encryptBusy, setEncryptBusy] = useState<boolean>(false);
   const [passwordSetupOpen, setPasswordSetupOpen] = useState<boolean>(false);
+  const [everythingDebugOpen, setEverythingDebugOpen] =
+    useState<boolean>(false);
   const tileServers: Array<TS.MapTileServer> = useSelector(getMapTileServers);
   const [tileServerDialog, setTileServerDialog] = useState<any>(undefined);
   const wsAlive = useRef<boolean>(null);
@@ -433,15 +442,15 @@ function SettingsGeneral() {
     if (key) {
       openConfirmDialog(
         t('core:confirm'),
-        t('core:confirm' + key + 'Deletion'),
+        t(`core:confirm${key}Deletion`),
         (result) => {
           if (result) {
             delAllHistory(key);
           }
         },
-        'cancelDelete' + key + 'Dialog',
-        'confirmDelete' + key + 'Dialog',
-        'confirmDelete' + key + 'DialogContent',
+        `cancelDelete${key}Dialog`,
+        `confirmDelete${key}Dialog`,
+        `confirmDelete${key}DialogContent`,
       );
     }
   }
@@ -557,7 +566,7 @@ function SettingsGeneral() {
                               borderBottomLeftRadius:
                                 AppConfig.defaultCSSRadius,
                             }}
-                          ></Box>
+                          />
                           <Box
                             component="div"
                             sx={{
@@ -570,7 +579,7 @@ function SettingsGeneral() {
                                 AppConfig.defaultCSSRadius,
                               marginRight: '10px',
                             }}
-                          ></Box>
+                          />
                         </ListItemIcon>
                         <ListItemText>{themeName}</ListItemText>
                       </div>
@@ -616,7 +625,7 @@ function SettingsGeneral() {
                               borderBottomLeftRadius:
                                 AppConfig.defaultCSSRadius,
                             }}
-                          ></Box>
+                          />
                           <Box
                             component="div"
                             sx={{
@@ -629,7 +638,7 @@ function SettingsGeneral() {
                                 AppConfig.defaultCSSRadius,
                               marginRight: '10px',
                             }}
-                          ></Box>
+                          />
                         </ListItemIcon>
                         <ListItemText>{themeName}</ListItemText>
                       </div>
@@ -656,10 +665,9 @@ function SettingsGeneral() {
         },
         {
           label: t('core:fileTaggingSetting'),
-          description:
-            t('core:tagsInFilenameExplanation') +
-            ' ' +
-            t('core:tagsInSidecarFileExplanation'),
+          description: `${t('core:tagsInFilenameExplanation')} ${t(
+            'core:tagsInSidecarFileExplanation',
+          )}`,
           jsx: (
             <ListItem
               title={
@@ -701,7 +709,7 @@ function SettingsGeneral() {
                     </div>
                   </TsToggleButton>
                   <TsToggleButton
-                    value={true}
+                    value
                     data-tid="settingsSetPersistTagsInSidecarFile"
                     sx={{
                       borderTopLeftRadius: 0,
@@ -728,10 +736,9 @@ function SettingsGeneral() {
         },
         !persistTagsInSidecarFile && {
           label: t('core:fileNameTagSetting'),
-          description:
-            t('core:fileNameBeginTagPlaceExplanation') +
-            ' ' +
-            t('core:fileNameEndTagPlaceExplanation'),
+          description: `${t('core:fileNameBeginTagPlaceExplanation')} ${t(
+            'core:fileNameEndTagPlaceExplanation',
+          )}`,
           jsx: (
             <ListItem
               title={
@@ -780,7 +787,7 @@ function SettingsGeneral() {
                   </Box>
                 </TsToggleButton>
                 <TsToggleButton
-                  value={true}
+                  value
                   data-tid="fileNameEndTagTID"
                   sx={{
                     borderTopLeftRadius: 0,
@@ -1116,6 +1123,40 @@ function SettingsGeneral() {
             </ListItem>
           ),
         },
+        AppConfig.isElectron &&
+          AppConfig.isWin && {
+            label: t('core:useEverythingSearch'),
+            description: t('core:useEverythingSearchInfo'),
+            jsx: (
+              <ListItem>
+                <ListItemText
+                  primary={
+                    <Typography>
+                      {t('core:useEverythingSearch')}
+                      <InfoIcon tooltip={t('core:useEverythingSearchInfo')} />
+                    </Typography>
+                  }
+                />
+                <TsSwitch
+                  data-tid="settingsUseEverythingSearch"
+                  onClick={() =>
+                    dispatch(
+                      SettingsActions.setUseEverythingSearch(
+                        !settings.useEverythingSearch,
+                      ),
+                    )
+                  }
+                  checked={settings.useEverythingSearch !== false}
+                />
+                <TsButton
+                  data-tid="settingsEverythingDebugTID"
+                  onClick={() => setEverythingDebugOpen(true)}
+                >
+                  {t('core:everythingDebugTitle')}
+                </TsButton>
+              </ListItem>
+            ),
+          },
         {
           label: t('enableMobileMode'),
           jsx: (
@@ -1137,13 +1178,11 @@ function SettingsGeneral() {
               <ListItemText primary={t('enableWS')} />
               {AppConfig.isElectron && (
                 <TsTooltip
-                  title={
-                    t('core:serviceStatus') +
-                    ': ' +
-                    (wsAlive.current
+                  title={`${t('core:serviceStatus')}: ${
+                    wsAlive.current
                       ? t('core:available')
-                      : t('core:notAvailable'))
-                  }
+                      : t('core:notAvailable')
+                  }`}
                 >
                   {wsAlive.current === null ? (
                     <CircularProgress size={12} />
@@ -1416,16 +1455,14 @@ function SettingsGeneral() {
                   {workSpaces.map((workSpace) => (
                     <ListItem key={workSpace.uuid}>
                       <ListItemText
-                        primary={
-                          workSpace.fullName + ' - ' + workSpace.shortName
-                        }
+                        primary={`${workSpace.fullName} - ${workSpace.shortName}`}
                       />
                       <TsIconButton
-                        aria-label={'Edit workspace'}
+                        aria-label="Edit workspace"
                         aria-haspopup="true"
                         edge="end"
                         disabled={!Pro}
-                        data-tid={'workSpaceEdit_' + workSpace.shortName}
+                        data-tid={`workSpaceEdit_${workSpace.shortName}`}
                         onClick={(event) =>
                           editWorkSpacesClick(event, workSpace)
                         }
@@ -1636,7 +1673,7 @@ function SettingsGeneral() {
                         aria-label={t('core:options')}
                         aria-haspopup="true"
                         edge="end"
-                        data-tid={'tileServerEdit_' + tileServer.name}
+                        data-tid={`tileServerEdit_${tileServer.name}`}
                         onClick={(event) =>
                           handleEditTileServerClick(
                             event,
@@ -1749,7 +1786,7 @@ function SettingsGeneral() {
           ),
         },
         {
-          label: t('Danger Zone') + ' ' + t('core:resetSettings'),
+          label: `${t('Danger Zone')} ${t('core:resetSettings')}`,
           jsx: (
             <ListItem>
               <ListItemText primary={<>{t('Danger Zone')}</>} />
@@ -1824,7 +1861,7 @@ function SettingsGeneral() {
     if (!filterText.trim()) return settingsItems;
     const lowerFilter = filterText.toLowerCase();
     return settingsItems.filter((item) =>
-      (item.label + ' ' + (item.description || ''))
+      `${item.label} ${item.description || ''}`
         .toLowerCase()
         .includes(lowerFilter),
     );
@@ -1865,7 +1902,7 @@ function SettingsGeneral() {
         }}
       >
         {filteredSettings.map((item, i) => (
-          <div key={'settings' + i}>{item.jsx}</div>
+          <div key={`settings${i}`}>{item.jsx}</div>
         ))}
         {displayColorPicker && (
           <ColorPickerDialog
@@ -1909,6 +1946,14 @@ function SettingsGeneral() {
           onCancel={() => setPasswordSetupOpen(false)}
           onSubmit={submitPasswordSetup}
         />
+        {everythingDebugOpen && (
+          <Suspense fallback={null}>
+            <EverythingDebugDialog
+              open={everythingDebugOpen}
+              onClose={() => setEverythingDebugOpen(false)}
+            />
+          </Suspense>
+        )}
       </List>
     </>
   );

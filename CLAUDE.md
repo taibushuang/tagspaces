@@ -115,6 +115,17 @@ tagspaces-common-node (Node.js fs implementation, injected as IO provider)
   - **Non-worker path** (`createNotWorkerIndex`): Everything else — S3, WebDAV, Capacitor, web app, and Electron with WS disabled. Runs in renderer thread.
 - **Search logic** lives in `@tagspaces/tagspaces-search` (pure JS, works on all platforms). The renderer's `src/renderer/services/search.ts` is a thin wrapper.
 
+### Everything integration (Windows desktop only)
+
+Global/location/folder search first tries the voidtools **Everything** engine before the index fallback. Chain:
+
+- `src/renderer/hooks/LocationIndexContextProvider.tsx` — `searchAllLocations()` / `searchLocationIndex()` gate on `AppConfig.isElectron && AppConfig.isWin && useEverythingSearch` (Redux setting, default on, `getUseEverythingSearch`). On `available:false` they call `fallbackSearchAllLocations` / `fallbackSearchLocationIndex` **and pass the Everything error along** so the final snackbar shows `everythingSearchUnavailable` instead of the misleading "Global search completed". Zero connected locations → `noLocationsForSearch` warning.
+- `src/renderer/services/everythingSearch.ts` — `translateToEverythingQuery()` (TS.SearchQuery → Everything syntax: `ext:`, `size:`, `dm:`/`dc:` date ranges, `path:` prefix for folder/location scope), `mergeLocationMetadata()` (enrich results with location index meta), `searchWithEverything()` (IPC client).
+- `src/main/everythingSdk.ts` — lazy-loaded on win32 only (top comment explains why). koffi bindings to `Everything_*W` APIs. DLL discovery: registry App Paths → default install dirs; accepts `Everything64.dll`/`Everything32.dll`/`Everything.dll`. **Auto-remediation**: when the DB isn't loaded (Everything.exe not running) `triggerAutoStart()` spawns `Everything.exe -startup` and polls `Everything_IsDBLoaded` (throttled 60s); negative availability is not cached so the next search re-probes. Keeps a 300-entry debug ring buffer + last query/error state, exposed via `getDebugInfo()`.
+- IPC (`src/main/mainEvents.ts`, channels in `src/main/preload.ts`): `searchEverything`, `getEverythingDebugInfo`, `everythingEnsureRunning`, `installEverything` (winget `voidtools.Everything`). Non-Windows platforms register stubs that always return unavailable.
+- Diagnostics UI: `src/renderer/components/dialogs/EverythingDebugDialog.tsx` — opened from Settings → General next to the Everything toggle. Polls `getEverythingDebugInfo` every 1s: installed/running/DLL/DB status chips, exe/dll paths, last query/error, test-search box, live log, start/install buttons.
+- koffi native binaries are platform-specific — the packaging pipeline already force-installs `@koromix/koffi-win32-x64` (see `scripts/install-koffi-platform.js`); do not remove it from the packaged app.
+
 ### Renderer gotchas
 
 - **`createNotWorkerIndex` must inject `extractPDFcontent`** into the `indexParam` when `extractText` is true — imported from `src/renderer/services/thumbsgenerator.ts` (which uses pdfjs-dist). Without it, PDFs in S3/mobile/non-worker locations get no fulltext.

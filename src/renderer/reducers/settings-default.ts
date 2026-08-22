@@ -100,6 +100,8 @@ export default {
   addTagsToLibrary: true,
   interfaceLanguage: 'en',
   useTrashCan: true,
+  useEverythingSearch: true,
+  everythingPath: undefined, // custom Everything install dir / exe / dll path (Windows)
   encryptCredentialsAtRest: false,
   encryptCredentialsKeySource: 'off',
   useOCR: false,

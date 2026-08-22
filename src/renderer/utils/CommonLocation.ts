@@ -648,6 +648,30 @@ export class CommonLocation implements TS.Location {
     return Promise.reject(new Error('createDirectoryPromise: not implemented'));
   };
 
+  createSymlinkPromise = (
+    targetPath: string,
+    linkPath: string,
+  ): Promise<any> => {
+    if (this.isReadOnly) {
+      return Promise.reject(new Error('read only Location'));
+    }
+    const offlineReject = offlineRejectionIfRemote(this, 'create symlink');
+    if (offlineReject) return offlineReject;
+    if (this.ioAPI) {
+      return Promise.reject(
+        new Error('createSymlinkPromise: not supported for this location type'),
+      );
+    }
+    if (AppConfig.isElectron) {
+      return window.electronIO.ipcRenderer.invoke(
+        'createSymlinkPromise',
+        targetPath,
+        linkPath,
+      );
+    }
+    return Promise.reject(new Error('createSymlinkPromise: not implemented'));
+  };
+
   copyFilePromiseOverwrite = (
     sourceFilePath: string,
     targetFilePath: string,

@@ -49,6 +49,7 @@ export function getDirectoryMenuItems(
   createNewFile?: (fileType?: TS.FileType) => void,
   createNewAudio?: () => void,
   showCreateDirectoryDialog?: () => void,
+  showCreateFolderReferenceDialog?: () => void,
   addExistingFile?: () => void,
   setFolderThumbnail?: () => void,
   copySharingLink?: () => void,
@@ -246,6 +247,7 @@ export function getDirectoryMenuItems(
     (createNewFile ||
       createNewAudio ||
       showCreateDirectoryDialog ||
+      showCreateFolderReferenceDialog ||
       addExistingFile ||
       cameraTakePicture)
   ) {
@@ -257,6 +259,7 @@ export function getDirectoryMenuItems(
         createNewFile={createNewFile}
         createNewAudio={createNewAudio}
         showCreateDirectoryDialog={showCreateDirectoryDialog}
+        showCreateFolderReferenceDialog={showCreateFolderReferenceDialog}
         addExistingFile={addExistingFile}
         cameraTakePicture={cameraTakePicture}
       />,

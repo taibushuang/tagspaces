@@ -42,8 +42,30 @@ const TSNotification = styled(Snackbar)(({ theme }) => {
     '& .MuiSnackbarContent-root': {
       borderRadius: AppConfig.defaultCSSRadius,
     },
+    // The global minireset.css sets user-select:none — re-enable text
+    // selection on toast messages so error details can be copied.
+    '& .MuiSnackbarContent-message': {
+      userSelect: 'text',
+      cursor: 'text',
+    },
   };
 }) as typeof Snackbar;
+
+// Warnings/errors carry details the user may want to read and copy — give
+// them much more time than transient info toasts.
+function getAutoHideDuration(status: {
+  autohide: boolean;
+  notificationType: string;
+}): number | undefined {
+  if (!status.autohide) return undefined;
+  if (
+    status.notificationType === 'warning' ||
+    status.notificationType === 'error'
+  ) {
+    return 15000;
+  }
+  return 5000;
+}
 
 function PageNotification() {
   const { t } = useTranslation();
@@ -86,7 +108,7 @@ function PageNotification() {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         open={notificationStatus.visible}
         onClose={() => hideNotifications()}
-        autoHideDuration={notificationStatus.autohide ? 3000 : undefined}
+        autoHideDuration={getAutoHideDuration(notificationStatus)}
         message={notificationStatus.text}
         action={[
           <TsIconButton

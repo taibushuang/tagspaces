@@ -31,6 +31,7 @@ import TagsPreview from '-/components/TagsPreview';
 import TsTooltip from '-/components/TsTooltip';
 import TsIconButton from '-/components/TsIconButton';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
@@ -56,6 +57,7 @@ import {
   formatFileSize,
 } from '@tagspaces/tagspaces-common/misc';
 import {
+  extractContainingDirectoryPath,
   extractTagsAsObjects,
   extractTitle,
 } from '@tagspaces/tagspaces-common/paths';
@@ -121,6 +123,7 @@ function RowCell(props: Props) {
     usePerspectiveSettingsContext();
   const { addTag, editTagForEntry } = useTaggingActionsContext();
   const { currentLocation } = useCurrentLocationContext();
+  const { isSearchMode } = useDirectoryContentContext();
   const supportedFileTypes = useSelector(getSupportedFileTypes);
   const defaultFolderColor = useSelector(getDefaultFolderColor);
   const reorderTags: boolean = useSelector(isReorderTags);
@@ -201,6 +204,14 @@ function RowCell(props: Props) {
   const tagPlaceholder = <TagsPreview tags={entryTags} />;
 
   const entryPath = fsEntry.path;
+
+  const entryDirPath = useMemo(() => {
+    if (!isSearchMode || !fsEntry.path) return '';
+    return extractContainingDirectoryPath(
+      fsEntry.path,
+      currentLocation?.getDirSeparator(),
+    );
+  }, [isSearchMode, fsEntry.path, currentLocation]);
 
   // In multi-select (selectionMode) the drag operation is on the cell, not on
   // the tag. Skip the per-tag DnD wiring — same logic as read-only locations.
@@ -451,6 +462,22 @@ function RowCell(props: Props) {
               sx={{ color: 'gray' }}
               variant="body2"
             >
+              {isSearchMode && entryDirPath && (
+                <>
+                  <TsTooltip title={entryDirPath}>
+                    <span
+                      style={{
+                        color: theme.palette.text.secondary,
+                        fontStyle: 'italic',
+                        marginRight: '8px',
+                      }}
+                    >
+                      {entryDirPath}
+                    </span>
+                  </TsTooltip>
+                  {' | '}
+                </>
+              )}
               <TsTooltip title={fsEntry.size + ' ' + t('core:sizeInBytes')}>
                 <span>{entrySizeFormatted}</span>
               </TsTooltip>
@@ -493,8 +520,8 @@ function RowCell(props: Props) {
               alt="thumbnail"
               src={
                 fsEntry.meta.thumbPath +
-                (!currentLocation.haveObjectStoreSupport() &&
-                !currentLocation.haveWebDavSupport()
+                (!currentLocation?.haveObjectStoreSupport() &&
+                !currentLocation?.haveWebDavSupport()
                   ? urlGetDelim(fsEntry.meta.thumbPath) +
                     fsEntry.meta.lastUpdated
                   : '')

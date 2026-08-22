@@ -261,10 +261,6 @@ function GridCell(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metaActions]);
 
-  if (!gridCellLocation && fsEntry.locationID) {
-    return null;
-  }
-
   // Memoized callbacks and derived data
   const handleEditTag = useCallback(
     (path: string, tag: TS.Tag, newTagTitle?: string) => {
@@ -335,7 +331,10 @@ function GridCell(props: Props) {
   // the tag (file move, not tag reorder). Skip the per-tag DnD wiring in that
   // mode — same logic as on read-only locations. Drops 2× useDrag/useDrop per
   // tag × N tags × M cells of overhead during multi-select.
-  const useStaticTags = gridCellLocation.isReadOnly || selectionMode;
+  // gridCellLocation can be undefined for search results that belong to no
+  // configured location (e.g. Everything "system files") when no location is
+  // currently open — optional chaining is required here.
+  const useStaticTags = gridCellLocation?.isReadOnly || selectionMode;
   // Cap the number of inline tag chips. Files with more get a "+N" chip that
   // opens the rest in a popover. 0 disables the cap.
   const cap =
@@ -481,6 +480,12 @@ function GridCell(props: Props) {
         </FileExtBadge>
       </TsTooltip>
     );
+  }
+
+  // Early return AFTER all hooks (rules of hooks): entries whose locationID
+  // points to a deleted/unavailable location are not rendered.
+  if (!gridCellLocation && fsEntry.locationID) {
+    return null;
   }
 
   return (

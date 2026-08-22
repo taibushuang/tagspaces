@@ -8,6 +8,10 @@ import {
 } from 'electron';
 
 export type Channels =
+  | 'searchEverything'
+  | 'getEverythingDebugInfo'
+  | 'everythingEnsureRunning'
+  | 'installEverything'
   | 'isWorkerAvailable'
   | 'fetchUrl'
   | 'fetchUrlBuffer'
@@ -38,6 +42,7 @@ export type Channels =
   | 'checkDirExist'
   | 'checkFileExist'
   | 'createDirectoryPromise'
+  | 'createSymlinkPromise'
   | 'copyFilePromiseOverwrite'
   | 'renameFilePromise'
   | 'renameDirectoryPromise'

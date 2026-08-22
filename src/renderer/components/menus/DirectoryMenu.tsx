@@ -16,7 +16,7 @@
  *
  */
 
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { Menu } from '@mui/material';
 import AppConfig from '-/AppConfig';
 import {
@@ -58,6 +58,7 @@ import { useFileUploadContext } from '-/hooks/useFileUploadContext';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { useImportMacTagDialogContext } from '-/components/dialogs/hooks/useImportMacTagDialogContext';
+import CreateFolderReferenceDialog from '-/components/dialogs/CreateFolderReferenceDialog';
 
 interface Props {
   open: boolean;
@@ -88,10 +89,13 @@ function DirectoryMenu(props: Props) {
   const { openNewFileDialog } = useNewFileDialogContext();
   const { currentLocation, getLocationPath, findLocation } =
     useCurrentLocationContext();
-  const { setThumbnailImageChange, getMetadataID } = useIOActionsContext();
+  const { setThumbnailImageChange, getMetadataID, createFolderSymlink } =
+    useIOActionsContext();
   const { showNotification } = useNotificationContext();
   const { openFileUpload, openCameraCapture } = useFileUploadContext();
   const { openCreateDirectoryDialog } = useCreateDirectoryDialogContext();
+  const [createFolderReferenceOpen, setCreateFolderReferenceOpen] =
+    useState(false);
   const {
     openDirectory,
     currentDirectoryPath,
@@ -247,6 +251,10 @@ function DirectoryMenu(props: Props) {
     openNewAudioDialog();
   }
 
+  function showCreateFolderReferenceDialog() {
+    setCreateFolderReferenceOpen(true);
+  }
+
   function showInFileManager() {
     openDirectoryMessage(directoryPath);
   }
@@ -373,6 +381,7 @@ function DirectoryMenu(props: Props) {
         createNewFile,
         createNewAudio,
         openCreateDirectoryDialog,
+        AppConfig.isElectron ? showCreateFolderReferenceDialog : undefined,
         addExistingFile,
         setFolderThumbnail,
         copySharingLink,
@@ -398,6 +407,16 @@ function DirectoryMenu(props: Props) {
       }
     >
       <TsMenuList>{menuItems}</TsMenuList>
+      <CreateFolderReferenceDialog
+        open={createFolderReferenceOpen}
+        onClose={() => setCreateFolderReferenceOpen(false)}
+        directoryPath={directoryPath}
+        dirSeparator={
+          currentLocation?.getDirSeparator() || AppConfig.dirSeparator
+        }
+        createFolderSymlink={createFolderSymlink}
+        showNotification={showNotification}
+      />
     </Menu>
   );
 }

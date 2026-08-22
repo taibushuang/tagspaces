@@ -52,6 +52,8 @@ export const types = {
   WARNING_OPENING_FILES_EXTERNALLY: 'SETTINGS/WARNING_OPENING_FILES_EXTERNALLY',
   SET_SAVE_TAGS_IN_LOCATION: 'SETTINGS/SET_SAVE_TAGS_IN_LOCATION',
   SET_TAG_DELIMITER: 'SETTINGS/SET_TAG_DELIMITER',
+  SET_USE_EVERYTHING_SEARCH: 'SETTINGS/SET_USE_EVERYTHING_SEARCH',
+  SET_EVERYTHING_PATH: 'SETTINGS/SET_EVERYTHING_PATH',
   SET_MAX_SEARCH_RESULT: 'SETTINGS/SET_MAX_SEARCH_RESULT',
   SET_CHECKFORUPDATES: 'SETTINGS/SET_CHECKFORUPDATES',
   SET_REORDER_TAGS: 'SETTINGS/SET_REORDER_TAGS',
@@ -207,6 +209,12 @@ export default (state: any = defaultSettings, action: any) => {
     }
     case types.SET_TAG_DELIMITER: {
       return { ...state, tagDelimiter: action.delimiter };
+    }
+    case types.SET_USE_EVERYTHING_SEARCH: {
+      return { ...state, useEverythingSearch: action.useEverythingSearch };
+    }
+    case types.SET_EVERYTHING_PATH: {
+      return { ...state, everythingPath: action.everythingPath };
     }
     case types.SET_MAX_SEARCH_RESULT: {
       return { ...state, maxSearchResult: action.maxSearchResult };
@@ -374,7 +382,7 @@ export default (state: any = defaultSettings, action: any) => {
     case types.SET_AUTHOR: {
       const author =
         action.author === undefined ? defaultSettings.author : action.author;
-      return { ...state, author: author };
+      return { ...state, author };
     }
     case types.SET_USEGENERATETHUMBNAILS: {
       return { ...state, useGenerateThumbnails: action.useGenerateThumbnails };
@@ -382,7 +390,7 @@ export default (state: any = defaultSettings, action: any) => {
     case types.SET_EMAIL: {
       return {
         ...state,
-        //isLoading: true,
+        // isLoading: true,
         email: action.email,
       };
     }
@@ -523,7 +531,7 @@ export default (state: any = defaultSettings, action: any) => {
       );
       return {
         ...state,
-        supportedFileTypes: supportedFileTypes,
+        supportedFileTypes,
       };
     }
     case types.SET_ENTRY_PROPERTIES_SPLIT_SIZE: {
@@ -728,6 +736,14 @@ export const actions = {
   setMaxSearchResult: (maxSearchResult: number) => ({
     type: types.SET_MAX_SEARCH_RESULT,
     maxSearchResult,
+  }),
+  setUseEverythingSearch: (useEverythingSearch: boolean) => ({
+    type: types.SET_USE_EVERYTHING_SEARCH,
+    useEverythingSearch,
+  }),
+  setEverythingPath: (everythingPath: string) => ({
+    type: types.SET_EVERYTHING_PATH,
+    everythingPath,
   }),
   setDesktopMode: (desktopMode: boolean) => ({
     type: types.SET_DESKTOPMODE,
@@ -1040,23 +1056,21 @@ export const actions = {
   checkForUpdate: () => (dispatch: (actions: Object) => void) => {
     getLastVersionPromise()
       .then((lastVersion) => {
-        console.log('Last version on server: ' + lastVersion);
+        console.log(`Last version on server: ${lastVersion}`);
         const newVersion = semver.coerce(lastVersion); // lastVersion '3.0.5' ;
         const currentVersion = semver.coerce(versionMeta.version);
         // const lastPublishedVersion = semver.coerce(settings.lastPublishedVersion);
         if (semver.valid(newVersion) && semver.gt(newVersion, currentVersion)) {
-          console.log('New version available: ' + newVersion.version + '!');
+          console.log(`New version available: ${newVersion.version}!`);
           dispatch(actions.setLastPublishedVersion(newVersion.version));
           dispatch(AppActions.setUpdateAvailable(true));
         } else {
-          console.log(
-            'Current version: ' + versionMeta.version + ' is up to date',
-          );
+          console.log(`Current version: ${versionMeta.version} is up to date`);
         }
         return true;
       })
       .catch((error) => {
-        console.log('Error while checking for update: ' + error);
+        console.log(`Error while checking for update: ${error}`);
       });
   },
 };
@@ -1238,13 +1252,16 @@ export const getMainVerticalSplitSize = (state: any) =>
   state.settings.mainVSplitSize;
 export const getNewHTMLFileContent = (state: any) =>
   state.settings.newHTMLFileContent;
-/*export const getEnabledExtensions = (state: any) =>
-  state.settings.enabledExtensions;*/
+/* export const getEnabledExtensions = (state: any) =>
+  state.settings.enabledExtensions; */
 export const getTagGroupCollapsed = (state: any) =>
   state.settings.tagGroupCollapsed;
 export const getTagDelimiter = (state: any) => state.settings.tagDelimiter;
 export const getMaxSearchResults = (state: any) =>
   state.settings.maxSearchResult;
+export const getUseEverythingSearch = (state: any) =>
+  state.settings.useEverythingSearch !== false;
+export const getEverythingPath = (state: any) => state.settings.everythingPath;
 export const isDesktopMode = (state: any) => state.settings.desktopMode;
 export const useOnlyTagsFromTagLibrary = (state: any) =>
   state.settings.useOnlyTagsFromTagLibrary;

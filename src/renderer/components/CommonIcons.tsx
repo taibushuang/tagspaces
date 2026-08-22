@@ -391,6 +391,8 @@ export const MainMenuIcon = (props) => (
   </SvgIcon>
 );
 
+export { default as VersionCleanupIcon } from '@mui/icons-material/CleaningServicesOutlined';
+
 export const OllamaIcon = (props) => (
   <SvgIcon {...props}>
     <svg

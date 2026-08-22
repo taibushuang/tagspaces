@@ -28,6 +28,7 @@ import { KeyboardDialogContextProvider } from '-/components/dialogs/hooks/Keyboa
 import { LicenseDialogContextProvider } from '-/components/dialogs/hooks/LicenseDialogContextProvider';
 import { FilePickerDialogContextProvider } from '-/components/dialogs/hooks/FilePickerDialogContextProvider';
 import { LinkDialogContextProvider } from '-/components/dialogs/hooks/LinkDialogContextProvider';
+import { FileVersionCleanupDialogContextProvider } from '-/components/dialogs/hooks/FileVersionCleanupDialogContextProvider';
 import { MenuContextProvider } from '-/components/dialogs/hooks/MenuContextProvider';
 import { NewAudioDialogContextProvider } from '-/components/dialogs/hooks/NewAudioDialogContextProvider';
 import { NewFileDialogContextProvider } from '-/components/dialogs/hooks/NewFileDialogContextProvider';
@@ -89,6 +90,7 @@ const providers = [
   ResolveConflictContextProvider,
   DownloadUrlContextProvider,
   ImportMacTagDialogContextProvider,
+  FileVersionCleanupDialogContextProvider,
   MenuContextProvider,
 ];
 

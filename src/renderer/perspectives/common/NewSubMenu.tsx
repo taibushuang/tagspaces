@@ -50,6 +50,7 @@ interface Props {
   createNewFile?: (fileType?: TS.FileType) => void;
   createNewAudio?: () => void;
   showCreateDirectoryDialog?: () => void;
+  showCreateFolderReferenceDialog?: () => void;
   addExistingFile?: () => void;
   cameraTakePicture?: () => void;
 }
@@ -68,6 +69,7 @@ function NewSubMenu(props: Props) {
     createNewFile,
     createNewAudio,
     showCreateDirectoryDialog,
+    showCreateFolderReferenceDialog,
     addExistingFile,
     cameraTakePicture,
   } = props;
@@ -216,6 +218,18 @@ function NewSubMenu(props: Props) {
               <ListItemText primary={t('core:newSubdirectory')} />
             </MenuItem>,
           ]}
+          {showCreateFolderReferenceDialog && (
+            <MenuItem
+              key="newSubDirectoryReference"
+              data-tid="newSubDirectoryReferenceTID"
+              onClick={() => run(() => showCreateFolderReferenceDialog())}
+            >
+              <ListItemIcon>
+                <LinkFileIcon />
+              </ListItemIcon>
+              <ListItemText primary={t('core:newSubdirectoryReference')} />
+            </MenuItem>
+          )}
           {addExistingFile && (
             <MenuItem
               key="addExistingFile"

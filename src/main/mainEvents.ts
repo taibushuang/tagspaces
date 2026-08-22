@@ -33,6 +33,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import { Readable } from 'stream';
 import WebSocket from 'ws';
+import os from 'os';
 import {
   getOnProgress,
   isWorkerAvailable,
@@ -43,11 +44,10 @@ import {
   postRequest,
 } from './util';
 import { readMacOSTags } from './macUserTags';
-import os from 'os';
 import registerSecureStorageEvents from './secureStorage';
 
-//let watcher: FSWatcher;
-const progress = {};
+// let watcher: FSWatcher;
+const progress: Record<string, any> = {};
 
 // A desktop-Chrome User-Agent so remote servers treat our downloads like a
 // regular browser request. Many sites reject the default Electron/Node agent
@@ -110,10 +110,10 @@ export default function loadMainEvents() {
           wsc.close();
         }
         // @ts-ignore
-        wsc = new WebSocket('ws://127.0.0.1:' + wssPort.port);
+        wsc = new WebSocket(`ws://127.0.0.1:${wssPort.port}`);
         wsc.on('message', function message(data) {
           console.log('received: %s', data);
-          const mainWindow = BrowserWindow.getAllWindows(); //getFocusedWindow();
+          const mainWindow = BrowserWindow.getAllWindows(); // getFocusedWindow();
           if (mainWindow.length > 0) {
             mainWindow.map((window) =>
               window.webContents.send('folderChanged', JSON.parse(data)),
@@ -125,7 +125,7 @@ export default function loadMainEvents() {
       console.error('wss error:', e);
     }
 
-    //watchFolder(mainWindow, e, path, depth);
+    // watchFolder(mainWindow, e, path, depth);
   });
   ipcMain.handle('fetchTile', async (_event, url: string) => {
     const response = await net.fetch(url, {
@@ -163,7 +163,7 @@ export default function loadMainEvents() {
 
       let onUploadProgress;
       if (withProgress) {
-        progress['fetchUrl'] = newProgress('fetchUrl', totalSize);
+        progress.fetchUrl = newProgress('fetchUrl', totalSize);
         onUploadProgress = getOnProgress('fetchUrl', progress);
       }
 
@@ -295,12 +295,11 @@ export default function loadMainEvents() {
       videosFolder: app.getPath('videos'),
     };
     if (process.platform === 'darwin') {
-      paths.iCloudFolder =
-        app.getPath('home') + '/Library/Mobile Documents/com~apple~CloudDocs';
+      paths.iCloudFolder = `${app.getPath('home')}/Library/Mobile Documents/com~apple~CloudDocs`;
     }
     return paths;
   });
-  /*ipcMain.handle('isWorkerAvailable', async (event, wsPort) => {
+  /* ipcMain.handle('isWorkerAvailable', async (event, wsPort) => {
     try {
       const res = fetch('http://127.0.0.1:' + wsPort, {
         method: 'HEAD',
@@ -310,7 +309,7 @@ export default function loadMainEvents() {
       console.debug('isWorkerAvailable:', e);
     }
     return false;
-  });*/
+  }); */
 
   ipcMain.handle('readMacOSTags', async (event, filename) => {
     if (!isSafePath(filename)) {
@@ -397,23 +396,47 @@ export default function loadMainEvents() {
         '/hide-folder',
       );
       // @ts-ignore
-      console.log('Hide folder: ' + dirPath + ' - ' + wssPost.success);
+      console.log(`Hide folder: ${dirPath} - ${wssPost.success}`);
     }
     return result;
   });
+  ipcMain.handle(
+    'createSymlinkPromise',
+    async (event, targetPath: string, linkPath: string) => {
+      await fs.ensureDir(path.dirname(linkPath));
+      try {
+        await fs.symlink(targetPath, linkPath, 'dir');
+        return { success: true, linkPath };
+      } catch (err: any) {
+        if (process.platform === 'win32' && err.code === 'EPERM') {
+          try {
+            await fs.symlink(targetPath, linkPath, 'junction');
+            return { success: true, linkPath, junction: true };
+          } catch (junctionErr: any) {
+            return {
+              success: false,
+              error: junctionErr.message,
+              code: junctionErr.code,
+            };
+          }
+        }
+        return { success: false, error: err.message, code: err.code };
+      }
+    },
+  );
 
   ipcMain.handle('getOllamaModels', async (event, ollamaApiUrl) => {
     console.log('Currently Ollama main thread deactivated!');
-    /*try {
+    /* try {
       const apiResponse = await ollamaGetRequest('/api/tags', ollamaApiUrl);
       return (apiResponse as ApiResponse).models;
     } catch (e) {
       return undefined;
-    }*/
+    } */
   });
   ipcMain.handle('newOllamaMessage', async (event, ollamaApiUrl, msg) => {
     console.log('Currently Ollama main thread deactivated!');
-    /*const apiResponse = await ollamaPostRequest(
+    /* const apiResponse = await ollamaPostRequest(
       JSON.stringify(msg),
       '/api/chat',
       ollamaApiUrl,
@@ -428,11 +451,11 @@ export default function loadMainEvents() {
         }
       },
     );
-    return apiResponse;*/
+    return apiResponse; */
   });
   ipcMain.handle('pullOllamaModel', async (event, ollamaApiUrl, msg) => {
     console.log('Currently Ollama main thread deactivated!');
-    /*let lastPercents = 0;
+    /* let lastPercents = 0;
     const apiResponse = await ollamaPostRequest(
       JSON.stringify(msg),
       '/api/pull',
@@ -458,11 +481,11 @@ export default function loadMainEvents() {
         }
       },
     );
-    return apiResponse;*/
+    return apiResponse; */
   });
   ipcMain.handle('deleteOllamaModel', async (event, ollamaApiUrl, msg) => {
     console.log('Currently Ollama main thread deactivated!');
-    /*const apiResponse = await ollamaDeleteRequest(
+    /* const apiResponse = await ollamaDeleteRequest(
       JSON.stringify(msg),
       '/api/delete',
       ollamaApiUrl,
@@ -475,7 +498,7 @@ export default function loadMainEvents() {
         }
       },
     );
-    return apiResponse;*/
+    return apiResponse; */
   });
   ipcMain.handle(
     'copyFilePromiseOverwrite',
@@ -489,7 +512,7 @@ export default function loadMainEvents() {
     async (event, filePath, newFilePath, withProgress, force) => {
       let result;
       if (withProgress) {
-        progress['renameFilePromise'] = newProgress('renameFilePromise', 1);
+        progress.renameFilePromise = newProgress('renameFilePromise', 1);
         result = await renameFilePromise(
           filePath,
           newFilePath,
@@ -518,7 +541,7 @@ export default function loadMainEvents() {
     'copyDirectoryPromise',
     async (event, param, newDirPath, withProgress) => {
       if (withProgress) {
-        progress['copyDirectoryPromise'] = newProgress(
+        progress.copyDirectoryPromise = newProgress(
           'moveDirectoryPromise',
           param.total,
         );
@@ -528,10 +551,9 @@ export default function loadMainEvents() {
           getOnProgress('copyDirectoryPromise', progress),
         );
         return result;
-      } else {
-        const result = await copyDirectoryPromise(param, newDirPath);
-        return result;
       }
+      const result = await copyDirectoryPromise(param, newDirPath);
+      return result;
     },
   );
   ipcMain.handle('uploadAbort', async (event, path) => {
@@ -551,7 +573,7 @@ export default function loadMainEvents() {
     'moveDirectoryPromise',
     async (event, param, newDirPath, withProgress) => {
       if (withProgress) {
-        progress['moveDirectoryPromise'] = newProgress(
+        progress.moveDirectoryPromise = newProgress(
           'moveDirectoryPromise',
           param.total,
         );
@@ -561,10 +583,9 @@ export default function loadMainEvents() {
           getOnProgress('moveDirectoryPromise', progress),
         );
         return result;
-      } else {
-        const result = await moveDirectoryPromise(param, newDirPath);
-        return result;
       }
+      const result = await moveDirectoryPromise(param, newDirPath);
+      return result;
     },
   );
   ipcMain.handle('loadTextFilePromise', async (event, path, isPreview) => {
@@ -608,9 +629,9 @@ export default function loadMainEvents() {
   ipcMain.handle(
     'saveBinaryFilePromise',
     async (event, param, content, overwrite, withProgress) => {
-      let onUploadProgress = undefined;
+      let onUploadProgress;
       if (withProgress) {
-        progress['saveBinaryFilePromise'] = newProgress(
+        progress.saveBinaryFilePromise = newProgress(
           'saveBinaryFilePromise',
           param.total,
         );
@@ -643,7 +664,7 @@ export default function loadMainEvents() {
         await shell.trashItem(path);
         return true;
       } catch (err) {
-        console.error('moveToTrash ' + path + ' error:', err);
+        console.error(`moveToTrash ${path} error:`, err);
         // Propagate (don't return false, don't silently permanent-delete):
         // the user asked for a recoverable trash, so escalating to a hard
         // delete behind their back is data loss. Rejecting lets the
@@ -666,7 +687,7 @@ export default function loadMainEvents() {
         await shell.trashItem(path);
         return true;
       } catch (err) {
-        console.error('moveToTrash ' + path + ' error:', err);
+        console.error(`moveToTrash ${path} error:`, err);
         // Propagate rather than swallow or silently hard-delete — see the
         // deleteFilePromise handler above.
         throw err;
@@ -683,11 +704,11 @@ export default function loadMainEvents() {
     shell
       .openPath(filePath)
       .then(() => {
-        console.log('File successfully opened ' + filePath);
+        console.log(`File successfully opened ${filePath}`);
         return true;
       })
       .catch((e) => {
-        console.log('Opening path ' + filePath + ' failed with ' + e);
+        console.log(`Opening path ${filePath} failed with ${e}`);
       });
   });
   ipcMain.on('openUrl', async (event, url) => {
@@ -710,7 +731,7 @@ export default function loadMainEvents() {
     const allowed = new Set(['http:', 'https:', 'mailto:', 'tel:']);
     if (!allowed.has(parsed.protocol)) {
       console.warn(
-        'openUrl: blocked scheme ' + parsed.protocol + ' for url: ' + url,
+        `openUrl: blocked scheme ${parsed.protocol} for url: ${url}`,
       );
       return;
     }
@@ -784,4 +805,99 @@ export default function loadMainEvents() {
       event.returnValue = process.env.USER ?? process.env.USERNAME ?? '';
     }
   });
+
+  // Everything SDK search — lazy-loaded, Windows-only
+  if (process.platform === 'win32') {
+    ipcMain.handle('searchEverything', async (_event, query, options) => {
+      try {
+        const {
+          searchEverything,
+          isEverythingAvailable,
+          setCustomEverythingPath,
+        } = require('./everythingSdk');
+        // Renderer passes the user-configured Everything location (if any)
+        // on every search so the setting survives app restarts.
+        if (options && options.everythingPath !== undefined) {
+          setCustomEverythingPath(options.everythingPath);
+        }
+        const avail = isEverythingAvailable();
+        if (!avail.available) {
+          return { available: false, results: [], error: avail.error };
+        }
+        return await searchEverything(query, options);
+      } catch (err: any) {
+        return {
+          available: false,
+          results: [],
+          error: `Everything search error: ${err.message}`,
+        };
+      }
+    });
+
+    ipcMain.handle('getEverythingDebugInfo', async () => {
+      try {
+        const { getDebugInfo } = require('./everythingSdk');
+        return getDebugInfo();
+      } catch (err: any) {
+        return {
+          platform: process.platform,
+          everythingInstalled: false,
+          everythingRunning: false,
+          libraryLoaded: false,
+          dbLoaded: false,
+          available: false,
+          availabilityError: `Debug info error: ${err.message}`,
+          autoStartInFlight: false,
+          log: [],
+        };
+      }
+    });
+
+    ipcMain.handle('everythingEnsureRunning', async () => {
+      try {
+        const { ensureEverythingRunning } = require('./everythingSdk');
+        return await ensureEverythingRunning();
+      } catch (err: any) {
+        return { success: false, message: `${err.message}` };
+      }
+    });
+
+    ipcMain.handle('installEverything', async () => {
+      try {
+        const { installEverything } = require('./everythingSdk');
+        return await installEverything();
+      } catch (err: any) {
+        return {
+          success: false,
+          output: `${err.message}\n\nDownload the installer manually from https://www.voidtools.com/downloads/`,
+        };
+      }
+    });
+  } else {
+    const notWindows = {
+      available: false,
+      results: [],
+      error: 'Everything search is only available on Windows',
+    };
+    ipcMain.handle('searchEverything', async () => notWindows);
+    ipcMain.handle('getEverythingDebugInfo', async () => ({
+      platform: process.platform,
+      everythingInstalled: false,
+      everythingRunning: false,
+      libraryLoaded: false,
+      dbLoaded: false,
+      available: false,
+      availabilityError: 'Everything search is only available on Windows',
+      autoStartInFlight: false,
+      log: [],
+    }));
+    ipcMain.handle('everythingEnsureRunning', async () => ({
+      success: false,
+      message: 'Everything search is only available on Windows',
+    }));
+    ipcMain.handle('installEverything', async () => ({
+      success: false,
+      output: 'Everything search is only available on Windows',
+    }));
+  }
 }
