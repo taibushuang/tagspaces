@@ -6,9 +6,11 @@
  * so Chinese paths are handled correctly.
  *
  * DLL discovery order:
- *   1. Registry: HKCU/HKLM\Software\Microsoft\Windows\CurrentVersion\App Paths\Everything.exe
- *   2. Default:  C:\Program Files\Everything\Everything64.dll
- *   3. Fallback: C:\Program Files (x86)\Everything\Everything32.dll
+ *   1. Custom path from settings (install dir, exe or dll path)
+ *   2. Registry: HKCU/HKLM App Paths, Uninstall InstallLocation, Run key,
+ *      Everything service ImagePath (SYSTEM\CurrentControlSet\Services)
+ *   3. Default:  C:\Program Files\Everything[64].dll / (x86)\Everything32.dll
+ *   4. Fallback: bundled SDK dll shipped under resources/everything/
  *
  * This module is lazy-loaded in mainEvents.ts **only on win32** to avoid
  * crashing the macOS development machine.
@@ -112,35 +114,145 @@ let autoStartInFlight: Promise<boolean> | undefined;
 // DLL Discovery
 // ---------------------------------------------------------------------------
 
-function queryRegistry(regPath: string): string | undefined {
+// ---------------------------------------------------------------------------
+// Native registry access (koffi / advapi32). reg.exe prints OEM-codepage text
+// and execSync(encoding:'utf8') mangles non-ASCII install paths
+// (e.g. D:\软件\Everything → U+FFFD garbage, fs.existsSync() then fails).
+// RegQueryValueExW returns true Unicode with no codepage involved.
+// ---------------------------------------------------------------------------
+
+const HKEY_CURRENT_USER = 0x80000001;
+const HKEY_LOCAL_MACHINE = 0x80000002;
+const KEY_READ_WOW64_64 = 0x20019 | 0x0100; // KEY_READ | KEY_WOW64_64KEY
+const REG_SZ = 1;
+const REG_EXPAND_SZ = 2;
+const ERROR_MORE_DATA = 234;
+
+let regApi:
+  | { openKey: any; queryValue: any; closeKey: any }
+  | undefined
+  | null;
+
+function getRegApi() {
+  if (regApi !== undefined) return regApi || undefined;
   try {
-    const { execSync } = require('child_process');
-    const output = execSync(`reg query "${regPath}" /ve`, {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-    const match = output.match(/REG_SZ\s+(.+\.exe)/i);
-    return match ? match[1].trim() : undefined;
-  } catch {
-    return undefined; // registry key not found or reg.exe unavailable
+    const advapi32 = koffi.load('advapi32.dll');
+    regApi = {
+      // LSTATUS RegOpenKeyExW(HKEY, LPCWSTR, DWORD, DWORD samDesired, PHKEY)
+      openKey: advapi32.func('RegOpenKeyExW', 'int', [
+        'uintptr',
+        'str16',
+        'uint32',
+        'uint32',
+        koffi.out(koffi.pointer('uintptr')),
+      ]),
+      // LSTATUS RegQueryValueExW(HKEY, LPCWSTR, LPDWORD reserved,
+      //   LPDWORD type, LPBYTE data, LPDWORD cbData)
+      // cbData is IN+OUT (in: buffer capacity, out: bytes written/required)
+      // — declared as plain koffi.out() it loses the initial value and every
+      // call fails with ERROR_MORE_DATA.
+      queryValue: advapi32.func('RegQueryValueExW', 'int', [
+        'uintptr',
+        'str16',
+        'uintptr', // reserved — pass 0 (NULL)
+        koffi.out(koffi.pointer('uint32')),
+        koffi.out(koffi.pointer('uint8')),
+        koffi.inout(koffi.pointer('uint32')),
+      ]),
+      closeKey: advapi32.func('RegCloseKey', 'int', ['uintptr']),
+    };
+    return regApi;
+  } catch (err: any) {
+    logDebug('error', `Failed to bind advapi32 registry API: ${err.message}`);
+    regApi = null;
+    return undefined;
   }
 }
 
+/** Read a REG_SZ/REG_EXPAND_SZ value; undefined when missing/non-string. */
+function readRegString(
+  root: number,
+  subKey: string,
+  valueName = '', // '' = default (unnamed) value
+): string | undefined {
+  const api = getRegApi();
+  if (!api) return undefined;
+  let hkeyOut = [0n];
+    const openRc = api.openKey(root, subKey, 0, KEY_READ_WOW64_64, hkeyOut);
+    if (openRc !== 0) {
+      // rc=2 (key absent) is the common case while probing candidates — stay
+      // quiet; the caller logs a summary when nothing is found at all.
+      return undefined;
+    }
+  const hkey = hkeyOut[0];
+  try {
+    let buf = new Uint8Array(4096);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const typeOut = [0];
+      const sizeOut = [buf.length];
+      const status = api.queryValue(hkey, valueName, 0, typeOut, buf, sizeOut);
+      if (status === 0) {
+        if (typeOut[0] !== REG_SZ && typeOut[0] !== REG_EXPAND_SZ) {
+          return undefined;
+        }
+        const byteLen = Math.min(Number(sizeOut[0]), buf.length);
+        const u16 = new Uint16Array(buf.buffer, 0, Math.floor(byteLen / 2));
+        let strLen = u16.indexOf(0);
+        if (strLen === -1) strLen = u16.length;
+        const value = Buffer.from(buf.buffer, 0, strLen * 2)
+          .toString('utf16le')
+          .trim();
+        return value.length > 0 ? value : undefined;
+      }
+      if (status === ERROR_MORE_DATA && attempt === 0) {
+        // sizeOut now holds the required size — grow and retry once
+        buf = new Uint8Array(Number(sizeOut[0]) + 2);
+        // eslint-disable-next-line no-continue
+        continue;
+      }
+      return undefined;
+    }
+    return undefined;
+  } catch (err: any) {
+    logDebug(
+      'warn',
+      `registry read failed (${subKey}\\${valueName}): ${err.message}`,
+    );
+    return undefined;
+  } finally {
+    try {
+      api.closeKey(hkey);
+    } catch {
+      /* handle already invalid */
+    }
+  }
+}
+
+function splitRoot(regPath: string):
+  | { root: number; subKey: string }
+  | undefined {
+  const hklm = /^HKLM\\(.+)$/i.exec(regPath);
+  if (hklm) return { root: HKEY_LOCAL_MACHINE, subKey: hklm[1] };
+  const hkcu = /^HKCU\\(.+)$/i.exec(regPath);
+  if (hkcu) return { root: HKEY_CURRENT_USER, subKey: hkcu[1] };
+  return undefined;
+}
+
+/** Default (unnamed) value of a key like "HKLM\...\App Paths\Everything.exe". */
+function queryRegistry(regPath: string): string | undefined {
+  const parts = splitRoot(regPath);
+  return parts ? readRegString(parts.root, parts.subKey) : undefined;
+}
+
+/** Named value of a key like "HKLM\SOFTWARE\...\Uninstall\Everything". */
 function queryRegistryValue(
   regPath: string,
   valueName: string,
 ): string | undefined {
-  try {
-    const { execSync } = require('child_process');
-    const output = execSync(`reg query "${regPath}" /v "${valueName}"`, {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-    const match = output.match(/REG_SZ\s+(.+)/i);
-    return match ? match[1].trim() : undefined;
-  } catch {
-    return undefined;
-  }
+  const parts = splitRoot(regPath);
+  return parts
+    ? readRegString(parts.root, parts.subKey, valueName)
+    : undefined;
 }
 
 // Only log probe results when they change (the debug dialog polls every second)
@@ -242,6 +354,20 @@ function findEverythingExe(): string | undefined {
         const hit = probe(match[1], 'registry Run key');
         if (hit) return hit;
       }
+    }
+  }
+
+  // 3b. Everything Service registration — ImagePath points at the exe even
+  //     when neither App Paths nor an Uninstall entry exists.
+  const svcCmd = queryRegistryValue(
+    'HKLM\\SYSTEM\\CurrentControlSet\\Services\\Everything',
+    'ImagePath',
+  );
+  if (svcCmd) {
+    const match = /^"?([^"]+?\.exe)/i.exec(svcCmd.trim());
+    if (match) {
+      const hit = probe(match[1], 'Everything service ImagePath');
+      if (hit) return hit;
     }
   }
 
@@ -451,7 +577,7 @@ function loadLibrary(): boolean {
 
     return true;
   } catch (err: any) {
-    availabilityError = `Failed to load Everything.dll: ${err.message}`;
+    availabilityError = `Failed to load Everything.dll (${dllPath}): ${err.message} — file may be corrupt or built for another CPU architecture`;
     logDebug('error', availabilityError);
     lib = undefined;
     api = undefined;
@@ -819,32 +945,33 @@ function checkAvailability(): { available: boolean; error?: string } {
       // Don't cache this state — re-probe on the next call so the search
       // recovers as soon as Everything finishes loading its database.
       availabilityCheckedAt = 0;
-      if (isEverythingRunning()) {
-        // Process alive but IPC says DB not loaded. Per the official SDK
-        // (Everything.c _Everything_SendAPIBoolCommand), IsDBLoaded=false
-        // is ALSO returned when SendMessage is blocked by UIPI (Everything
-        // elevated, TagSpaces not) — indistinguishable from "still
-        // indexing" by the return value alone. Surface all causes.
+      const ipc = probeIpc();
+      logDebug(
+        'warn',
+        `IPC probe: window=${ipc.windowFound} sendMessage=${ipc.sendMessageOk} dbLoaded=${ipc.dbLoaded ?? '-'}${
+          ipc.error ? ` (${ipc.error})` : ''
+        }`,
+      );
+      if (!ipc.windowFound) {
+        // No EVERYTHING_TASKBAR_NOTIFICATION window in THIS session. A
+        // service-only install (-svc) runs headless in session 0 — invisible
+        // to IPC here even though tasklist shows a process — so a user-
+        // session client must be started before queries can work.
         availabilityError =
-          'Everything.exe is running but not answering IPC. Possible causes: ' +
-          '(1) still building its first index — wait a minute and retry; ' +
-          '(2) the Everything Service / admin prompt is pending — check its window or tray; ' +
-          '(3) Everything runs as administrator while TagSpaces does not, so Windows blocks the IPC — ' +
-          'disable "Run as administrator" for Everything.exe and enable the Everything Service ' +
-          '(Everything → Tools → Options → General → Everything Service), or run TagSpaces as administrator.';
-        logDebug('warn', availabilityError);
-        const ipc = probeIpc();
-        logDebug(
-          'warn',
-          `IPC probe: window=${ipc.windowFound} sendMessage=${ipc.sendMessageOk} dbLoaded=${ipc.dbLoaded ?? '-'}${
-            ipc.error ? ` (${ipc.error})` : ''
-          }`,
-        );
-      } else {
-        availabilityError =
-          'Everything database is not loaded. Everything.exe is probably not running — auto-start was triggered.';
+          'No Everything client is running in this session (a service-only instance does not answer SDK IPC) — auto-start was triggered.';
         logDebug('warn', availabilityError);
         triggerAutoStart();
+      } else if (!ipc.sendMessageOk) {
+        // Window exists but messages are dropped: UIPI privilege isolation
+        // (Everything elevated, TagSpaces not) or a hung Everything.
+        availabilityError =
+          'Everything window found but IPC is blocked. If Everything runs as administrator while TagSpaces does not, disable "Run as administrator" for Everything.exe (Everything → Tools → Options → General) or run TagSpaces as administrator.';
+        logDebug('warn', availabilityError);
+      } else {
+        // IPC answers, database genuinely still loading (first index build).
+        availabilityError =
+          'Everything is reachable but its database is still loading — retry in a moment.';
+        logDebug('warn', availabilityError);
       }
       return { available: false, error: availabilityError };
     }
