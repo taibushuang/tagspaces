@@ -733,30 +733,34 @@ export function LocationIndexContextProvider({
   function enhanceSearchEntry(
     entry: TS.FileSystemEntry,
   ): Promise<TS.FileSystemEntry> {
+    // ALWAYS resolve with an entry — returning undefined here made the
+    // post-search enhancement overwrite fresh results with a sparse array
+    // (most global-search hits have no location / no thumbnail).
     const loc = findLocation(entry.locationID);
-    if (loc) {
-      const thumbFilePath = entry.isFile
-        ? getThumbFileLocationForFile(entry.path, loc.getDirSeparator(), false)
-        : getThumbFileLocationForDirectory(entry.path, loc.getDirSeparator());
-      if (thumbFilePath) {
-        return loc.checkFileExist(thumbFilePath).then((exist) => {
-          if (exist) {
-            if (loc.type === locationType.TYPE_CLOUD) {
-              return loc.getURLforPathInt(thumbFilePath).then((thumbPath) => ({
-                ...entry,
-                meta: { ...entry.meta, thumbPath },
-              }));
-            }
-            return {
-              ...entry,
-              meta: { ...entry.meta, thumbPath: thumbFilePath },
-            };
-          }
-          return undefined;
-        });
-      }
+    if (!loc) {
+      return Promise.resolve(entry);
     }
-    return undefined;
+    const thumbFilePath = entry.isFile
+      ? getThumbFileLocationForFile(entry.path, loc.getDirSeparator(), false)
+      : getThumbFileLocationForDirectory(entry.path, loc.getDirSeparator());
+    if (!thumbFilePath) {
+      return Promise.resolve(entry);
+    }
+    return loc.checkFileExist(thumbFilePath).then((exist) => {
+      if (exist) {
+        if (loc.type === locationType.TYPE_CLOUD) {
+          return loc.getURLforPathInt(thumbFilePath).then((thumbPath) => ({
+            ...entry,
+            meta: { ...entry.meta, thumbPath },
+          }));
+        }
+        return {
+          ...entry,
+          meta: { ...entry.meta, thumbPath: thumbFilePath },
+        };
+      }
+      return entry;
+    });
   }
 
   function enhanceSearchEntries(entries: TS.FileSystemEntry[]) {

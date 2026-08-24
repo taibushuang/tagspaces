@@ -871,17 +871,19 @@ export const DirectoryContentContextProvider = ({
     checkCurrentDir = true,
   ) {
     if (dirEntries) {
-      //const entries = dirEntries.filter((e) => e !== undefined);
+      // Drop holes left by failed/absent enhancements — merging or rendering
+      // them would wipe out otherwise-valid entries.
+      const sanitized = dirEntries.filter((e) => e !== undefined && e !== null);
       const isNotFromCurrentDir =
         checkCurrentDir &&
-        dirEntries.some(
+        sanitized.some(
           (e) =>
             !cleanFrontDirSeparator(e.path).startsWith(
               cleanFrontDirSeparator(currentDirectory.current?.path),
             ),
         );
       if (
-        dirEntries.length > 0 &&
+        sanitized.length > 0 &&
         !isNotFromCurrentDir //entries[0].path.startsWith(currentDirectoryPath.current)
       ) {
         if (
@@ -889,21 +891,10 @@ export const DirectoryContentContextProvider = ({
           currentDirectoryEntries.current.length > 0
         ) {
           setCurrentDirectoryEntries(
-            mergeByPath(dirEntries, currentDirectoryEntries.current),
+            mergeByPath(sanitized, currentDirectoryEntries.current),
           );
-          /* currentDirectoryEntries.current.map((e) => {
-            const eUpdated = entries.filter((u) => u.path === e.path);
-            if (eUpdated.length > 0) {
-              const mergedMeta = eUpdated.reduce((merged, obj) => {
-                return { ...merged, ...obj.meta };
-              }, {});
-              return { ...e, meta: { ...e.meta, ...mergedMeta } };
-            }
-            return e;
-            })
-          ); */
         } else {
-          setCurrentDirectoryEntries(dirEntries);
+          setCurrentDirectoryEntries(sanitized);
         }
       }
     }
@@ -1316,9 +1307,13 @@ export const DirectoryContentContextProvider = ({
     directory: string = undefined,
   ) {
     manualPerspective.current = perspective;
-    getAllPropertiesPromise(
-      directory ? directory : currentDirectory.current?.path,
-    )
+    const dirPath = directory ? directory : currentDirectory.current?.path;
+    if (!dirPath) {
+      // Global search mode has no current directory (and no folder whose
+      // tsm.json could persist the choice) — keep it in memory only.
+      return;
+    }
+    getAllPropertiesPromise(dirPath)
       .then((entry: TS.FileSystemEntry) => {
         const action: TS.EditMetaAction = {
           action: 'perspectiveChange',
@@ -1383,6 +1378,18 @@ export const DirectoryContentContextProvider = ({
     locationID: string = undefined,
   ): Promise<TS.FileSystemEntry> {
     const location = findLocation(locationID);
+    if (!location || !entryPath) {
+      // Reject with a readable cause instead of crashing on
+      // "undefined has no checkFileEncryptedPromise" (e.g. when a caller
+      // fires during global search mode where no location is open).
+      return Promise.reject(
+        new Error(
+          `getAllPropertiesPromise: no location for "${entryPath}" (locationID: ${
+            locationID ?? 'current'
+          })`,
+        ),
+      );
+    }
     return location.checkFileEncryptedPromise(entryPath).then((encrypted) =>
       location
         .getPropertiesPromise(entryPath, encrypted)

@@ -66,14 +66,16 @@ export function translateToEverythingQuery(
     }
   }
 
-  // File types
-  if (
-    searchQuery.fileTypes &&
-    searchQuery.fileTypes.length > 0 &&
-    !searchQuery.fileTypes.includes('any')
-  ) {
-    const exts = searchQuery.fileTypes.join(';');
-    parts.push(`ext:${exts}`);
+  // File types — the "any" group is represented as [""], so empty strings
+  // must be dropped or Everything receives a bare `ext:` filter that matches
+  // only extension-less files and wipes out the results.
+  if (searchQuery.fileTypes && searchQuery.fileTypes.length > 0) {
+    const exts = searchQuery.fileTypes
+      .filter((ext) => ext && ext.trim() && ext !== 'any')
+      .join(';');
+    if (exts) {
+      parts.push(`ext:${exts}`);
+    }
   }
 
   // File size
@@ -313,6 +315,13 @@ export async function searchWithEverything(
         everythingPath: everythingPath ?? undefined,
       },
     );
+    if (!response.available || !response.results) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[everythingSearch] unavailable:',
+        response.error || 'no results field',
+      );
+    }
 
     if (!response.available) {
       return {
