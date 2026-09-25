@@ -115,7 +115,7 @@ export default {
   currentRegularTheme: 'legacy',
   currentDarkTheme: 'darklegacy',
   geoTaggingFormat: 'pluscodes',
-  defaultPerspective: PerspectiveIDs.GRID,
+  defaultPerspective: PerspectiveIDs.LIST,
   enableGlobalKeyboardShortcuts: false,
   zoomFactor: 1,
   lastPublishedVersion: '',
