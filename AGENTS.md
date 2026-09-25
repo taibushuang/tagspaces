@@ -48,19 +48,22 @@
 - 其他情况走 `fallbackSearch*`：逐个 location 读 `.ts/tsi.json` 索引（无索引/过期则现走目录建索引），用 Fuse.js 匹配（`@tagspaces/tagspaces-search`）
 - **零 location 时 fallback 搜不到任何东西**，会提示 `noLocationsForSearch`
 
-**Everything 集成（Windows only）**：
-- `src/main/everythingSdk.ts` — koffi 加载 Everything64/32.dll，调用 `Everything_QueryW` 等 W API；含 debug 日志环形缓冲、自动补齐逻辑（DB 未加载时自动启动 Everything.exe）
+**Everything 集成（Windows only，2026-09-25 起改用 es.exe）**：
+- `src/main/everythingSdk.ts` — 抛弃 koffi/Everything64.dll，改为 spawn voidtools **es.exe**（官方 Everything 命令行工具）：es.exe 与运行中的 Everything 客户端走窗口消息 IPC，结果 `-export-tsv` 到临时文件（UTF-8，中文路径无乱码）。探测顺序：自定义路径 → Everything.exe 旁 es.exe（Everything.exe 经注册表 App Paths / Uninstall InstallLocation / Run 键 / 服务 ImagePath 定位，用 PowerShell 编码 UTF-8 避免中文安装路径乱码）→ 默认安装目录 → **自带 es.exe**（`resources/everything/es.exe`）。含 debug 日志环形缓冲、自动补齐逻辑（DB 未加载/IPC 不通时自动 `-startup` 拉起 Everything.exe 并轮询等 DB）。搜索串行队列 + 30s 可用性正缓存。
 - `src/renderer/services/everythingSearch.ts` — TS.SearchQuery → Everything 查询语法转换、结果合并 location 索引元数据
 - `src/main/mainEvents.ts` — IPC：`searchEverything` / `getEverythingDebugInfo` / `everythingEnsureRunning` / `installEverything`（非 Windows 平台全部返回 unavailable）
-- **依赖自动补齐**：DLL 探测顺序 = ① 用户自定义路径（设置项 `everythingPath`，诊断对话框里可填安装目录/exe/dll 路径）→ ② 注册表 App Paths + 默认安装路径（兼容 Everything64.dll/Everything32.dll/Everything.dll 三种命名）→ ③ **自带的 SDK dll**（`resources/everything/Everything64.dll`，通过 builder.json `extraResources` 打入包内——voidtools 安装包不含 SDK dll，必须自带）；Everything.exe 未运行时自动 `-startup` 拉起并等 DB 加载；未安装时可通过诊断对话框 winget 安装
+- **依赖自动补齐**：Everything.exe 未运行时自动 `-startup` 拉起并等 DB 加载；未安装时可通过诊断对话框 winget 安装
 - **诊断界面**：`src/renderer/components/dialogs/EverythingDebugDialog.tsx`（设置 → 常规 → Everything 搜索旁的"Everything 诊断"按钮），1 秒轮询实时状态 + 测试搜索 + 实时日志
 - Everything 不可用时静默回退索引搜索，并把原因通过 `everythingSearchUnavailable` 通知用户
+- voidtools 官方安装包不带 es.exe，TagSpaces 自带一份 64 位副本（freeware）。ES 退出码：0=成功，8=找不到 Everything IPC（未运行）。
 
 **索引格式**：`<location>/.ts/tsi.json`（主索引）+ `.ts/tsft.jsonl`（全文索引），详见 `CLAUDE.md` 的 Indexing & Search 章节
 
-### Everything 搜索调试战报（2026-08-16，6.15.0→6.15.9）
+### Everything 搜索调试战报（2026-08-16，6.15.0→6.15.9）——历史记录（koffi 方案已移除）
 
-**当前状态（2026-08-19 更新）：渲染层展示问题已修复，待 Windows 实机验证。** 详见 `REPORT-2026-08-19-everything-renderer.md`。
+> ⚠️ 以下战报来自旧的 **koffi + Everything64.dll** 实现（2026-09-25 已整体换为 es.exe，见上文新说明）。表格里的 koffi 具体坑（`lib.func()` 挂载、`koffi.out` 类型、`str16` 读不回数据等）只适用于已删除代码，**不要再按此调试**。IPC 常量（`EVERYTHING_WM_IPC=0x0400`/`IS_DB_LOADED=401`）和 UIPI 拦截知识对理解 es.exe 行为仍有参考价值。
+
+**当年状态（2026-08-19 更新）：渲染层展示问题已修复，待 Windows 实机验证。** 详见 `REPORT-2026-08-19-everything-renderer.md`。
 
 核心根因与修复（均已改代码）：
 1. **无打开的 location 时 `RenderPerspective` 渲染 WelcomePanel/null，搜索结果永远不显示**（核心根因）→ `showWelcomePanel = !currentLocationId && !isSearchMode`
@@ -121,13 +124,8 @@
 
 > 完整审查与修复记录见 [`TODO-file-version-cleanup-review.md`](TODO-file-version-cleanup-review.md)（含遗留 P2 项）。
 
-### 原生依赖（koffi）打包注意事项
+### 打包注意事项（2026-09-25 起：无原生依赖）
 
-- koffi 的原生 `.node` 二进制按平台分包发布（`@koromix/koffi-<os>-<arch>`）。
-- 在 macOS 上交叉打包 Windows/Linux 时，`npm install` 只会安装 darwin 平台包，导致目标平台
-  运行时报 `Cannot find the native Koffi module`。
-- 打包脚本已内置 `install-koffi-{win,linux}-{x64,arm64}` 步骤（调用
-  `scripts/install-koffi-platform.js`），会在 `electron-builder` 前把目标平台的 koffi
-  原生包强制安装到 `release/app/node_modules`。**打包前勿手动删除这些平台包**。
-- 若新增其他带原生模块的依赖（如 wasm-vips、jszip 之外的 native 包），需同样确保
-  目标平台的原生二进制被打入包内。
+- koffi 及其 `install-koffi-*` 步骤已全部移除（package.json 脚本、`scripts/install-koffi-platform.js`、CI 校验）。
+- Everything 集成靠自带 **`resources/everything/es.exe`**（64 位 freeware；通过 `resources/builder.json` extraResources 打进包内，运行时在 `process.resourcesPath/everything/es.exe`）。非 x64 机器没有自带 es.exe 时，回退用 Everything 安装目录旁的 es.exe。
+- 若新增其他带原生模块的依赖（如 wasm-vips 之类），需确保目标平台的原生二进制被打入包内。

@@ -47,7 +47,7 @@ interface DebugEntry {
 
 interface DebugInfo {
   platform: string;
-  dllPath?: string;
+  esPath?: string;
   exePath?: string;
   customPath?: string;
   everythingInstalled: boolean;
@@ -336,7 +336,7 @@ function EverythingDebugDialog(props: Props) {
                 : '-',
             )}
             {row('Everything.exe', info.exePath || '-')}
-            {row('Everything SDK dll', info.dllPath || '-')}
+            {row('es.exe', info.esPath || '-')}
             {row(t('core:everythingDebugCustomPath'), info.customPath || '-')}
             {row(
               t('core:everythingDebugLastError'),

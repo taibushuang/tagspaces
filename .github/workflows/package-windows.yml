@@ -71,7 +71,7 @@ jobs:
           path: builds/tagspaces-win-x64-*.exe
           if-no-files-found: ignore
 
-      - name: Verify koffi module included
+      - name: Verify Everything es.exe module included
         shell: pwsh
         run: |
           $zipPath = Get-ChildItem -Path builds/tagspaces-win-x64-*.zip | Select-Object -First 1
@@ -79,12 +79,12 @@ jobs:
             Write-Error "No zip file found in builds/"
             exit 1
           }
-          Write-Host "Checking koffi in $zipPath..."
-          $entries = & unzip -l $zipPath.FullName | Select-String -Pattern "koffi"
+          Write-Host "Checking es.exe in $zipPath..."
+          $entries = & unzip -l $zipPath.FullName | Select-String -Pattern "resources/everything"
           if ($entries) {
-            Write-Host "✅ koffi module found:"
+            Write-Host "✅ es.exe found:"
             $entries | ForEach-Object { Write-Host $_ }
           } else {
-            Write-Error "❌ koffi module NOT found in package!"
+            Write-Error "❌ es.exe NOT found in package!"
             exit 1
           }

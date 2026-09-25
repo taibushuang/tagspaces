@@ -20,7 +20,6 @@
     "@tagspaces/extensions": "1.0.254",
     "@tagspaces/tagspaces-common-node": "4.8.8",
     "@tagspaces/tagspaces-ws": "4.8.8",
-    "koffi": "3.1.4",
     "wasm-vips": "0.0.17",
     "ws": "8.19.0"
   },

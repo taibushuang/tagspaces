@@ -1,24 +1,28 @@
 /**
- * Everything SDK wrapper for TagSpaces Windows desktop.
+ * Everything search adapter for TagSpaces Windows desktop.
  *
- * Uses koffi to load Everything.dll (64/32-bit) and provides a safe,
- * serialised search interface. All calls go through the W (Unicode) APIs
- * so Chinese paths are handled correctly.
+ * Uses voidtools' es.exe (the official Everything command-line interface)
+ * instead of the C SDK. This removes the koffi FFI layer entirely — no native
+ * bindings, no arch-specific Everything.dll loading, no per-platform install
+ * scripts. es.exe talks to the running Everything client over IPC and writes
+ * UTF-8 TSV to a temp file, so Chinese paths survive round-trips.
  *
- * DLL discovery order:
- *   1. Custom path from settings (install dir, exe or dll path)
- *   2. Registry: HKCU/HKLM App Paths, Uninstall InstallLocation, Run key,
- *      Everything service ImagePath (SYSTEM\CurrentControlSet\Services)
- *   3. Default:  C:\Program Files\Everything[64].dll / (x86)\Everything32.dll
- *   4. Fallback: bundled SDK dll shipped under resources/everything/
+ * es.exe discovery order:
+ *   1. Custom path from settings (install dir, Everything.exe or es.exe path)
+ *   2. Next to Everything.exe (located via registry App Paths / Uninstall /
+ *      Run key / service ImagePath — read through PowerShell so non-ASCII
+ *      install paths like D:\软件\Everything are handled correctly)
+ *   3. Default: C:\Program Files\Everything\es.exe / (x86)\Everything\es.exe
+ *   4. Fallback: bundled es.exe shipped under resources/everything/
  *
  * This module is lazy-loaded in mainEvents.ts **only on win32** to avoid
  * crashing the macOS development machine.
  */
 
-import koffi, { LibraryHandle } from 'koffi';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import { spawn, execFileSync, execSync, exec } from 'child_process';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,10 +64,22 @@ export interface EverythingSearchResponse {
 // Constants
 // ---------------------------------------------------------------------------
 
-const REQUEST_FLAGS = 0x54; // FULL_PATH | SIZE | DATE_MODIFIED
 const DEFAULT_MAX_RESULTS = 200;
 const AVAILABILITY_CACHE_TTL_MS = 30000;
-const PATH_BUF_SIZE = 32767; // Windows max path length
+const DEBUG_LOG_MAX = 300;
+const AUTOSTART_THROTTLE_MS = 60000;
+// First-run indexing can take a while (real-world reports: 1.5b first build
+// 30-60s+). Negative results are never cached, so the next search re-probes
+// anyway — this timeout only bounds the explicit wait loop.
+const DB_LOAD_TIMEOUT_MS = 120000;
+const PROBE_CACHE_TTL_MS = 5000;
+// es.exe exits non-zero when it cannot reach Everything; error 8 = IPC window
+// not found (Everything not running in this session).
+const ES_EXIT_IPC_NOT_FOUND = 8;
+// How long es.exe waits for the Everything DB to load before answering.
+const ES_TIMEOUT_MS = 3000;
+// Seconds between auto-start DB polling.
+const DB_POLL_MS = 1000;
 
 /** YYYYMMDD in local time (Everything dm:/dc: ranges are local-time based). */
 function formatLocalDate(d: Date): string {
@@ -71,12 +87,6 @@ function formatLocalDate(d: Date): string {
   const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}${month}${day}`;
 }
-const DEBUG_LOG_MAX = 300;
-const AUTOSTART_THROTTLE_MS = 60000;
-// First-run indexing can take a while (real-world reports: 1.5b first build
-// 30-60s+). Negative results are never cached, so the next search re-probes
-// anyway — this timeout only bounds the explicit wait loop.
-const DB_LOAD_TIMEOUT_MS = 120000;
 
 // ---------------------------------------------------------------------------
 // Debug log (ring buffer, surfaced in the Everything debug dialog)
@@ -111,169 +121,84 @@ let lastAutoStartAt = 0;
 let autoStartInFlight: Promise<boolean> | undefined;
 
 // ---------------------------------------------------------------------------
-// DLL Discovery
+// Registry access (Unicode-safe via PowerShell). reg.exe prints OEM-codepage
+// text and execSync(encoding:'utf8') mangles non-ASCII install paths
+// (e.g. D:\软件\Everything → U+FFFD garbage). Forcing PowerShell's console to
+// UTF-8 round-trips real Unicode. Results are cached behind findEverythingExe
+// so the few hundred ms of PS startup only happens on a probe cache miss.
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// Native registry access (koffi / advapi32). reg.exe prints OEM-codepage text
-// and execSync(encoding:'utf8') mangles non-ASCII install paths
-// (e.g. D:\软件\Everything → U+FFFD garbage, fs.existsSync() then fails).
-// RegQueryValueExW returns true Unicode with no codepage involved.
-// ---------------------------------------------------------------------------
-
-const HKEY_CURRENT_USER = 0x80000001;
-const HKEY_LOCAL_MACHINE = 0x80000002;
-const KEY_READ_WOW64_64 = 0x20019 | 0x0100; // KEY_READ | KEY_WOW64_64KEY
-const REG_SZ = 1;
-const REG_EXPAND_SZ = 2;
-const ERROR_MORE_DATA = 234;
-
-let regApi:
-  | { openKey: any; queryValue: any; closeKey: any }
-  | undefined
-  | null;
-
-function getRegApi() {
-  if (regApi !== undefined) return regApi || undefined;
+function readRegValue(subKey: string, valueName: string): string | undefined {
+  // GetValue('') reads the key's default (unnamed) value.
+  const quotedName =
+    valueName === '' ? "''" : `'${valueName.replace(/'/g, "''")}'`;
+  const script =
+    '[Console]::OutputEncoding=[Text.Encoding]::UTF8; ' +
+    `$k=Get-Item -LiteralPath 'Registry::${subKey.replace(/'/g, "''")}' -ErrorAction SilentlyContinue; ` +
+    `if($k){$v=$k.GetValue(${quotedName}); if($null -ne $v){$v.ToString()}} else {''}`;
   try {
-    const advapi32 = koffi.load('advapi32.dll');
-    regApi = {
-      // LSTATUS RegOpenKeyExW(HKEY, LPCWSTR, DWORD, DWORD samDesired, PHKEY)
-      openKey: advapi32.func('RegOpenKeyExW', 'int', [
-        'uintptr',
-        'str16',
-        'uint32',
-        'uint32',
-        koffi.out(koffi.pointer('uintptr')),
-      ]),
-      // LSTATUS RegQueryValueExW(HKEY, LPCWSTR, LPDWORD reserved,
-      //   LPDWORD type, LPBYTE data, LPDWORD cbData)
-      // cbData is IN+OUT (in: buffer capacity, out: bytes written/required)
-      // — declared as plain koffi.out() it loses the initial value and every
-      // call fails with ERROR_MORE_DATA.
-      queryValue: advapi32.func('RegQueryValueExW', 'int', [
-        'uintptr',
-        'str16',
-        'uintptr', // reserved — pass 0 (NULL)
-        koffi.out(koffi.pointer('uint32')),
-        koffi.out(koffi.pointer('uint8')),
-        koffi.inout(koffi.pointer('uint32')),
-      ]),
-      closeKey: advapi32.func('RegCloseKey', 'int', ['uintptr']),
-    };
-    return regApi;
-  } catch (err: any) {
-    logDebug('error', `Failed to bind advapi32 registry API: ${err.message}`);
-    regApi = null;
-    return undefined;
-  }
-}
-
-/** Read a REG_SZ/REG_EXPAND_SZ value; undefined when missing/non-string. */
-function readRegString(
-  root: number,
-  subKey: string,
-  valueName = '', // '' = default (unnamed) value
-): string | undefined {
-  const api = getRegApi();
-  if (!api) return undefined;
-  let hkeyOut = [0n];
-    const openRc = api.openKey(root, subKey, 0, KEY_READ_WOW64_64, hkeyOut);
-    if (openRc !== 0) {
-      // rc=2 (key absent) is the common case while probing candidates — stay
-      // quiet; the caller logs a summary when nothing is found at all.
-      return undefined;
-    }
-  const hkey = hkeyOut[0];
-  try {
-    let buf = new Uint8Array(4096);
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const typeOut = [0];
-      const sizeOut = [buf.length];
-      const status = api.queryValue(hkey, valueName, 0, typeOut, buf, sizeOut);
-      if (status === 0) {
-        if (typeOut[0] !== REG_SZ && typeOut[0] !== REG_EXPAND_SZ) {
-          return undefined;
-        }
-        const byteLen = Math.min(Number(sizeOut[0]), buf.length);
-        const u16 = new Uint16Array(buf.buffer, 0, Math.floor(byteLen / 2));
-        let strLen = u16.indexOf(0);
-        if (strLen === -1) strLen = u16.length;
-        const value = Buffer.from(buf.buffer, 0, strLen * 2)
-          .toString('utf16le')
-          .trim();
-        return value.length > 0 ? value : undefined;
-      }
-      if (status === ERROR_MORE_DATA && attempt === 0) {
-        // sizeOut now holds the required size — grow and retry once
-        buf = new Uint8Array(Number(sizeOut[0]) + 2);
-        // eslint-disable-next-line no-continue
-        continue;
-      }
-      return undefined;
-    }
-    return undefined;
+    const out = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'buffer', windowsHide: true, timeout: 15000 },
+    );
+    const text = out.toString('utf8').trim();
+    return text.length > 0 ? text : undefined;
   } catch (err: any) {
     logDebug(
       'warn',
       `registry read failed (${subKey}\\${valueName}): ${err.message}`,
     );
     return undefined;
-  } finally {
-    try {
-      api.closeKey(hkey);
-    } catch {
-      /* handle already invalid */
-    }
   }
 }
 
-function splitRoot(regPath: string):
-  | { root: number; subKey: string }
-  | undefined {
-  const hklm = /^HKLM\\(.+)$/i.exec(regPath);
-  if (hklm) return { root: HKEY_LOCAL_MACHINE, subKey: hklm[1] };
-  const hkcu = /^HKCU\\(.+)$/i.exec(regPath);
-  if (hkcu) return { root: HKEY_CURRENT_USER, subKey: hkcu[1] };
-  return undefined;
-}
-
-/** Default (unnamed) value of a key like "HKLM\...\App Paths\Everything.exe". */
-function queryRegistry(regPath: string): string | undefined {
-  const parts = splitRoot(regPath);
-  return parts ? readRegString(parts.root, parts.subKey) : undefined;
-}
-
-/** Named value of a key like "HKLM\SOFTWARE\...\Uninstall\Everything". */
-function queryRegistryValue(
-  regPath: string,
-  valueName: string,
-): string | undefined {
-  const parts = splitRoot(regPath);
-  return parts
-    ? readRegString(parts.root, parts.subKey, valueName)
-    : undefined;
-}
+// ---------------------------------------------------------------------------
+// es.exe / Everything.exe discovery
+// ---------------------------------------------------------------------------
 
 // Only log probe results when they change (the debug dialog polls every second)
 let lastExeProbe: string | null | undefined;
-let lastDllProbe: string | null | undefined;
+let lastEsProbe: string | null | undefined;
 
-// User-configured Everything location (install dir, Everything.exe or dll
-// path). Set from the renderer settings via IPC on every search.
+// User-configured Everything location (install dir, Everything.exe, es.exe or
+// a legacy dll path). Set from the renderer settings via IPC on every search.
 let customEverythingPath: string | undefined;
 
-// exe/running probing spawns sync child processes (reg.exe, tasklist.exe).
-// Cache the results so the debug dialog's 1s polling does not block the
-// Electron main process with several process spawns per second.
-const PROBE_CACHE_TTL_MS = 5000;
+// exe/running probing spawns sync child processes (powershell.exe,
+// tasklist.exe). Cache the results so the debug dialog's 1s polling does not
+// block the Electron main process with several process spawns per second.
 let probeCache:
   | { at: number; exePath: string | undefined; running: boolean }
   | undefined;
 
+/** Electron's process.resourcesPath (Node's Process type has no such field). */
+function getResourcesPath(): string | undefined {
+  const p = process as { resourcesPath?: string };
+  return p.resourcesPath;
+}
+
+/** Invalidate after install/start actions so the dialog reflects reality. */
+function invalidateProbeCache(): void {
+  probeCache = undefined;
+}
+
+function isEverythingRunning(): boolean {
+  try {
+    const output = execSync('tasklist /FI "IMAGENAME eq Everything.exe"', {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    return /Everything\.exe/i.test(output);
+  } catch (err: any) {
+    logDebug('warn', `tasklist check failed: ${err.message}`);
+    return false;
+  }
+}
+
 /**
- * Locate Everything.exe itself (used to auto-start the service and to find
- * the SDK dll next to it).
+ * Locate Everything.exe itself (used to auto-start it and to find es.exe next
+ * to it).
  */
 function findEverythingExe(): string | undefined {
   // Only accept real Everything executables — a custom path pointing at an
@@ -300,78 +225,79 @@ function findEverythingExe(): string | undefined {
   // 0. User-configured custom path (install dir, exe or dll path)
   if (customEverythingPath) {
     const p = customEverythingPath;
-    const customCandidates = /\.exe$/i.test(p)
-      ? [p]
-      : /\.dll$/i.test(p)
-        ? [path.join(path.dirname(p), 'Everything.exe')]
-        : [path.join(p, 'Everything.exe')];
-    for (const candidate of customCandidates) {
-      const hit = probe(candidate, 'custom path');
+    let customCandidates: string[];
+    if (/\.exe$/i.test(p)) {
+      customCandidates = [p];
+    } else if (/\.dll$/i.test(p)) {
+      customCandidates = [path.join(path.dirname(p), 'Everything.exe')];
+    } else {
+      customCandidates = [path.join(p, 'Everything.exe')];
+    }
+    for (let i = 0; i < customCandidates.length; i += 1) {
+      const hit = probe(customCandidates[i], 'custom path');
       if (hit) return hit;
     }
   }
 
-  // 1. Registry: App Paths
-  const regPaths = [
-    'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Everything.exe',
-    'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Everything.exe',
+  // 1. Registry: App Paths, Uninstall InstallLocation, Run key and the
+  //    Everything service ImagePath. ImagePath covers portable installs that
+  //    registered the service (Everything -svc).
+  const registryProbes: Array<{ key: string; value: string; how: string }> = [
+    {
+      key: 'HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Everything.exe',
+      value: '',
+      how: 'registry App Paths (HKCU)',
+    },
+    {
+      key: 'HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Everything.exe',
+      value: '',
+      how: 'registry App Paths (HKLM)',
+    },
+    {
+      key: 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Everything',
+      value: 'InstallLocation',
+      how: 'registry Uninstall key',
+    },
+    {
+      key: 'HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Everything',
+      value: 'InstallLocation',
+      how: 'registry Uninstall key (WOW6432Node)',
+    },
+    {
+      key: 'HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run',
+      value: 'Everything',
+      how: 'registry Run key',
+    },
+    {
+      key: 'HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\Everything',
+      value: 'ImagePath',
+      how: 'Everything service ImagePath',
+    },
   ];
-  for (const regPath of regPaths) {
-    const hit = probe(queryRegistry(regPath), 'registry App Paths');
-    if (hit) return hit;
-  }
-
-  // 2. Registry: Uninstall key (Everything installer writes InstallLocation).
-  //    MSI builds register under a product GUID subkey instead — not
-  //    enumerable cheaply; those installs land in the default dir anyway.
-  const uninstallKeys = [
-    'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Everything',
-    'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Everything',
-    'HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Everything',
-  ];
-  for (const key of uninstallKeys) {
-    const location = queryRegistryValue(key, 'InstallLocation');
-    if (location) {
-      const hit = probe(
-        path.join(location, 'Everything.exe'),
-        'registry Uninstall key',
-      );
-      if (hit) return hit;
+  for (let i = 0; i < registryProbes.length; i += 1) {
+    const { key, value, how } = registryProbes[i];
+    const data = readRegValue(key, value);
+    if (!data) {
+      // eslint-disable-next-line no-continue -- skip absent registry values
+      continue;
     }
-  }
-
-  // 3. Registry: autostart Run key — value is a command line like
-  //    "C:\Program Files\Everything\Everything.exe" -startup
-  const runKeys = [
-    'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run',
-    'HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run',
-  ];
-  for (const key of runKeys) {
-    const cmdLine = queryRegistryValue(key, 'Everything');
-    if (cmdLine) {
-      const match = cmdLine.match(/^"?([^"]+?\.exe)/i);
+    if (
+      how.startsWith('registry Run key') ||
+      how.startsWith('Everything service')
+    ) {
+      // Command line like "C:\...\Everything.exe" -startup / "-svc"
+      const match = /^"?([^"]+?\.exe)/i.exec(data.trim());
       if (match) {
-        const hit = probe(match[1], 'registry Run key');
+        const hit = probe(match[1], how);
         if (hit) return hit;
       }
-    }
-  }
-
-  // 3b. Everything Service registration — ImagePath points at the exe even
-  //     when neither App Paths nor an Uninstall entry exists.
-  const svcCmd = queryRegistryValue(
-    'HKLM\\SYSTEM\\CurrentControlSet\\Services\\Everything',
-    'ImagePath',
-  );
-  if (svcCmd) {
-    const match = /^"?([^"]+?\.exe)/i.exec(svcCmd.trim());
-    if (match) {
-      const hit = probe(match[1], 'Everything service ImagePath');
+    } else {
+      const hit = probe(path.join(data, 'Everything.exe'), how);
       if (hit) return hit;
     }
   }
 
-  // 4. Default paths (machine-scope installs; LOCALAPPDATA kept as a cheap
+  // 2. Default paths (machine-scope installs; LOCALAPPDATA kept as a cheap
   //    fallback for portable/per-user setups)
   const candidates = [
     'C:\\Program Files\\Everything\\Everything.exe',
@@ -387,8 +313,8 @@ function findEverythingExe(): string | undefined {
         ]
       : []),
   ];
-  for (const candidate of candidates) {
-    const hit = probe(candidate, 'default path');
+  for (let i = 0; i < candidates.length; i += 1) {
+    const hit = probe(candidates[i], 'default path');
     if (hit) return hit;
   }
   if (lastExeProbe !== null) {
@@ -401,217 +327,161 @@ function findEverythingExe(): string | undefined {
   return undefined;
 }
 
-function findDllPath(): string | undefined {
-  // 0. User-configured custom path (dir, exe or dll)
+function findEsPath(): string | undefined {
+  // 0. User-configured custom path (install dir, Everything.exe, es.exe or a
+  //    legacy dll path)
   if (customEverythingPath) {
     const p = customEverythingPath;
-    if (/\.dll$/i.test(p) && fs.existsSync(p)) {
-      logDebug('info', `Using custom Everything dll: ${p}`);
-      return p;
-    }
-    const dir = /\.exe$/i.test(p) ? path.dirname(p) : p;
-    for (const name of [
-      'Everything64.dll',
-      'Everything32.dll',
-      'Everything.dll',
-    ]) {
-      const dll = path.join(dir, name);
-      if (fs.existsSync(dll)) {
-        logDebug('info', `Using dll from custom Everything path: ${dll}`);
-        return dll;
+    if (/\.exe$/i.test(p) && /^es(\.exe)?$/i.test(path.basename(p))) {
+      if (fs.existsSync(p)) {
+        logDebug('info', `Using custom es.exe: ${p}`);
+        return p;
       }
     }
-    logDebug('warn', `Custom Everything path set but no dll found: ${p}`);
+    let dir = p;
+    if (/\.dll$/i.test(p) || /\.exe$/i.test(p)) {
+      dir = path.dirname(p);
+    }
+    const custom = path.join(dir, 'es.exe');
+    if (fs.existsSync(custom)) {
+      logDebug('info', `Using es.exe from custom Everything path: ${custom}`);
+      return custom;
+    }
+    logDebug('warn', `Custom Everything path set but no es.exe found: ${p}`);
   }
 
-  // 1. Next to Everything.exe (registry App Paths)
+  // 1. Next to Everything.exe
   const exe = findEverythingExe();
   if (exe) {
-    const exeDir = path.dirname(exe);
-    // Everything 1.4 ships Everything64.dll/Everything32.dll; some installs
-    // only carry the plain Everything.dll — accept all three.
-    for (const name of [
-      'Everything64.dll',
-      'Everything32.dll',
-      'Everything.dll',
-    ]) {
-      const dll = path.join(exeDir, name);
-      if (fs.existsSync(dll)) {
-        if (lastDllProbe !== dll) {
-          lastDllProbe = dll;
-          logDebug('info', `SDK dll found next to Everything.exe: ${dll}`);
-        }
-        return dll;
+    const candidate = path.join(path.dirname(exe), 'es.exe');
+    if (fs.existsSync(candidate)) {
+      if (lastEsProbe !== candidate) {
+        lastEsProbe = candidate;
+        logDebug('info', `es.exe found next to Everything.exe: ${candidate}`);
       }
+      return candidate;
     }
-    logDebug('warn', `No Everything SDK dll found next to ${exe}`);
   }
 
   // 2. Default install paths
   const candidates = [
-    'C:\\Program Files\\Everything\\Everything64.dll',
-    'C:\\Program Files (x86)\\Everything\\Everything32.dll',
-    'C:\\Program Files\\Everything\\Everything.dll',
-    'C:\\Program Files (x86)\\Everything\\Everything.dll',
+    'C:\\Program Files\\Everything\\es.exe',
+    'C:\\Program Files (x86)\\Everything\\es.exe',
   ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      if (lastDllProbe !== candidate) {
-        lastDllProbe = candidate;
-        logDebug('info', `SDK dll found at default path: ${candidate}`);
+  for (let i = 0; i < candidates.length; i += 1) {
+    if (fs.existsSync(candidates[i])) {
+      if (lastEsProbe !== candidates[i]) {
+        lastEsProbe = candidates[i];
+        logDebug('info', `es.exe found at default path: ${candidates[i]}`);
       }
-      return candidate;
+      return candidates[i];
     }
   }
 
-  // 3. Bundled SDK dll shipped with TagSpaces (the voidtools installer
-  // does not include the SDK dll, so we carry our own copy).
+  // 3. Bundled es.exe shipped with TagSpaces (many Everything installs do not
+  //    include ES, so we carry our own copy).
   const bundled = [
-    ...(process.resourcesPath
-      ? [path.join(process.resourcesPath, 'everything', 'Everything64.dll')]
+    ...(getResourcesPath()
+      ? [path.join(getResourcesPath() as string, 'everything', 'es.exe')]
       : []),
-    path.join(process.cwd(), 'resources', 'everything', 'Everything64.dll'), // dev
+    path.join(process.cwd(), 'resources', 'everything', 'es.exe'), // dev
   ];
-  for (const candidate of bundled) {
-    if (fs.existsSync(candidate)) {
-      if (lastDllProbe !== candidate) {
-        lastDllProbe = candidate;
-        logDebug('info', `Using bundled Everything SDK dll: ${candidate}`);
+  for (let i = 0; i < bundled.length; i += 1) {
+    if (fs.existsSync(bundled[i])) {
+      if (lastEsProbe !== bundled[i]) {
+        lastEsProbe = bundled[i];
+        logDebug('info', `Using bundled es.exe: ${bundled[i]}`);
       }
-      return candidate;
+      return bundled[i];
     }
   }
 
-  if (lastDllProbe !== null) {
-    lastDllProbe = null;
-    logDebug('error', 'Everything SDK dll not found anywhere.');
+  if (lastEsProbe !== null) {
+    lastEsProbe = null;
+    logDebug(
+      'error',
+      'es.exe not found anywhere (install Everything or set a custom path).',
+    );
   }
   return undefined;
 }
-
-// ---------------------------------------------------------------------------
-// koffi bindings
-// ---------------------------------------------------------------------------
-
-let dllPath: string | undefined;
-let lib: LibraryHandle | undefined;
-// koffi's lib.func() does NOT attach the function to the library object —
-// keep explicit references here. (Accessing lib.Everything_Xxx silently
-// yields undefined and every call throws.)
-let api: Record<string, any> | undefined;
-let isAvailable = false;
-let availabilityCheckedAt = 0;
-let availabilityError: string | undefined;
 
 export function setCustomEverythingPath(p?: string): void {
   const normalized = p && p.trim() ? p.trim() : undefined;
   if (normalized === customEverythingPath) return;
   customEverythingPath = normalized;
   logDebug('info', `Custom Everything path set: ${normalized ?? '(cleared)'}`);
-  // Force dll re-resolution on next use (old handle stays loaded in memory,
-  // koffi cannot unload — harmless).
-  lib = undefined;
-  dllPath = undefined;
-  isAvailable = false;
-  availabilityCheckedAt = 0;
-  lastDllProbe = undefined;
+  lastEsProbe = undefined;
   lastExeProbe = undefined;
   invalidateProbeCache();
 }
 
-// FILETIME struct for koffi
-const FILETIME = koffi.struct('FILETIME', {
-  dwLowDateTime: 'uint32',
-  dwHighDateTime: 'uint32',
-});
+// ---------------------------------------------------------------------------
+// es.exe process handling
+// ---------------------------------------------------------------------------
 
-function loadLibrary(): boolean {
-  if (lib) return true;
+interface EsRunResult {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
 
-  dllPath = findDllPath();
-  if (!dllPath) {
-    availabilityError = 'Everything.dll not found. Is Everything installed?';
-    logDebug('error', availabilityError);
-    return false;
+/**
+ * Run es.exe with the given args. Resolves with exit code + output. `code`
+ * is null if the process could not be spawned at all.
+ */
+function runEs(
+  args: string[],
+  timeoutMs = ES_TIMEOUT_MS,
+): Promise<EsRunResult> {
+  const es = findEsPath();
+  if (!es) {
+    return Promise.resolve({
+      code: -1,
+      stdout: '',
+      stderr: 'es.exe not found',
+    });
   }
-
-  try {
-    lib = koffi.load(dllPath);
-
-    // Declare W (Unicode) functions — keep the returned callables!
-    api = {
-      SetSearchW: lib.func('Everything_SetSearchW', 'void', ['str16']),
-      SetMax: lib.func('Everything_SetMax', 'void', ['uint32']),
-      SetRequestFlags: lib.func('Everything_SetRequestFlags', 'void', [
-        'uint32',
-      ]),
-      // Win32 BOOL is a 4-byte int; koffi 'bool' is 1 byte — declare as int.
-      QueryW: lib.func('Everything_QueryW', 'int', ['int']),
-      GetNumResults: lib.func('Everything_GetNumResults', 'uint32', []),
-      GetTotResults: lib.func('Everything_GetTotResults', 'uint32', []),
-      GetResultFullPathNameW: lib.func(
-        'Everything_GetResultFullPathNameW',
-        'uint32',
-        // str16 out-buffers must be real typed arrays passed through a
-        // pointer type — koffi.out('str16') with a prefilled string
-        // silently returns nothing (prototype-style `_Out_ char *` is the
-        // only form that supports string buffers, per koffi docs).
-        ['uint32', koffi.out(koffi.pointer('uint16')), 'uint32'],
-      ),
-      GetResultSize: lib.func('Everything_GetResultSize', 'void', [
-        'uint32',
-        // koffi.out() only accepts pointer or string types — scalar out-params
-        // must be wrapped in koffi.pointer(). Call site passes [0n].
-        koffi.out(koffi.pointer('int64')),
-      ]),
-      GetResultDateModified: lib.func(
-        'Everything_GetResultDateModified',
-        'void',
-        ['uint32', koffi.out(koffi.pointer(FILETIME))],
-      ),
-      IsFileResult: lib.func('Everything_IsFileResult', 'int', ['uint32']),
-      IsFolderResult: lib.func('Everything_IsFolderResult', 'int', ['uint32']),
-      GetLastError: lib.func('Everything_GetLastError', 'uint32', []),
-      IsDBLoaded: lib.func('Everything_IsDBLoaded', 'int', []),
-    };
-
-    return true;
-  } catch (err: any) {
-    availabilityError = `Failed to load Everything.dll (${dllPath}): ${err.message} — file may be corrupt or built for another CPU architecture`;
-    logDebug('error', availabilityError);
-    lib = undefined;
-    api = undefined;
-    return false;
-  }
+  return new Promise((resolve) => {
+    // -timeout gives the Everything DB a grace window while it loads.
+    const child = spawn(es, ['-timeout', String(timeoutMs), ...args], {
+      windowsHide: true,
+    });
+    const stdoutChunks: any[] = [];
+    const stderrChunks: any[] = [];
+    child.stdout.on('data', (d: Buffer) => {
+      stdoutChunks.push(d);
+    });
+    child.stderr.on('data', (d: Buffer) => {
+      stderrChunks.push(d);
+    });
+    child.on('error', (err: any) => {
+      logDebug('error', `es.exe spawn failed: ${err.message}`);
+      resolve({ code: -1, stdout: '', stderr: err.message });
+    });
+    child.on('close', (code) => {
+      resolve({
+        code,
+        stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+        stderr: Buffer.concat(stderrChunks).toString('utf8'),
+      });
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Auto-remediation: start Everything.exe when it is installed but not running
 // ---------------------------------------------------------------------------
 
-function isEverythingRunning(): boolean {
-  try {
-    const { execSync } = require('child_process');
-    const output = execSync('tasklist /FI "IMAGENAME eq Everything.exe"', {
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-    return /Everything\.exe/i.test(output);
-  } catch (err: any) {
-    logDebug('warn', `tasklist check failed: ${err.message}`);
-    return false;
-  }
-}
-
 /**
  * Whether TagSpaces itself runs elevated (High Mandatory Level).
- * Relevant because Windows UIPI silently drops window messages sent to a
- * MORE privileged process — if Everything runs as admin and we do not,
- * every SDK call fails. S-1-16-12288 = high integrity level SID.
+ * Relevant because Windows UIPI silently drops window messages sent to a MORE
+ * privileged process — es.exe talks to Everything over the same window-message
+ * IPC, so if Everything runs as admin and we do not, every query fails with
+ * the IPC-not-found error. S-1-16-12288 = high integrity level SID.
  */
 function isSelfElevated(): boolean {
   try {
-    const { execSync } = require('child_process');
     const output = execSync('whoami /groups', {
       encoding: 'utf8',
       windowsHide: true,
@@ -622,138 +492,8 @@ function isSelfElevated(): boolean {
   }
 }
 
-function isDbLoaded(): boolean {
-  try {
-    return api ? api.IsDBLoaded() !== 0 : false;
-  } catch (err: any) {
-    logDebug('error', `IsDBLoaded call failed: ${err.message}`);
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Low-level IPC probe (bypasses the SDK dll to split failure causes)
-// ---------------------------------------------------------------------------
-
-// From the official SDK (ipc/everything_ipc.h):
-//   window class  = EVERYTHING_TASKBAR_NOTIFICATION
-//   EVERYTHING_WM_IPC = WM_USER (0x0400), IS_DB_LOADED command = 401
-const EVERYTHING_IPC_WNDCLASS = 'EVERYTHING_TASKBAR_NOTIFICATION';
-const EVERYTHING_WM_IPC = 0x0400;
-const EVERYTHING_IPC_IS_DB_LOADED = 401;
-const SMTO_BLOCK_ABORTIFHUNG = 0x0003; // SMTO_BLOCK | SMTO_ABORTIFHUNG
-
-let ipcFuncs: { FindWindowW: any; SendMessageTimeoutW: any } | undefined | null;
-
-function getIpcFuncs() {
-  if (ipcFuncs !== undefined) return ipcFuncs;
-  try {
-    const user32 = koffi.load('user32.dll');
-    const FindWindowW = user32.func('FindWindowW', 'uintptr', [
-      'str16',
-      'str16',
-    ]);
-    const SendMessageTimeoutW = user32.func('SendMessageTimeoutW', 'int64', [
-      'uintptr',
-      'uint32',
-      'uintptr',
-      'uintptr',
-      'uint32',
-      'uint32',
-      koffi.out(koffi.pointer('uint64')),
-    ]);
-    ipcFuncs = { FindWindowW, SendMessageTimeoutW };
-  } catch (err: any) {
-    logDebug('error', `Failed to bind user32 IPC probe: ${err.message}`);
-    ipcFuncs = null;
-  }
-  return ipcFuncs;
-}
-
-export interface IpcProbeResult {
-  windowFound: boolean;
-  sendMessageOk: boolean;
-  dbLoaded?: boolean;
-  error?: string;
-}
-
 /**
- * The SDK's IsDBLoaded() collapses three distinct failures into one false:
- *  1. Everything window not found (not running / different session / 1.5
- *     named instance with a different window class)
- *  2. SendMessage blocked (UIPI privilege isolation)
- *  3. DB genuinely not loaded yet
- * This probe separates them via direct user32 calls.
- */
-export function probeIpc(): IpcProbeResult {
-  try {
-    const funcs = getIpcFuncs();
-    if (!funcs) {
-      return {
-        windowFound: false,
-        sendMessageOk: false,
-        error: 'user32 bindings unavailable',
-      };
-    }
-    const hwnd = Number(funcs.FindWindowW(EVERYTHING_IPC_WNDCLASS, null));
-    if (!hwnd) {
-      return {
-        windowFound: false,
-        sendMessageOk: false,
-        error:
-          'Everything IPC window not found. Everything is not running in this session, or it is a 1.5 named instance.',
-      };
-    }
-    const resultOut = [0n];
-    const ret = funcs.SendMessageTimeoutW(
-      hwnd,
-      EVERYTHING_WM_IPC,
-      EVERYTHING_IPC_IS_DB_LOADED,
-      0,
-      SMTO_BLOCK_ABORTIFHUNG,
-      2000,
-      resultOut,
-    );
-    if (ret === 0 || ret === 0n) {
-      return {
-        windowFound: true,
-        sendMessageOk: false,
-        error:
-          'IPC window found but SendMessage failed/timed out — privilege isolation (UIPI) or a hung Everything.',
-      };
-    }
-    return {
-      windowFound: true,
-      sendMessageOk: true,
-      dbLoaded: resultOut[0] !== 0n,
-    };
-  } catch (err: any) {
-    return {
-      windowFound: false,
-      sendMessageOk: false,
-      error: `IPC probe error: ${err.message}`,
-    };
-  }
-}
-
-function getProbeCached(): { exePath: string | undefined; running: boolean } {
-  if (!probeCache || Date.now() - probeCache.at > PROBE_CACHE_TTL_MS) {
-    probeCache = {
-      at: Date.now(),
-      exePath: findEverythingExe(),
-      running: isEverythingRunning(),
-    };
-  }
-  return probeCache;
-}
-
-/** Invalidate after install/start actions so the dialog reflects reality. */
-function invalidateProbeCache(): void {
-  probeCache = undefined;
-}
-
-/**
- * Launch Everything.exe and wait until its database is loaded.
+ * Launch Everything.exe and wait until es.exe can answer (database loaded).
  * Resolves true when the DB became ready within DB_LOAD_TIMEOUT_MS.
  */
 async function startEverythingAndWait(): Promise<boolean> {
@@ -766,7 +506,6 @@ async function startEverythingAndWait(): Promise<boolean> {
   logDebug('info', `Auto-starting Everything: ${exe}`);
   const spawned = await new Promise<boolean>((resolve) => {
     try {
-      const { spawn } = require('child_process');
       const child = spawn(exe, ['-startup'], {
         detached: true,
         stdio: 'ignore',
@@ -794,7 +533,6 @@ async function startEverythingAndWait(): Promise<boolean> {
     // Fallback: cmd start goes through ShellExecute, which can show the UAC
     // prompt and launch elevated processes.
     try {
-      const { exec } = require('child_process');
       exec(`cmd /c start "" /min "${exe}" -startup`, { windowsHide: true });
       logDebug(
         'info',
@@ -811,9 +549,14 @@ async function startEverythingAndWait(): Promise<boolean> {
     // Polling requires a sequential await between probes.
     // eslint-disable-next-line no-await-in-loop
     await new Promise((resolve) => {
-      setTimeout(resolve, 1000);
+      setTimeout(resolve, DB_POLL_MS);
     });
-    if (lib && isDbLoaded()) {
+    // eslint-disable-next-line no-await-in-loop
+    const probe = await runEs(
+      ['-get-result-count', 'zz__es_probe', 'zz_nomatch_'],
+      2000,
+    );
+    if (probe.code === 0) {
       logDebug('info', 'Everything database is loaded after auto-start.');
       return true;
     }
@@ -835,7 +578,7 @@ async function startEverythingAndWait(): Promise<boolean> {
 
 /**
  * Throttled, in-flight-safe auto-start. Fired in the background whenever the
- * dll loads but the IPC/DB is not ready (Everything.exe not running yet).
+ * availability probe reports Everything is not reachable.
  */
 function triggerAutoStart(): void {
   if (autoStartInFlight) return;
@@ -853,19 +596,17 @@ export async function ensureEverythingRunning(): Promise<{
   success: boolean;
   message: string;
 }> {
-  if (!loadLibrary()) {
-    return { success: false, message: availabilityError || 'dll not found' };
-  }
-  if (isDbLoaded()) {
+  const probe = await runEs(
+    ['-get-result-count', 'zz__es_probe', 'zz_nomatch_'],
+    2000,
+  );
+  if (probe.code === 0) {
     return { success: true, message: 'Everything is already running.' };
   }
   lastAutoStartAt = Date.now();
   const ok = await startEverythingAndWait();
   invalidateProbeCache();
   if (ok) {
-    isAvailable = true;
-    availabilityCheckedAt = Date.now();
-    availabilityError = undefined;
     return { success: true, message: 'Everything started, database loaded.' };
   }
   return {
@@ -884,7 +625,6 @@ export function installEverything(): Promise<{
   output: string;
 }> {
   return new Promise((resolve) => {
-    const { exec } = require('child_process');
     logDebug('info', 'Attempting winget install of voidtools.Everything …');
     exec(
       'winget install --id voidtools.Everything -e --accept-source-agreements --accept-package-agreements --disable-interactivity',
@@ -905,15 +645,12 @@ export function installEverything(): Promise<{
           return;
         }
         logDebug('info', `winget install finished.\n${output}`);
-        // Re-probe dll/exe after installation and try to start Everything
+        // Re-probe exe after installation and try to start Everything
         // right away so the next search just works.
-        dllPath = undefined;
         lastExeProbe = undefined;
         invalidateProbeCache();
         lastAutoStartAt = 0;
-        if (loadLibrary()) {
-          triggerAutoStart();
-        }
+        triggerAutoStart();
         resolve({ success: true, output });
       },
     );
@@ -924,68 +661,155 @@ export function installEverything(): Promise<{
 // Availability check (cached)
 // ---------------------------------------------------------------------------
 
+let esAvailable = false;
+let availabilityCheckedAt = 0;
+let availabilityError: string | undefined;
+
+/**
+ * Synchronous reachability probe: exit code 0 means es.exe could answer
+ * Everything (DB loaded). Blocks the main process for a few ms at most.
+ * Used by checkAvailability()/getDebugInfo() which run on a query/UI tick.
+ */
+function probeEsSync(): EsRunResult {
+  const es = findEsPath();
+  if (!es) {
+    return { code: -1, stdout: '', stderr: 'es.exe not found' };
+  }
+  try {
+    const out = execFileSync(
+      es,
+      ['-timeout', '1500', '-get-result-count', 'zz__es_probe', 'zz_nomatch_'],
+      { encoding: 'buffer', windowsHide: true, timeout: 4000 },
+    );
+    return { code: 0, stdout: out.toString('utf8').trim(), stderr: '' };
+  } catch (err: any) {
+    const status = typeof err.status === 'number' ? err.status : -1;
+    const stderr =
+      err.stderr && Buffer.isBuffer(err.stderr)
+        ? err.stderr.toString('utf8').trim()
+        : err.message || '';
+    return { code: status, stdout: '', stderr };
+  }
+}
+
 function checkAvailability(): { available: boolean; error?: string } {
   const now = Date.now();
   if (now - availabilityCheckedAt < AVAILABILITY_CACHE_TTL_MS) {
-    return { available: isAvailable, error: availabilityError };
+    return { available: esAvailable, error: availabilityError };
   }
 
   availabilityCheckedAt = now;
   availabilityError = undefined;
 
-  if (!loadLibrary()) {
-    isAvailable = false;
+  if (!findEsPath()) {
+    esAvailable = false;
     return { available: false, error: availabilityError };
   }
 
-  try {
-    const dbLoaded = isDbLoaded();
-    if (!dbLoaded) {
-      isAvailable = false;
-      // Don't cache this state — re-probe on the next call so the search
-      // recovers as soon as Everything finishes loading its database.
-      availabilityCheckedAt = 0;
-      const ipc = probeIpc();
-      logDebug(
-        'warn',
-        `IPC probe: window=${ipc.windowFound} sendMessage=${ipc.sendMessageOk} dbLoaded=${ipc.dbLoaded ?? '-'}${
-          ipc.error ? ` (${ipc.error})` : ''
-        }`,
-      );
-      if (!ipc.windowFound) {
-        // No EVERYTHING_TASKBAR_NOTIFICATION window in THIS session. A
-        // service-only install (-svc) runs headless in session 0 — invisible
-        // to IPC here even though tasklist shows a process — so a user-
-        // session client must be started before queries can work.
-        availabilityError =
-          'No Everything client is running in this session (a service-only instance does not answer SDK IPC) — auto-start was triggered.';
-        logDebug('warn', availabilityError);
-        triggerAutoStart();
-      } else if (!ipc.sendMessageOk) {
-        // Window exists but messages are dropped: UIPI privilege isolation
-        // (Everything elevated, TagSpaces not) or a hung Everything.
-        availabilityError =
-          'Everything window found but IPC is blocked. If Everything runs as administrator while TagSpaces does not, disable "Run as administrator" for Everything.exe (Everything → Tools → Options → General) or run TagSpaces as administrator.';
-        logDebug('warn', availabilityError);
-      } else {
-        // IPC answers, database genuinely still loading (first index build).
-        availabilityError =
-          'Everything is reachable but its database is still loading — retry in a moment.';
-        logDebug('warn', availabilityError);
-      }
-      return { available: false, error: availabilityError };
-    }
-
-    isAvailable = true;
+  const probe = probeEsSync();
+  if (probe.code === 0) {
+    esAvailable = true;
     return { available: true };
-  } catch (err: any) {
-    isAvailable = false;
-    availabilityError = `Everything availability check failed: ${err.message}`;
-    logDebug('error', availabilityError);
-    availabilityCheckedAt = 0;
-    triggerAutoStart();
-    return { available: false, error: availabilityError };
   }
+  esAvailable = false;
+  // Don't cache this state — re-probe on the next call so the search
+  // recovers as soon as Everything finishes loading its database.
+  availabilityCheckedAt = 0;
+  availabilityError =
+    probe.stderr || `es.exe failed with exit code ${probe.code}`;
+  logDebug('warn', `es.exe availability probe failed: ${availabilityError}`);
+  if (probe.code === ES_EXIT_IPC_NOT_FOUND || probe.code === -1) {
+    logDebug('warn', 'Everything not reachable — auto-start was triggered.');
+    triggerAutoStart();
+  }
+  return { available: false, error: availabilityError };
+}
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+/** Build the query es.exe should run, merging base query + options. */
+function buildQuery(query: string, options: EverythingSearchOptions): string {
+  let everythingQuery = query || '';
+
+  if (options.pathPrefix) {
+    let prefix = options.pathPrefix;
+    if (!prefix.endsWith('\\') && !prefix.endsWith('/')) {
+      prefix += '\\';
+    }
+    everythingQuery += ` path:"${prefix}"`;
+  }
+
+  if (options.extensions && options.extensions.length > 0) {
+    everythingQuery += ` ext:${options.extensions.join(';')}`;
+  }
+
+  if (options.minSize !== undefined || options.maxSize !== undefined) {
+    const min = options.minSize ?? 0;
+    const max = options.maxSize ?? Number.MAX_SAFE_INTEGER;
+    everythingQuery += ` size:${min}-${max}`;
+  }
+
+  if (
+    options.modifiedAfter !== undefined ||
+    options.modifiedBefore !== undefined
+  ) {
+    const after = options.modifiedAfter
+      ? formatLocalDate(new Date(options.modifiedAfter))
+      : '';
+    const before = options.modifiedBefore
+      ? formatLocalDate(new Date(options.modifiedBefore))
+      : '';
+    everythingQuery += ` dm:${after}-${before}`;
+  }
+
+  return everythingQuery.trim();
+}
+
+/** FILETIME (100ns since 1601) → epoch ms. */
+function fileTimeToEpochMs(ft: bigint): number {
+  return Number((ft - 116444736000000000n) / 10000n);
+}
+
+/**
+ * Parse the UTF-8 TSV file es.exe -export-tsv wrote into EverythingResult[].
+ * Column order (requested on the command line):
+ *   [full path]  size  dm(FILETIME)  attributes
+ */
+function parseTsvFile(content: string): EverythingResult[] {
+  const results: EverythingResult[] = [];
+  const text = content.replace(/^\uFEFF/, '');
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line) {
+      // eslint-disable-next-line no-continue -- skip blank trailing lines
+      continue;
+    }
+    // Tab is never legal in a Windows filename, so split is safe.
+    const [rawPath, sizeStr, dmStr, attrsStr] = line.split('\t');
+    if (!rawPath) {
+      // eslint-disable-next-line no-continue -- skip malformed rows
+      continue;
+    }
+    // es.exe appends a trailing backslash to folder results.
+    // eslint-disable-next-line no-bitwise -- FILE_ATTRIBUTE_DIRECTORY flag
+    const isFolder = (Number(attrsStr) & 16) !== 0;
+    let fullPath = rawPath;
+    if (isFolder && (fullPath.endsWith('\\') || fullPath.endsWith('/'))) {
+      fullPath = fullPath.slice(0, -1);
+    }
+    const normalisedPath = fullPath.replace(/\\/g, '/');
+    results.push({
+      path: normalisedPath,
+      name: path.basename(normalisedPath),
+      isFile: !isFolder,
+      size: Number(sizeStr) || 0,
+      lmdt: dmStr ? fileTimeToEpochMs(BigInt(dmStr.replace(/\s/g, ''))) : 0,
+    });
+  }
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -1007,135 +831,103 @@ function enqueueSearch(
       return { available: false, results: [], error: avail.error };
     }
 
+    const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
+    const everythingQuery = buildQuery(query, options);
+
     try {
-      const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
-
-      // Build Everything query string
-      let everythingQuery = query || '';
-
-      if (options.pathPrefix) {
-        // path prefix must end with backslash to match contents
-        let prefix = options.pathPrefix;
-        if (!prefix.endsWith('\\') && !prefix.endsWith('/')) {
-          prefix += '\\';
-        }
-        everythingQuery += ` path:"${prefix}"`;
-      }
-
-      if (options.extensions && options.extensions.length > 0) {
-        everythingQuery += ` ext:${options.extensions.join(';')}`;
-      }
-
-      if (options.minSize !== undefined || options.maxSize !== undefined) {
-        const min = options.minSize ?? 0;
-        const max = options.maxSize ?? Number.MAX_SAFE_INTEGER;
-        everythingQuery += ` size:${min}-${max}`;
-      }
-
-      if (
-        options.modifiedAfter !== undefined ||
-        options.modifiedBefore !== undefined
-      ) {
-        const after = options.modifiedAfter
-          ? formatLocalDate(new Date(options.modifiedAfter))
-          : '';
-        const before = options.modifiedBefore
-          ? formatLocalDate(new Date(options.modifiedBefore))
-          : '';
-        everythingQuery += ` dm:${after}-${before}`;
-      }
-
-      // Set search parameters
-      lastQuery = everythingQuery.trim();
+      lastQuery = everythingQuery;
       lastQueryAt = Date.now();
-      logDebug('info', `Query: "${lastQuery}" (max ${maxResults})`);
-      api.SetSearchW(lastQuery);
-      api.SetMax(maxResults);
-      api.SetRequestFlags(REQUEST_FLAGS);
+      logDebug('info', `Query: "${everythingQuery}" (max ${maxResults})`);
 
-      // Execute query (true = block until results ready)
-      const success = api.QueryW(1);
-      if (!success) {
-        const lastErrorCode = api.GetLastError();
-        // Error 2 = EVERYTHING_ERROR_IPC: Everything.exe not reachable.
-        if (lastErrorCode === 2) {
+      const tmpFile = path.join(
+        os.tmpdir(),
+        `tagspaces-everything-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}.tsv`,
+      );
+
+      // One es.exe run answers the query (export to a temp file — stdout
+      // truncates non-ASCII); a second reports the un-capped match count.
+      const resultsPromise = runEs([
+        '-tsv',
+        '-no-header',
+        '-utf8-bom',
+        '-size',
+        '-dm',
+        '-date-format',
+        '2',
+        '-attributes',
+        '-n',
+        String(maxResults),
+        '-export-tsv',
+        tmpFile,
+        everythingQuery,
+      ]);
+      const countPromise = runEs(['-get-result-count', everythingQuery]);
+
+      const [resultsRun, countRun] = await Promise.all([
+        resultsPromise,
+        countPromise,
+      ]);
+
+      if (resultsRun.code !== 0) {
+        // Error 8 = Everything not reachable; anything else → query/io error.
+        const msg =
+          resultsRun.stderr.trim() ||
+          `es.exe query failed with exit code ${resultsRun.code}`;
+        lastError = msg;
+        logDebug('error', lastError);
+        if (
+          resultsRun.code === null ||
+          resultsRun.code === ES_EXIT_IPC_NOT_FOUND
+        ) {
           triggerAutoStart();
         }
-        lastError = `Everything query failed with error ${lastErrorCode}${
-          lastErrorCode === 2 ? ' (IPC error — is Everything.exe running?)' : ''
-        }`;
-        logDebug('error', lastError);
-        return {
-          available: false,
-          results: [],
-          error: lastError,
-        };
-      }
-
-      const numResults = api.GetNumResults();
-      const totalResults = api.GetTotResults();
-      lastResultCount = numResults;
-      lastError = undefined;
-      logDebug('info', `Query returned ${numResults}/${totalResults} results.`);
-
-      const results: EverythingResult[] = [];
-
-      for (let i = 0; i < numResults; i++) {
-        // --- Get full path ---
-        // UTF-16 buffer passed as a typed array; decode via Node's utf16le.
-        let buf = new Uint16Array(PATH_BUF_SIZE);
-        let written: number = api.GetResultFullPathNameW(i, buf, buf.length);
-        // If truncated, expand buffer and retry
-        if (written >= buf.length) {
-          buf = new Uint16Array(written + 1);
-          written = api.GetResultFullPathNameW(i, buf, buf.length);
+        try {
+          fs.unlinkSync(tmpFile);
+        } catch {
+          /* already gone */
         }
-        const fullPath = Buffer.from(buf.buffer, 0, written * 2)
-          .toString('utf16le')
-          .replace(/\0.*$/, '');
-
-        // --- Get size ---
-        // koffi out('int64') requires a single-element array
-        const sizeOut = [0n];
-        api.GetResultSize(i, sizeOut);
-        const size = sizeOut[0];
-
-        // --- Get modified date ---
-        // koffi out(pointer(FILETIME)) requires an empty object
-        const ftOut: any = {};
-        api.GetResultDateModified(i, ftOut);
-        const ft = ftOut as { dwLowDateTime: number; dwHighDateTime: number };
-
-        const isFile = api.IsFileResult(i) !== 0;
-
-        // Convert FILETIME to epoch ms
-        const filetime =
-          (BigInt(ft.dwHighDateTime) << 32n) | BigInt(ft.dwLowDateTime);
-        const epochMs = Number((filetime - 116444736000000000n) / 10000n);
-
-        // Convert backslash to forward slash for TagSpaces
-        const normalisedPath = fullPath.replace(/\\/g, '/');
-
-        results.push({
-          path: normalisedPath,
-          name: path.basename(normalisedPath),
-          isFile,
-          size: Number(size),
-          lmdt: epochMs,
-        });
+        return { available: false, results: [], error: msg };
       }
+
+      let results: EverythingResult[] = [];
+      try {
+        const content = fs.readFileSync(tmpFile, 'utf8');
+        results = parseTsvFile(content);
+      } catch (err: any) {
+        lastError = `Failed to read es.exe output: ${err.message}`;
+        logDebug('error', lastError);
+        return { available: false, results: [], error: lastError };
+      } finally {
+        try {
+          fs.unlinkSync(tmpFile);
+        } catch {
+          /* already gone */
+        }
+      }
+
+      const totalCount =
+        countRun.code === 0 && /^\d+$/.test(countRun.stdout.trim())
+          ? Number(countRun.stdout.trim())
+          : results.length;
+      lastResultCount = results.length;
+      lastError = undefined;
+      logDebug(
+        'info',
+        `Query returned ${results.length}/${totalCount} results.`,
+      );
 
       if (results.length > 0) {
+        const first = results[0];
         logDebug(
           'info',
-          `First result: path="${results[0].path}" name="${results[0].name}" isFile=${results[0].isFile} size=${results[0].size}`,
+          `First result: path="${first.path}" name="${first.name}" isFile=${first.isFile} size=${first.size}`,
         );
       }
 
       return {
         available: true,
         results,
-        totalCount: totalResults,
+        totalCount,
       };
     } catch (err: any) {
       lastError = `Everything search error: ${err.message}`;
@@ -1174,9 +966,16 @@ export function searchEverything(
 // Debug info for the renderer debug dialog
 // ---------------------------------------------------------------------------
 
+export interface IpcProbeResult {
+  windowFound: boolean;
+  sendMessageOk: boolean;
+  dbLoaded?: boolean;
+  error?: string;
+}
+
 export interface EverythingDebugInfo {
   platform: string;
-  dllPath?: string;
+  esPath?: string;
   exePath?: string;
   customPath?: string;
   everythingInstalled: boolean;
@@ -1196,29 +995,65 @@ export interface EverythingDebugInfo {
   log: EverythingDebugEntry[];
 }
 
-let lastDllProbeAt = 0;
+let lastEsProbeAt = 0;
+let esPathCache: string | undefined;
+// The debug dialog polls every second; cache the connection probe so we do
+// not spawn es.exe 60x/minute while it is open.
+let connectionCache: { at: number; ok: boolean; error?: string } | undefined;
+
+function getProbeCached(): { exePath: string | undefined; running: boolean } {
+  if (!probeCache || Date.now() - probeCache.at > PROBE_CACHE_TTL_MS) {
+    probeCache = {
+      at: Date.now(),
+      exePath: findEverythingExe(),
+      running: isEverythingRunning(),
+    };
+  }
+  return probeCache;
+}
+
+function getConnectionCached(): { ok: boolean; error?: string } {
+  if (
+    !connectionCache ||
+    Date.now() - connectionCache.at > PROBE_CACHE_TTL_MS
+  ) {
+    const probe = probeEsSync();
+    connectionCache = {
+      at: Date.now(),
+      ok: probe.code === 0,
+      error: probe.stderr || undefined,
+    };
+  }
+  return { ok: connectionCache.ok, error: connectionCache.error };
+}
 
 export function getDebugInfo(): EverythingDebugInfo {
   const probe = getProbeCached();
-  // dllPath is cached once found; while missing, re-probe at most once per
-  // TTL window instead of on every poll (findDllPath spawns reg.exe).
-  if (!dllPath && Date.now() - lastDllProbeAt > PROBE_CACHE_TTL_MS) {
-    lastDllProbeAt = Date.now();
-    dllPath = findDllPath();
+  // esPath is cached once found; while missing, re-probe at most once per
+  // TTL window instead of on every poll.
+  if (!esPathCache && Date.now() - lastEsProbeAt > PROBE_CACHE_TTL_MS) {
+    lastEsProbeAt = Date.now();
+    esPathCache = findEsPath();
   }
+  const connected = getConnectionCached();
   return {
     platform: process.platform,
-    dllPath,
+    esPath: esPathCache,
     exePath: probe.exePath,
     customPath: customEverythingPath,
     everythingInstalled: !!probe.exePath,
     everythingRunning: probe.running,
     tagspacesElevated: isSelfElevated(),
-    libraryLoaded: !!lib,
-    dbLoaded: lib ? isDbLoaded() : false,
-    available: isAvailable,
+    libraryLoaded: !!esPathCache,
+    dbLoaded: connected.ok,
+    available: connected.ok,
     availabilityError,
-    ipc: probeIpc(),
+    ipc: {
+      windowFound: probe.running,
+      sendMessageOk: connected.ok,
+      dbLoaded: connected.ok,
+      error: connected.ok ? undefined : connected.error,
+    },
     autoStartInFlight: !!autoStartInFlight,
     lastAutoStartAt: lastAutoStartAt || undefined,
     lastQuery,

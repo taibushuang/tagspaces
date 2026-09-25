@@ -1,8 +1,13 @@
-# Everything SDK DLLs
+# Everything integration binaries
 
-Source: https://www.voidtools.com/Everything-SDK.zip (voidtools Everything SDK)
-The voidtools installer does NOT ship these SDK dlls, so we bundle them.
-The Everything SDK is free to use and redistribute (see voidtools.com).
+Source:
+- https://www.voidtools.com/ES-1.1.0.38.x64.zip (voidtools ES — the official
+  Everything command-line interface; freeware, redistributable per voidtools)
 
-Everything64.dll — 64-bit IPC client for Everything.exe (used by koffi)
-Everything32.dll — 32-bit variant (reserved)
+The voidtools installer does NOT ship a helper binary, so we bundle es.exe.
+Everything.exe itself must be installed (or will be auto-started).
+
+The Everything search integration uses es.exe: it spawns es.exe, which talks to
+the running Everything client over IPC and writes UTF-8 TSV to a temp file.
+
+es.exe   — 64-bit CLI client for Everything (used by the search)
