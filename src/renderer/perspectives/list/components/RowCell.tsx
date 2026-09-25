@@ -57,7 +57,6 @@ import {
   formatFileSize,
 } from '@tagspaces/tagspaces-common/misc';
 import {
-  extractContainingDirectoryPath,
   extractTagsAsObjects,
   extractTitle,
 } from '@tagspaces/tagspaces-common/paths';
@@ -205,13 +204,10 @@ function RowCell(props: Props) {
 
   const entryPath = fsEntry.path;
 
-  const entryDirPath = useMemo(() => {
+  const entryFullPath = useMemo(() => {
     if (!isSearchMode || !fsEntry.path) return '';
-    return extractContainingDirectoryPath(
-      fsEntry.path,
-      currentLocation?.getDirSeparator(),
-    );
-  }, [isSearchMode, fsEntry.path, currentLocation]);
+    return fsEntry.path;
+  }, [isSearchMode, fsEntry.path]);
 
   // In multi-select (selectionMode) the drag operation is on the cell, not on
   // the tag. Skip the per-tag DnD wiring — same logic as read-only locations.
@@ -462,17 +458,18 @@ function RowCell(props: Props) {
               sx={{ color: 'gray' }}
               variant="body2"
             >
-              {isSearchMode && entryDirPath && (
+              {isSearchMode && entryFullPath && (
                 <>
-                  <TsTooltip title={entryDirPath}>
+                  <TsTooltip title={entryFullPath}>
                     <span
                       style={{
                         color: theme.palette.text.secondary,
                         fontStyle: 'italic',
                         marginRight: '8px',
+                        wordBreak: 'break-all',
                       }}
                     >
-                      {entryDirPath}
+                      {entryFullPath}
                     </span>
                   </TsTooltip>
                   {' | '}

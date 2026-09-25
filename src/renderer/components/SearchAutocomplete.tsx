@@ -352,7 +352,14 @@ function SearchAutocomplete(props: Props) {
 
   const onKeyDownHandler = (event) => {
     if (event.key === 'Enter' || event.keyCode === 13) {
-      if (!isOpen.current) {
+      if (
+        tempSearchQuery.textQuery &&
+        tempSearchQuery.textQuery.trim().length > 0
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        executeSearch();
+      } else if (!isOpen.current) {
         executeSearch();
       } else {
         isOpen.current = false;

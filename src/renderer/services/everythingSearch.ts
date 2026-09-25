@@ -12,6 +12,7 @@ import {
   formatFileSize,
 } from '@tagspaces/tagspaces-common/misc';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import { minimatch } from 'minimatch';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -357,6 +358,19 @@ export async function searchWithEverything(
           entryPath === locPath.replace(/\/$/, '') ||
           entryPath.startsWith(locPath.endsWith('/') ? locPath : `${locPath}/`)
         ) {
+          // Respect the location's ignore patterns (blacklist): drop results
+          // whose path matches any configured ignore glob so blacklisted
+          // folders never surface in Everything search results.
+          const ignorePatterns = loc.ignorePatternPaths || [];
+          if (
+            ignorePatterns.length > 0 &&
+            ignorePatterns.some((pattern) =>
+              minimatch(entry.path, pattern, { dot: true }),
+            )
+          ) {
+            matched = true;
+            break;
+          }
           const enriched = mergeLocationMetadata(
             [entry],
             locationIndex,

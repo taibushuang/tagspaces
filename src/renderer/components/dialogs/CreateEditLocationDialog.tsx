@@ -56,6 +56,7 @@ import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
+  Box,
   FormLabel,
   MenuItem,
 } from '@mui/material';
@@ -250,6 +251,7 @@ function CreateEditLocationDialog(props: Props) {
 
   const [isIgnorePatternDialogOpen, setIgnorePatternDialogOpen] =
     useState<boolean>(false);
+  const [newIgnorePattern, setNewIgnorePattern] = useState<string>('');
 
   const firstRender = useFirstRender();
 
@@ -265,6 +267,17 @@ function CreateEditLocationDialog(props: Props) {
     if (loops) {
       setMaxLoops(parseInt(loops, 10));
     }
+  }
+
+  function addIgnorePattern() {
+    const pattern = newIgnorePattern.trim();
+    if (!pattern) {
+      return;
+    }
+    setIgnorePatternPaths((prev) =>
+      prev ? [...prev, pattern] : [pattern],
+    );
+    setNewIgnorePattern('');
   }
 
   useEffect(() => {
@@ -841,7 +854,7 @@ function CreateEditLocationDialog(props: Props) {
             </FormGroup>
           </AccordionDetails>
         </Accordion>
-        <Accordion>
+        <Accordion defaultExpanded>
           <AccordionSummary
             data-tid="switchAdvancedModeTID"
             expandIcon={<ExpandIcon />}
@@ -1072,38 +1085,44 @@ function CreateEditLocationDialog(props: Props) {
                 />
               )}
               <>
-                <FormControlLabel
-                  disabled={!Pro}
-                  labelPlacement="start"
-                  sx={{
-                    justifyContent: 'space-between',
-                    marginTop: '15px',
-                    marginLeft: 0,
-                    marginRight: 0,
-                  }}
-                  control={
+                <Typography sx={{ marginTop: '15px' }}>
+                  {t('core:ignorePatterns')}
+                  <InfoIcon tooltip={t('core:ignorePatternsHelp')} />
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  <TsTextField
+                    sx={{ flexGrow: 1 }}
+                    size="small"
+                    placeholder={t('core:ignorePatternPlaceholder')}
+                    value={newIgnorePattern}
+                    onChange={(event) => setNewIgnorePattern(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        addIgnorePattern();
+                      }
+                    }}
+                  />
+                  <TsButton
+                    sx={{ marginLeft: '8px' }}
+                    disabled={!newIgnorePattern.trim()}
+                    onClick={addIgnorePattern}
+                  >
+                    {t('core:ignorePatternDialogTitle')}
+                  </TsButton>
+                  {IgnorePatternDialog && (
                     <ProTooltip tooltip={t('ignorePatternDialogTitle')}>
                       <TsButton
-                        disabled={!Pro}
+                        sx={{ marginLeft: '8px' }}
                         onClick={() => {
                           setIgnorePatternDialogOpen(true);
-                        }}
-                        sx={{
-                          marginBottom: AppConfig.defaultSpaceBetweenButtons,
                         }}
                       >
                         {t('addEntryTags')}
                       </TsButton>
                     </ProTooltip>
-                  }
-                  label={
-                    <Typography>
-                      {t('core:ignorePatterns')}
-                      <InfoIcon tooltip={t('core:ignorePatternsHelp')} />
-                      <ProLabel />
-                    </Typography>
-                  }
-                />
+                  )}
+                </Box>
                 {ignorePatternPaths && ignorePatternPaths.length > 0 && (
                   <List
                     sx={{

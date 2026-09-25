@@ -1284,7 +1284,7 @@ export class CommonLocation implements TS.Location {
         //id: getUuid(),
         isFile: false,
         color: '',
-        perspective: 'grid',
+        perspective: 'list',
         tags: [],
         appName: '',
         appVersion: '',

@@ -1307,6 +1307,7 @@ export const DirectoryContentContextProvider = ({
     directory: string = undefined,
   ) {
     manualPerspective.current = perspective;
+    forceUpdate();
     const dirPath = directory ? directory : currentDirectory.current?.path;
     if (!dirPath) {
       // Global search mode has no current directory (and no folder whose

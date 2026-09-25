@@ -89,8 +89,12 @@ function MainToolbar(props: Props) {
   const theme = useTheme();
   const { openEntry, openedEntry, fileChanged, actuallyCloseFiles } =
     useOpenedEntryContext();
-  const { loadParentDirectoryContent, currentDirectoryPath, isSearchMode } =
-    useDirectoryContentContext();
+  const {
+    loadParentDirectoryContent,
+    currentDirectoryPath,
+    currentDirectoryEntries,
+    isSearchMode,
+  } = useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const { downloadFsEntry } = useIOActionsContext();
   const keyBindings = useSelector(getKeyBindingObject);
@@ -258,13 +262,15 @@ function MainToolbar(props: Props) {
         )}
         {isSearchMode &&
           !currentLocation?.isReadOnly &&
-          selectedEntries.length > 0 && (
+          currentDirectoryEntries.length > 0 && (
             <TsToolbarButton
               tooltip={t('core:fileVersionCleanupTooltip')}
               title={t('core:fileVersionCleanup')}
               aria-label={t('core:fileVersionCleanup')}
               data-tid={prefixDataTID + 'PerspectiveVersionCleanup'}
-              onClick={() => openFileVersionCleanupDialog(selectedEntries)}
+              onClick={() =>
+                openFileVersionCleanupDialog(currentDirectoryEntries)
+              }
             >
               <VersionCleanupIcon />
             </TsToolbarButton>
