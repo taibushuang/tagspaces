@@ -86,7 +86,7 @@ export default {
   watchCurrentDirectory: false,
   firstRun: true,
   onboardingCompleted: false,
-  hideHowToStart: false,
+  hideHowToStart: true,
   onboardingVersion: 0,
   lastOpenedDirectory: '',
   showWarningRecursiveScan: true,

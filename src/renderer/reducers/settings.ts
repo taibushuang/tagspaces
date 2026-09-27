@@ -160,6 +160,9 @@ export default (state: any = defaultSettings, action: any) => {
       return {
         ...defaultSettings,
         ...state,
+        // Skip the how-to-start guide unconditionally — the user asked for
+        // startup without the welcome walkthrough; re-show via help menu.
+        hideHowToStart: true,
         currentTheme: AppConfig.ExtTheme || state.currentTheme,
         currentRegularTheme:
           AppConfig.ExtRegularTheme || state.currentRegularTheme,

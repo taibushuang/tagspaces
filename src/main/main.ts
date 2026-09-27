@@ -16,6 +16,7 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  session,
   shell,
   utilityProcess,
 } from 'electron';
@@ -107,6 +108,13 @@ const browserWindowOptions: BrowserWindowConstructorOptions = {
     contextIsolation: true,
     sandbox: true,
     nodeIntegration: false,
+    // AI gateways are called directly from the renderer (chat, agent tool
+    // loop, model checks). Chromium's CORS would silently kill every request
+    // to gateways whose preflight does not allow `Authorization` (e.g. Ark),
+    // and Electron's webRequest cannot patch the internally-handled preflight.
+    // Disabling webSecurity here matches how other desktop chat clients
+    // behave: the renderer is our own trusted code, not a browser tab.
+    webSecurity: false,
     preload:
       app.isPackaged || !isDebug
         ? path.join(__dirname, 'preload.js')
@@ -433,7 +441,14 @@ const createWindow = async (i18n: any) => {
     }
   }
 
-  if (isDebug) await installExtensions();
+  // Race with a timeout: extension downloads (React DevTools, …) can hang for
+  // minutes on offline/intranet machines and would block window creation.
+  if (isDebug) {
+    await Promise.race([
+      installExtensions(),
+      new Promise((resolve) => setTimeout(resolve, 8000)),
+    ]);
+  }
 
   const mainWindowState = windowStateKeeper(defaultAppSize);
 
@@ -606,6 +621,11 @@ app.on('web-contents-created', (event, contents) => {
 let appI18N: any;
 
 protocol.register();
+
+// Intranet AI gateways run with self-signed certificates — certificate
+// verification is deliberately disabled for the whole app. The renderer
+// only talks to endpoints the user configured themselves.
+app.commandLine.appendSwitch('ignore-certificate-errors');
 
 app
   .whenReady()

@@ -19,20 +19,14 @@
 import {
   AboutIcon,
   CancelSubscriptionIcon,
-  ChangeLogIcon,
-  EmailIcon,
   ForumIcon,
   HelpIcon,
-  IssueIcon,
   KeyShortcutsIcon,
-  MastodonIcon,
-  NewFeatureIcon,
   OnboardingIcon,
   ProTeaserIcon,
   RestoreIcon,
   TranslationIcon,
   WebClipperIcon,
-  XIcon,
 } from '-/components/CommonIcons';
 import { useAboutDialogContext } from '-/components/dialogs/hooks/useAboutDialogContext';
 import { useKeyboardDialogContext } from '-/components/dialogs/hooks/useKeyboardDialogContext';
@@ -126,16 +120,6 @@ function HelpFeedbackPanel() {
           </ListItemButton>
         </ListItem>
         <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.changelogURL, true)}
-          >
-            <ListItemIcon>
-              <ChangeLogIcon />
-            </ListItemIcon>
-            <ListItemText>{t('core:whatsNew')}</ListItemText>
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
           <ListItemButton onClick={openOnboardingDialog}>
             <ListItemIcon>
               <OnboardingIcon />
@@ -169,32 +153,12 @@ function HelpFeedbackPanel() {
         <Divider />
         <ListItem disablePadding>
           <ListItemButton
-            onClick={() => openURLExternally(Links.links.suggestFeature, true)}
-          >
-            <ListItemIcon>
-              <NewFeatureIcon />
-            </ListItemIcon>
-            <ListItemText>{t('core:suggestNewFeatures')}</ListItemText>
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton
             onClick={() => openURLExternally(Links.links.forumsUrl, true)}
           >
             <ListItemIcon>
               <ForumIcon />
             </ListItemIcon>
             <ListItemText>{t('core:forums')}</ListItemText>
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.reportIssue, true)}
-          >
-            <ListItemIcon>
-              <IssueIcon />
-            </ListItemIcon>
-            <ListItemText>{t('core:reportIssues')}</ListItemText>
           </ListItemButton>
         </ListItem>
         <ListItem disablePadding>
@@ -208,16 +172,6 @@ function HelpFeedbackPanel() {
           </ListItemButton>
         </ListItem>
         <Divider />
-        <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.emailContact, true)}
-          >
-            <ListItemIcon>
-              <EmailIcon />
-            </ListItemIcon>
-            <ListItemText>{t('core:emailContact')}</ListItemText>
-          </ListItemButton>
-        </ListItem>
         {isIapAvailable() ? (
           // Mobile Pro is a one-time non-consumable IAP — there is no
           // subscription to cancel. Offer Restore Purchases instead, gated
@@ -248,26 +202,6 @@ function HelpFeedbackPanel() {
             </ListItem>
           )
         )}
-        <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.mastodon, true)}
-          >
-            <ListItemIcon>
-              <MastodonIcon color="action" />
-            </ListItemIcon>
-            <ListItemText primary={t('core:followOnMastodon')} />
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.twitter, true)}
-          >
-            <ListItemIcon>
-              <XIcon />
-            </ListItemIcon>
-            <ListItemText>{t('core:followOnX')}</ListItemText>
-          </ListItemButton>
-        </ListItem>
         <Divider />
         <ListItem disablePadding>
           <ListItemButton onClick={() => openProTeaserDialog()}>

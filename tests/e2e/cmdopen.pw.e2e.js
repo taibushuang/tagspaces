@@ -1,4 +1,6 @@
 /* Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved. */
+import fs from 'fs';
+import os from 'os';
 import pathLib from 'path';
 import { dataTidFormat } from '../../src/renderer/services/test';
 import {
@@ -220,5 +222,52 @@ test.describe('TST51 - Command line file opening', () => {
       false,
       5000,
     );
+  });
+
+  test('TST5106 - Standalone md opened via cmdopen shows only the file (no folder list, no welcome panel) [electron]', async () => {
+    // A file OUTSIDE any configured location, like a Finder double-click on
+    // an arbitrary .md file.
+    const standaloneDir = fs.mkdtempSync(
+      pathLib.join(os.tmpdir(), 'ts-standalone-'),
+    );
+    const standaloneFile = pathLib.join(standaloneDir, 'standalone-note.md');
+    fs.writeFileSync(standaloneFile, '# standalone note\n');
+    try {
+      await openFileViaCmdOpen(standaloneFile);
+
+      // The file itself is opened
+      await expectElementExist(
+        '[data-tid=OpenedTID' + dataTidFormat('standalone-note.md') + ']',
+        true,
+        15000,
+      );
+
+      // No welcome panel while a file is open
+      await expectElementExist('[data-tid=WelcomePanelTID]', false, 5000);
+
+      // The left drawer (location/folder list) is closed — MainPage applies
+      // the contentShift class to <main> exactly when the drawer is closed.
+      const mainWithShift = await global.client.waitForSelector(
+        'main.MainPage-contentShift',
+        { timeout: 10000, state: 'attached' },
+      );
+      expect(mainWithShift).toBeTruthy();
+
+      // The folder container (perspective area) is collapsed by the splitter:
+      // hidden + hiddenTake='secondary' collapses the first two grid tracks
+      // (folder pane + gutter) to 0px, leaving the file view full width.
+      // Note: an isVisible() check on inner grid elements is meaningless here
+      // — overflow:hidden clipping still leaves them a non-zero bounding box.
+      const columns = await global.client.evaluate(() => {
+        const el = document.querySelector(
+          'main div[style*="grid-template-columns"]',
+        );
+        return el ? getComputedStyle(el).gridTemplateColumns : null;
+      });
+      expect(columns).not.toBeNull();
+      expect(columns.split(' ')[0]).toBe('0px');
+    } finally {
+      fs.rmSync(standaloneDir, { recursive: true, force: true });
+    }
   });
 });

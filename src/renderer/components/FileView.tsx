@@ -205,7 +205,11 @@ function FileView(props: Props) {
           openedEntry.viewingExtensionPath +
           getParams +
           '&t=' +
-          openedEntry.lmdt
+          openedEntry.lmdt +
+          // Tells viewer extensions (e.g. md-editor) to stay read-only:
+          // without it a double-click inside the viewer sends 'editDocument'
+          // and silently switches to edit mode.
+          '&readonly=true'
         );
       }
     }

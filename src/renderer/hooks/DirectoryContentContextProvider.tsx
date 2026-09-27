@@ -393,16 +393,7 @@ export const DirectoryContentContextProvider = ({
           cleanTrailingDirSeparator(currentDirectory.current?.path) ===
             cleanTrailingDirSeparator(action.entry.path)
         ) {
-          if (action.action === 'perspectiveChange') {
-            if (action.entry.meta.perspective !== undefined) {
-              manualPerspective.current =
-                action.entry.meta.perspective === PerspectiveIDs.UNSPECIFIED
-                  ? defaultPerspective
-                  : action.entry.meta.perspective;
-              setDirectoryMeta(action.entry.meta);
-            }
-            //setManualDirectoryPerspective(action.entry.meta.perspective);
-          } else if (
+          if (
             action.action === 'bgdColorChange' ||
             action.action === 'thumbChange' ||
             action.action === 'bgdImgChange' ||
@@ -1289,14 +1280,9 @@ export const DirectoryContentContextProvider = ({
 
   const currentPerspective: TS.PerspectiveType = useMemo(() => {
     if (manualPerspective.current === 'unspecified') {
-      if (
-        !directoryMeta.current ||
-        !directoryMeta.current.perspective ||
-        directoryMeta.current.perspective === 'unspecified'
-      ) {
-        return defaultPerspective;
-      }
-      return directoryMeta.current.perspective;
+      // No per-folder override anymore: the global settings default applies
+      // to every folder (manual switch above updates it app-wide).
+      return defaultPerspective;
     }
     return manualPerspective.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1307,27 +1293,10 @@ export const DirectoryContentContextProvider = ({
     directory: string = undefined,
   ) {
     manualPerspective.current = perspective;
+    // Perspective is a single global setting: switching it in any folder
+    // updates it everywhere (per-folder meta overrides are no longer used).
+    dispatch(SettingsActions.setDefaultPerspective(perspective));
     forceUpdate();
-    const dirPath = directory ? directory : currentDirectory.current?.path;
-    if (!dirPath) {
-      // Global search mode has no current directory (and no folder whose
-      // tsm.json could persist the choice) — keep it in memory only.
-      return;
-    }
-    getAllPropertiesPromise(dirPath)
-      .then((entry: TS.FileSystemEntry) => {
-        const action: TS.EditMetaAction = {
-          action: 'perspectiveChange',
-          entry: {
-            ...entry,
-            meta: { ...(entry.meta && entry.meta), perspective },
-          },
-        };
-        setReflectMetaActions(action);
-      })
-      .catch((error) => {
-        console.log('Error getting properties for entry: ' + directory, error);
-      });
   }
 
   function setCurrentDirectoryDirs(dirs: TS.OrderVisibilitySettings[]) {

@@ -35,6 +35,8 @@ import {
 import {
   getOpenAIModels,
   newOpenAIMessage,
+  probeOpenAIEndpoint,
+  verifyOpenAIModel,
 } from '-/components/chat/OpenAIClient';
 import { ChatRequest, ModelResponse, Ollama } from 'ollama';
 
@@ -116,4 +118,74 @@ export function checkProviderAlive(provider: AIProvider): Promise<boolean> {
     .then((client) => (client ? client.list() : undefined))
     .then((m) => !!m)
     .catch(() => false);
+}
+
+export type ProviderVerifyResult = { ok: boolean; message?: string };
+
+/**
+ * Real availability check: one minimal chat round-trip with the configured
+ * key and model — unlike a GET /models probe this exercises auth end-to-end
+ * and works on gateways without a usable models listing (e.g. Ark). A failure
+ * carries the actual HTTP status / error text so the UI can show WHY.
+ */
+export async function verifyProviderModel(
+  provider: AIProvider,
+  modelName: string,
+): Promise<ProviderVerifyResult> {
+  if (!provider || !provider.url) {
+    return { ok: false, message: 'no endpoint URL configured' };
+  }
+  if (!modelName) {
+    return { ok: false, message: 'no model name configured' };
+  }
+  if (provider.engine === 'openai-compatible') {
+    return verifyOpenAIModel(provider.url, provider.authKey, modelName);
+  }
+  // Ollama: a tiny chat round-trip proves endpoint + model.
+  try {
+    const ollama = await getOllamaInstance(provider.url);
+    if (!ollama) {
+      return { ok: false, message: 'Ollama SDK unavailable' };
+    }
+    await ollama.chat({
+      model: modelName,
+      messages: [{ role: 'user', content: 'ping' }],
+      options: { num_predict: 1 },
+    });
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, message: e?.message || String(e) };
+  }
+}
+
+/**
+ * Endpoint discovery probe for the URL field's refresh button: GET /models
+ * with the configured key (if any). Reports the model count on success and
+ * the HTTP status on failure; 404 means the gateway has no models listing
+ * (e.g. Ark) — manual model entry + Save & Verify is the path there.
+ */
+export async function probeProviderEndpoint(provider: AIProvider): Promise<{
+  ok: boolean;
+  message?: string;
+  modelCount?: number;
+  httpStatus?: number;
+}> {
+  if (!provider || !provider.url) {
+    return { ok: false, message: 'no endpoint URL configured' };
+  }
+  if (provider.engine === 'openai-compatible') {
+    const result = await probeOpenAIEndpoint(provider.url, provider.authKey);
+    return result;
+  }
+  // Ollama: the SDK list doubles as the discovery probe.
+  try {
+    const ollama = await getOllamaInstance(provider.url);
+    if (!ollama) {
+      return { ok: false, message: 'Ollama SDK unavailable' };
+    }
+    const models = await getOllamaModels(ollama);
+    return { ok: true, modelCount: models ? models.length : 0 };
+  } catch (e: any) {
+    return { ok: false, message: e?.message || String(e) };
+  }
 }

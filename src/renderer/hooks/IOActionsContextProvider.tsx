@@ -29,6 +29,7 @@ import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { Pro } from '-/pro';
 import { actions as AppActions, AppDispatch } from '-/reducers/app';
 import {
+  actions as SettingsActions,
   getAuthor,
   getFileNameTagPlace,
   getPrefixTagContainer,
@@ -2527,20 +2528,10 @@ export const IOActionsContextProvider = ({
     entry: TS.FileSystemEntry,
     perspective: TS.PerspectiveType,
   ): Promise<boolean> {
-    return saveFsEntryMeta(entry, { perspective }).then((meta) => {
-      if (meta) {
-        const action: TS.EditMetaAction = {
-          action: 'perspectiveChange',
-          entry: {
-            ...entry,
-            meta: { ...(entry.meta && entry.meta), ...meta },
-          },
-        };
-        setReflectMetaActions(action);
-        return true;
-      }
-      return false;
-    });
+    // Perspective is a single global setting now — a change from any folder
+    // properties panel applies app-wide (folder meta overrides removed).
+    dispatch(SettingsActions.setDefaultPerspective(perspective));
+    return Promise.resolve(true);
   }
 
   function setDescriptionChange(

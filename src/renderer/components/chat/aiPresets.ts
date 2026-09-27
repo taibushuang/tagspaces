@@ -63,6 +63,38 @@ export const aiPresets: AiPreset[] = [
     setupUrl: 'https://github.com/ggml-org/llama.cpp',
   },
   {
+    key: 'kimi',
+    label: 'Kimi (Moonshot)',
+    engine: 'openai-compatible',
+    defaultUrl: 'https://api.moonshot.cn/v1',
+    icon: 'ai',
+    setupUrl: 'https://platform.moonshot.cn',
+  },
+  {
+    key: 'deepseek',
+    label: 'DeepSeek',
+    engine: 'openai-compatible',
+    defaultUrl: 'https://api.deepseek.com/v1',
+    icon: 'ai',
+    setupUrl: 'https://platform.deepseek.com',
+  },
+  {
+    key: 'volcark',
+    label: '火山方舟 Ark',
+    engine: 'openai-compatible',
+    // Ark's OpenAI-compatible endpoint (ep-xxxx model ids)
+    defaultUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    icon: 'ai',
+    setupUrl: 'https://console.volcengine.com/ark',
+  },
+  {
+    key: 'intranet',
+    label: 'Intranet / Custom gateway',
+    engine: 'openai-compatible',
+    defaultUrl: '',
+    icon: 'ai',
+  },
+  {
     key: 'openai-compatible',
     label: 'OpenAI-compatible',
     engine: 'openai-compatible',

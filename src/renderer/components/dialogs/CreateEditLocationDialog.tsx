@@ -274,9 +274,7 @@ function CreateEditLocationDialog(props: Props) {
     if (!pattern) {
       return;
     }
-    setIgnorePatternPaths((prev) =>
-      prev ? [...prev, pattern] : [pattern],
-    );
+    setIgnorePatternPaths((prev) => (prev ? [...prev, pattern] : [pattern]));
     setNewIgnorePattern('');
   }
 
@@ -1095,7 +1093,9 @@ function CreateEditLocationDialog(props: Props) {
                     size="small"
                     placeholder={t('core:ignorePatternPlaceholder')}
                     value={newIgnorePattern}
-                    onChange={(event) => setNewIgnorePattern(event.target.value)}
+                    onChange={(event) =>
+                      setNewIgnorePattern(event.target.value)
+                    }
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') {
                         event.preventDefault();

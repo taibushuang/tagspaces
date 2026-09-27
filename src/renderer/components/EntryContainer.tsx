@@ -648,6 +648,7 @@ function EntryContainer() {
               <EntryContainerNav
                 isFile={openedEntry.isFile}
                 startClosingEntry={startClosingEntry}
+                reloadDocument={reloadDocument}
                 smallScreen={smallScreen}
               />
             </Box>

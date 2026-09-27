@@ -17,6 +17,8 @@
  */
 
 import AppConfig from '-/AppConfig';
+import { AgentEvent, runAgent } from '-/components/chat/AgentService';
+import { createAgentTools } from '-/components/chat/AgentTools';
 import {
   AIProvider,
   ChatImage,
@@ -35,7 +37,9 @@ import { generateOptionType } from '-/components/dialogs/hooks/AiGenerationDialo
 import { useFileUploadDialogContext } from '-/components/dialogs/hooks/useFileUploadDialogContext';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
+import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
@@ -46,7 +50,9 @@ import { Pro } from '-/pro';
 import { actions as AppActions, AppDispatch } from '-/reducers/app';
 import {
   actions as SettingsActions,
+  getAIProviders,
   getDefaultAIProvider,
+  getCurrentLanguage,
   getEntryContainerTab,
   getTagColor,
   getTagTextColor,
@@ -143,6 +149,10 @@ type ChatData = {
   generationSettings: GenerationSettings;
   setGenerationSettings: (genSettings: any) => void;
   resetGenerationSettings: (option: generateOptionType) => void;
+  /** Agent mode: chat requests run the tool-calling loop. */
+  agentMode: boolean;
+  setAgentMode: (enabled: boolean) => void;
+  newAgentMessage: (msg: string) => Promise<any>;
 };
 
 export const ChatContext = createContext<ChatData>({
@@ -178,6 +188,9 @@ export const ChatContext = createContext<ChatData>({
   generationSettings: undefined,
   setGenerationSettings: undefined,
   resetGenerationSettings: undefined,
+  agentMode: false,
+  setAgentMode: undefined,
+  newAgentMessage: undefined,
 });
 
 export type ChatContextProviderProps = {
@@ -201,7 +214,9 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const { t } = useTranslation();
   const { showNotification } = useNotificationContext();
   const { deleteDirectory } = useIOActionsContext();
-  const { addTagsToFsEntry } = useTaggingActionsContext();
+  const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
+  const { agentSearch, getIndex } = useLocationIndexContext();
+  const { currentDirectoryPath } = useDirectoryContentContext();
   const { tagGroups } = useEditedTagLibraryContext();
   const { openFileUploadDialog } = useFileUploadDialogContext();
   const { selectedEntries } = useSelectedEntriesContext();
@@ -210,6 +225,8 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const { openedEntry } = useOpenedEntryContext();
   const models = useRef<ModelResponse[]>([]);
   const defaultAiProvider: AIProvider = useSelector(getDefaultAIProvider);
+  const aiProviders: AIProvider[] = useSelector(getAIProviders);
+  const interfaceLanguage = useSelector(getCurrentLanguage);
   const selectedTabName = useSelector(getEntryContainerTab);
   const defaultBackgroundColor = useSelector(getTagColor);
   const defaultTextColor = useSelector(getTagTextColor);
@@ -226,7 +243,15 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     : undefined;
   const isTyping = useRef<boolean>(false);
   const aiClient = useRef<AiClient>(undefined);
+  const agentAbortController = useRef<AbortController>(undefined);
   const lastProviderId = useRef<string>(defaultAiProvider?.id);
+  const [agentMode, setAgentModeState] = useReducer(
+    (state: boolean, enabled: boolean) => {
+      localStorage.setItem('tsAiAgentMode', enabled ? 'true' : 'false');
+      return enabled;
+    },
+    localStorage.getItem('tsAiAgentMode') === 'true',
+  );
   const dispatch: AppDispatch = useDispatch();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const currentLocation = findLocation();
@@ -250,6 +275,19 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       selectedTabName === TabNames.aiTab
     ) {
       checkOllamaModels().then(() => initHistory());
+    }
+    // Preselect the provider's default text model so the chat/agent model
+    // dropdown is never empty on a fresh start (currentModel lives in a ref
+    // and used to stay unset until the user picked one by hand). OpenAI-
+    // compatible only: the Ollama path warms the model up via a chat request
+    // and is handled by checkOllamaModels/initHistory instead.
+    if (
+      !currentModel.current &&
+      defaultAiProvider &&
+      defaultAiProvider.engine !== 'ollama' &&
+      defaultAiProvider.defaultTextModel
+    ) {
+      setModel(defaultAiProvider.defaultTextModel);
     }
   }, [defaultAiProvider, openedEntry]);
 
@@ -312,6 +350,9 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   }
 
   function deleteHistory(): Promise<boolean> {
+    if (!openedEntry) {
+      return Promise.resolve(false);
+    }
     const historyFilePath = getHistoryMetaDir();
     return deleteDirectory(historyFilePath).then((success) => {
       if (success) {
@@ -409,12 +450,53 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   }
 
   function setModel(m: ModelResponse | string): Promise<boolean> {
-    const model = typeof m === 'string' ? findModel(m) : m;
+    let model = typeof m === 'string' ? findModel(m) : m;
+    if (
+      !model &&
+      typeof m === 'string' &&
+      defaultAiProvider &&
+      defaultAiProvider.engine !== 'ollama'
+    ) {
+      // Manually entered model name (endpoints without a /models listing,
+      // e.g. single-model gateways) — accept it as a synthetic entry.
+      model = {
+        name: m,
+        model: m,
+        modified_at: undefined,
+        size: 0,
+        digest: '',
+        details: {
+          family: 'openai-compatible',
+          format: '',
+          families: [],
+          parameter_size: '',
+          quantization_level: '',
+        },
+      } as unknown as ModelResponse;
+      models.current = [...(models.current || []), model];
+    }
     if (
       model &&
       (!currentModel.current || currentModel.current.name !== model.name)
     ) {
       currentModel.current = model;
+      // Persist the chosen model into the provider settings, otherwise it
+      // lived only in this in-memory ref and was lost on every relaunch.
+      if (
+        defaultAiProvider &&
+        !AppConfig.ExtAI &&
+        defaultAiProvider.defaultTextModel !== model.name
+      ) {
+        dispatch(
+          SettingsActions.setAiProviders(
+            aiProviders.map((p) =>
+              p.id === defaultAiProvider.id
+                ? { ...p, defaultTextModel: model.name }
+                : p,
+            ),
+          ),
+        );
+      }
       forceUpdate();
       // Preloading a model with an empty-messages request is an Ollama warm-up
       // trick; OpenAI-compatible servers would reject it, so skip it there.
@@ -632,6 +714,10 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   }
 
   function getHistoryFilePath(name?: string) {
+    if (!openedEntry) {
+      // Global AI Agent dialog with no folder opened — history stays in memory
+      return '';
+    }
     const dirSeparator = currentLocation
       ? currentLocation.getDirSeparator()
       : AppConfig.dirSeparator;
@@ -643,6 +729,9 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   }
 
   function getHistoryMetaDir() {
+    if (!openedEntry) {
+      return '';
+    }
     const dirSeparator = currentLocation
       ? currentLocation.getDirSeparator()
       : AppConfig.dirSeparator;
@@ -660,7 +749,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         lastModelName: currentModel.current?.name,
         engine: defaultAiProvider?.engine,
       };
-      if (openedEntry.isFile) return;
+      if (!openedEntry || openedEntry.isFile) return;
       saveFilePromise(
         { path: getHistoryFilePath() },
         JSON.stringify(model, null, 2),
@@ -1061,8 +1150,140 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   }
 
   function cancelMessage() {
+    if (agentAbortController.current) {
+      agentAbortController.current.abort();
+      agentAbortController.current = undefined;
+    }
     if (aiClient.current) {
       aiClient.current.abort();
+      isTyping.current = false;
+      saveHistoryItems();
+      forceUpdate();
+    }
+  }
+
+  function buildAgentSystemPrompt(): string {
+    const language = interfaceLanguage || 'en';
+    const selected = (selectedEntries || [])
+      .slice(0, 10)
+      .map(
+        (e) =>
+          `- ${e.path}${e.tags?.length ? ' [tags: ' + e.tags.map((t) => t.title).join(', ') + ']' : ''}`,
+      )
+      .join('\n');
+    return [
+      'You are the TagSpaces AI Agent, a file management assistant embedded in the TagSpaces application.',
+      'You can search files, inspect tags and text content, and add/remove tags through the provided tools.',
+      "Prefer calling tools over guessing about the user's files. Use concise, lowercase tag titles.",
+      'Never invent file paths — only use paths returned by tools or given by the user.',
+      'After tool calls, briefly summarize in text what you did or found.',
+      '',
+      `Connected location: ${currentLocation ? currentLocation.name : 'none'}`,
+      `Current folder: ${currentDirectoryPath || 'unknown'}`,
+      `Always reply in the language the user writes in — a message written in Chinese MUST get a Chinese reply. UI language (${language}) is only a fallback when the user's language is unclear.`,
+      selected ? `\nCurrently selected entries:\n${selected}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  function buildAgentTools() {
+    return createAgentTools({
+      agentSearch,
+      getIndex,
+      currentLocationName: currentLocation ? currentLocation.name : '',
+      currentDirectoryPath: currentDirectoryPath || '',
+      selectedEntries,
+      addTagsToFsEntry: (entry, tags) => addTagsToFsEntry(entry, tags),
+      removeTagsFromEntry,
+      loadTextFile: (path: string) => currentLocation.loadTextFilePromise(path),
+    });
+  }
+
+  function formatAgentToolEvent(event: AgentEvent): string | undefined {
+    if (event.type === 'tool_call') {
+      let short = event.args || '{}';
+      try {
+        short = JSON.stringify(JSON.parse(event.args));
+      } catch (e) {
+        // keep raw args when they are not valid JSON
+      }
+      if (short.length > 120) {
+        short = short.slice(0, 120) + '…';
+      }
+      return `\n\n> 🔧 **${event.name}** \`${short}\``;
+    }
+    if (event.type === 'tool_result') {
+      let summary = 'ok';
+      try {
+        const parsed = JSON.parse(event.result);
+        if (parsed?.error) {
+          summary = '⚠️ ' + parsed.error;
+        } else if (parsed && typeof parsed.count === 'number') {
+          summary = `${parsed.count} entries`;
+        }
+      } catch (e) {
+        // non-JSON results stay 'ok'
+      }
+      return ` → ${summary}`;
+    }
+    if (event.type === 'error') {
+      return `\n\n> ⚠️ ${event.message}`;
+    }
+    return undefined;
+  }
+
+  async function newAgentMessage(msg: string): Promise<any> {
+    if (!msg || !msg.trim()) {
+      return undefined;
+    }
+    if (!defaultAiProvider || !defaultAiProvider.url) {
+      showNotification(t('core:aiNoProviderConfigured'));
+      return undefined;
+    }
+    const model =
+      currentModel.current?.name || defaultAiProvider.defaultTextModel;
+    if (!model) {
+      showNotification(t('core:chooseModel'));
+      return undefined;
+    }
+    const history = getOllamaMessages(chatHistoryItems.current, model);
+    addHistoryItem(msg, 'user');
+    const messages = [
+      { role: 'system', content: buildAgentSystemPrompt() },
+      ...history,
+      { role: 'user', content: msg },
+    ];
+    isTyping.current = true;
+    forceUpdate();
+    const abortController = new AbortController();
+    agentAbortController.current = abortController;
+    try {
+      const result = await runAgent({
+        url: defaultAiProvider.url,
+        authKey: defaultAiProvider.authKey,
+        model,
+        messages,
+        tools: buildAgentTools(),
+        signal: abortController.signal,
+        onEvent: (event: AgentEvent) => {
+          if (event.type === 'text') {
+            addTimeLineResponse(event.delta);
+          } else {
+            const line = formatAgentToolEvent(event);
+            if (line) {
+              addTimeLineResponse(line);
+            }
+          }
+        },
+      });
+      return result.content;
+    } catch (e) {
+      console.error('agent run failed', e);
+      showNotification(t('core:aiAgentRunFailed'), 'error', false);
+      return undefined;
+    } finally {
+      agentAbortController.current = undefined;
       isTyping.current = false;
       saveHistoryItems();
       forceUpdate();
@@ -1335,6 +1556,9 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       currentModel: currentModel.current,
       chatHistoryItems: chatHistoryItems.current,
       generationSettings: generationSettings.current,
+      agentMode,
+      setAgentMode: (enabled: boolean) => setAgentModeState(enabled),
+      newAgentMessage,
       checkOllamaModels,
       refreshOllamaModels,
       getHistoryFilePath,
@@ -1362,6 +1586,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       resetGenerationSettings,
     };
   }, [
+    agentMode,
     defaultAiProvider,
     isTyping.current,
     models.current,
@@ -1369,6 +1594,8 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     currentModel.current,
     chatHistoryItems.current,
     generationSettings.current,
+    currentDirectoryPath,
+    interfaceLanguage,
     openedEntry,
     selectedEntries,
   ]);

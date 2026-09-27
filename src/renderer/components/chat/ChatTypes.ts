@@ -39,6 +39,8 @@ export type AIProvider = {
   authKey?: string; // optional bearer token for OpenAI-compatible/cloud endpoints
   defaultImageModel?: string;
   defaultTextModel?: string;
+  /** User-added model names for endpoints without a usable /models listing. */
+  customModels?: string[];
 };
 
 /*export type Model = {

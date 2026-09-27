@@ -38,6 +38,8 @@ import {
 import TsToolbarButton from '-/components/TsToolbarButton';
 import ZoomComponent from '-/components/ZoomComponent';
 import { useAiGenerationDialogContext } from '-/components/dialogs/hooks/useAiGenerationDialogContext';
+import AiAgentDialog from '-/components/chat/AiAgentDialog';
+import { useState } from 'react';
 import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
 import { useFileVersionCleanupDialogContext } from '-/components/dialogs/hooks/useFileVersionCleanupDialogContext';
 import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
@@ -87,6 +89,7 @@ function MainToolbar(props: Props) {
 
   const { t } = useTranslation();
   const theme = useTheme();
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const { openEntry, openedEntry, fileChanged, actuallyCloseFiles } =
     useOpenedEntryContext();
   const {
@@ -335,6 +338,14 @@ function MainToolbar(props: Props) {
       <Box sx={{ flexGrow: 1 }} />
       <Box sx={{ display: 'flex' }}>
         <TsToolbarButton
+          tooltip={t('core:aiAgentTitle')}
+          title={t('core:aiAgentTitle')}
+          data-tid={prefixDataTID + 'PerspectiveAiAgentTID'}
+          onClick={() => setAgentDialogOpen(true)}
+        >
+          <AIIcon color={agentDialogOpen ? 'primary' : 'inherit'} />
+        </TsToolbarButton>
+        <TsToolbarButton
           tooltip={
             t('core:perspectiveSettingsTitle') +
             (folderSettingsAvailable
@@ -352,6 +363,10 @@ function MainToolbar(props: Props) {
           )}
         </TsToolbarButton>
       </Box>
+      <AiAgentDialog
+        open={agentDialogOpen}
+        onClose={() => setAgentDialogOpen(false)}
+      />
     </Toolbar>
   );
 }

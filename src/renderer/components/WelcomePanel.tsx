@@ -17,19 +17,13 @@
  */
 
 import {
-  ChangeLogIcon,
   CreateFileIcon,
-  EmailIcon,
   HelpIcon,
-  IssueIcon,
   KeyShortcutsIcon,
   LocalLocationIcon,
-  MastodonIcon,
-  NewFeatureIcon,
   OpenLinkIcon,
   TranslationIcon,
   WebClipperIcon,
-  XIcon,
 } from '-/components/CommonIcons';
 import HowToStart from '-/components/HowToStart';
 import RenderHistory from '-/components/RenderHistory';
@@ -237,19 +231,6 @@ function WelcomePanel() {
         </ListItem>
         <ListItem disablePadding>
           <ListItemButton
-            onClick={() => openURLExternally(Links.links.changelogURL, true)}
-          >
-            <ListItemIcon>
-              <ChangeLogIcon />
-            </ListItemIcon>
-            <ListItemText
-              primary={t('core:whatsNew')}
-              className={classes.listItem}
-            />
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton
             onClick={() => openURLExternally(Links.links.webClipper, true)}
           >
             <ListItemIcon>
@@ -264,32 +245,6 @@ function WelcomePanel() {
         <Divider />
         <ListItem disablePadding>
           <ListItemButton
-            onClick={() => openURLExternally(Links.links.suggestFeature, true)}
-          >
-            <ListItemIcon>
-              <NewFeatureIcon />
-            </ListItemIcon>
-            <ListItemText
-              primary={t('core:suggestNewFeatures')}
-              className={classes.listItem}
-            />
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.reportIssue, true)}
-          >
-            <ListItemIcon>
-              <IssueIcon />
-            </ListItemIcon>
-            <ListItemText
-              primary={t('core:reportIssues')}
-              className={classes.listItem}
-            />
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton
             onClick={() => openURLExternally(Links.links.helpTranslating, true)}
           >
             <ListItemIcon>
@@ -297,46 +252,6 @@ function WelcomePanel() {
             </ListItemIcon>
             <ListItemText
               primary={t('core:helpWithTranslation')}
-              className={classes.listItem}
-            />
-          </ListItemButton>
-        </ListItem>
-        <Divider />
-        <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.emailContact, true)}
-          >
-            <ListItemIcon>
-              <EmailIcon />
-            </ListItemIcon>
-            <ListItemText
-              primary={t('core:emailContact')}
-              className={classes.listItem}
-            />
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.mastodon, true)}
-          >
-            <ListItemIcon>
-              <MastodonIcon color="action" />
-            </ListItemIcon>
-            <ListItemText
-              primary={t('core:followOnMastodon')}
-              className={classes.listItem}
-            />
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => openURLExternally(Links.links.twitter, true)}
-          >
-            <ListItemIcon>
-              <XIcon />
-            </ListItemIcon>
-            <ListItemText
-              primary={t('core:followOnX')}
               className={classes.listItem}
             />
           </ListItemButton>

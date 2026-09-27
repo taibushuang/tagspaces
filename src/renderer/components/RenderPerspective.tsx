@@ -31,6 +31,7 @@ import { ThumbGenerationContextProvider } from '-/hooks/ThumbGenerationContextPr
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import {
   AvailablePerspectives,
   hasExternalPerspectiveComponent,
@@ -262,6 +263,7 @@ function RenderPerspective(props: Props) {
   const { currentLocationId } = useCurrentLocationContext();
   const { currentPerspective, currentDirectory, isSearchMode } =
     useDirectoryContentContext();
+  const { openedEntry } = useOpenedEntryContext();
   const currentDirectoryPath = currentDirectory?.path;
   const { openPerspectiveOnboarding } = usePerspectiveOnboardingContext();
   const seenOnboardings = useSelector(getSeenPerspectiveOnboardings);
@@ -285,7 +287,9 @@ function RenderPerspective(props: Props) {
   // In search mode results may reference entries from multiple locations
   // (global search) or none at all (Everything search with no location
   // opened) — the perspective must render even without a current location.
-  const showWelcomePanel = !currentLocationId && !isSearchMode;
+  // When an entry is opened standalone (e.g. a file passed by the OS with no
+  // location), only the file view should be visible — no welcome panel.
+  const showWelcomePanel = !currentLocationId && !isSearchMode && !openedEntry;
 
   function getPerspectiveComponent() {
     const wrap = (id: string, node: React.ReactNode) => (

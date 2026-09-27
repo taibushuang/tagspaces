@@ -34,6 +34,7 @@ import ChatMenu from '-/components/chat/ChatMenu';
 import { AIProvider, ChatMode } from '-/components/chat/ChatTypes';
 import PromptEditDialog from '-/components/chat/PromptEditDialog';
 import SelectChatModel from '-/components/chat/SelectChatModel';
+import TsSwitch from '-/components/TsSwitch';
 import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 import ChatMdEditor from '-/components/md/ChatMdEditor';
 import { CrepeRef } from '-/components/md/useCrepeHandler';
@@ -47,7 +48,7 @@ import {
   saveAsTextFile,
 } from '-/services/utils-io';
 import { MilkdownProvider } from '@milkdown/react';
-import { Box, Divider, Grid, Stack } from '@mui/material';
+import { Box, Divider, FormControlLabel, Grid, Stack } from '@mui/material';
 import CircularProgress from '@mui/material/CircularProgress';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
@@ -92,6 +93,9 @@ function ChatView() {
     images,
     removeImage,
     newChatMessage,
+    newAgentMessage,
+    agentMode,
+    setAgentMode,
     changeCurrentModel,
     setModel,
     currentModel,
@@ -178,16 +182,19 @@ function ChatView() {
       const updated = [chatMsg.current, ...promptHistory].slice(0, 1);
       setPromptHistory(updated);
     }
-    newChatMessage(
-      chatMsg.current,
-      false,
-      'user',
-      currentMode.current,
-      undefined,
-      true,
-    )
+    const request = agentMode
+      ? newAgentMessage(chatMsg.current)
+      : newChatMessage(
+          chatMsg.current,
+          false,
+          'user',
+          currentMode.current,
+          undefined,
+          true,
+        );
+    request
       .then((response) => {
-        console.log('newOllamaMessage response:' + response);
+        console.log('chat response:' + response);
         chatMsg.current = '';
         isLoading.current = false;
         forceUpdate();
@@ -198,8 +205,10 @@ function ChatView() {
         } else {
           console.error('An error occurred:', error);
         }
+        isLoading.current = false;
+        forceUpdate();
       });
-  }, [newChatMessage, promptHistory]);
+  }, [agentMode, newAgentMessage, newChatMessage, promptHistory]);
 
   // Prompt menu handlers
   const handlePromptClick = useCallback(
@@ -449,7 +458,24 @@ function ChatView() {
               handleChangeModel={handleChangeModel}
               aiProvider={aiDefaultProvider}
               chosenModel={currentModel?.name}
+              // Select-only here: new model names are entered in Settings → AI
+              allowManualModelInput={false}
               // label={t('core:selectedAIModel')}
+            />
+          </Grid>
+          <Grid sx={{ alignContent: 'center' }}>
+            <FormControlLabel
+              sx={{ margin: 0 }}
+              control={
+                <TsSwitch
+                  size="small"
+                  checked={agentMode}
+                  onChange={(event) => setAgentMode(event.target.checked)}
+                />
+              }
+              label={t('core:aiAgentMode')}
+              labelPlacement="start"
+              slotProps={{ typography: { variant: 'caption' } }}
             />
           </Grid>
           <Grid>

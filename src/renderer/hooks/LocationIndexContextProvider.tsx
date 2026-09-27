@@ -100,6 +100,8 @@ type LocationIndexContextData = {
     searchQuery: TS.SearchQuery,
     workSpace?: TS.WorkSpace,
   ) => void;
+  /** UI-silent search for AI agent tools; returns results directly. */
+  agentSearch: (searchQuery: TS.SearchQuery) => Promise<TS.FileSystemEntry[]>;
   setIndex: (i: TS.FileSystemEntry[], location?: CommonLocation) => void;
   reflectUpdateSidecarMeta: (path: string, entryMeta: Object) => void;
   findLinks: (
@@ -123,6 +125,7 @@ export const LocationIndexContext = createContext<LocationIndexContextData>({
   clearDirectoryIndex: () => {},
   searchLocationIndex: () => {},
   searchAllLocations: () => {},
+  agentSearch: () => Promise.resolve([]),
   setIndex: () => {},
   findLinks: undefined,
   checkIndexExist: undefined,
@@ -1253,6 +1256,91 @@ export function LocationIndexContextProvider({
   }
 
   /**
+   * Run a search across locations without any UI side effects (no redux
+   * result writes, no notifications, no indexing progress) — used by the
+   * AI agent tools which need the results returned directly.
+   */
+  async function agentSearchLocations(
+    searchQuery: TS.SearchQuery,
+    searchingLocations: CommonLocation[],
+  ): Promise<TS.FileSystemEntry[]> {
+    const max = searchQuery.maxSearchResults || 50;
+    let searchResults: TS.FileSystemEntry[] = [];
+
+    const searchSingleLocation = async (location: CommonLocation) => {
+      if (searchResults.length >= max) {
+        return;
+      }
+      try {
+        const nextPath = await getLocationPath(location);
+        let directoryIndex = await loadIndexFromDisk(nextPath, location.uuid);
+        if (
+          !location.disableIndexing &&
+          (!directoryIndex ||
+            directoryIndex.length < 1 ||
+            searchQuery.forceIndexing)
+        ) {
+          const isCloudLocation = location.type === locationType.TYPE_CLOUD;
+          directoryIndex = await createDirectoryIndexWrapper(
+            {
+              path: nextPath,
+              locationID: location.uuid,
+              ...(isCloudLocation && { bucketName: location.bucketName }),
+            },
+            location.fullTextIndex,
+            location.ignorePatternPaths,
+            enableWS,
+            undefined,
+            !!searchQuery.forceIndexing,
+          );
+        }
+        if (directoryIndex && directoryIndex.length > 0) {
+          const results = await getSearchResults(directoryIndex, searchQuery);
+          if (results.length > 0) {
+            searchResults = [...searchResults, ...results];
+          }
+        }
+      } catch (e) {
+        console.log(
+          `agentSearch: failed to search location ${location?.name}`,
+          e,
+        );
+      }
+    };
+
+    // Sequential processing keeps memory and indexing pressure low; the
+    // agent does not need the interactive speed of searchAllLocations.
+    function runSequentially(idx: number): Promise<void> {
+      if (idx >= searchingLocations.length) {
+        return Promise.resolve();
+      }
+      return searchSingleLocation(searchingLocations[idx]).then(() =>
+        runSequentially(idx + 1),
+      );
+    }
+    return runSequentially(0).then(() => searchResults.slice(0, max));
+  }
+
+  /**
+   * AI agent search entry point. `searchQuery.searchBoxing` selects the
+   * scope: 'location'/'folder' → current location only, 'global' → all
+   * connected locations. Returns results directly (unlike searchAllLocations
+   * which pushes them into redux).
+   */
+  async function agentSearch(
+    searchQuery: TS.SearchQuery,
+  ): Promise<TS.FileSystemEntry[]> {
+    const scope = searchQuery.searchBoxing;
+    let targets: CommonLocation[];
+    if (scope === 'global' || !currentLocation) {
+      targets = locations;
+    } else {
+      targets = [currentLocation];
+    }
+    return agentSearchLocations(searchQuery, targets);
+  }
+
+  /**
    * persistIndex based on location - used for S3 and Capacitor only
    * for native used common-platform/indexer.js -> persistIndex instead
    * @param param
@@ -1434,6 +1522,7 @@ export function LocationIndexContextProvider({
     clearDirectoryIndex,
     searchLocationIndex,
     searchAllLocations,
+    agentSearch,
     setIndex,
     getIndex,
     getLastIndex,

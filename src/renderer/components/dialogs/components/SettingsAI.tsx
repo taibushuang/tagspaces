@@ -33,6 +33,11 @@ import TsSwitch from '-/components/TsSwitch';
 import TsTextField from '-/components/TsTextField';
 import TsTooltip from '-/components/TsTooltip';
 import { AIProvider } from '-/components/chat/ChatTypes';
+import {
+  probeProviderEndpoint,
+  verifyProviderModel,
+} from '-/components/chat/AiClient';
+import ModelListEditor from '-/components/chat/ModelListEditor';
 import SelectChatModel from '-/components/chat/SelectChatModel';
 import {
   AiPreset,
@@ -40,6 +45,7 @@ import {
   presetIconForEngine,
 } from '-/components/chat/aiPresets';
 import { useChatContext } from '-/hooks/useChatContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { Pro } from '-/pro';
 import { AppDispatch } from '-/reducers/app';
 import {
@@ -81,6 +87,7 @@ function SettingsAI(props: Props) {
   const { t } = useTranslation();
   const { closeSettings } = props;
   const { changeCurrentModel, checkProviderAlive } = useChatContext();
+  const { showNotification } = useNotificationContext();
   const aiDefaultProvider: AIProvider = useSelector(getDefaultAIProvider);
   const aiProviders: AIProvider[] = useSelector(getAIProviders);
   //const ollamaAlive = useRef<boolean | null>(null);
@@ -90,6 +97,9 @@ function SettingsAI(props: Props) {
   const providersAlive = React.useRef({});
   const aiTemplates = React.useRef({});
   const [openedNewAIMenu, setOpenedNewAIMenu] = React.useState(false);
+  const [verifyingId, setVerifyingId] = React.useState<string | undefined>(
+    undefined,
+  );
 
   const aiTemplatesContext = Pro?.contextProviders?.AiTemplatesContext
     ? useContext<TS.AiTemplatesContextData>(
@@ -136,6 +146,81 @@ function SettingsAI(props: Props) {
       }),
     );
     //Promise.all(promises).then(() => forceUpdate());
+  }
+
+  /**
+   * Endpoint discovery probe for the URL refresh button: no model ping —
+   * at URL-entry time no model exists yet. Reports reachability and the
+   * model count; 404 on /models means the gateway has no models listing
+   * (e.g. Ark) and manual entry is the expected path, not a failure.
+   */
+  async function probeAndNotifyEndpoint(provider: AIProvider) {
+    setVerifyingId(provider.id);
+    try {
+      const result = await probeProviderEndpoint(provider);
+      const noListing =
+        !result.ok && (result.httpStatus === 404 || result.httpStatus === 405);
+      providersAlive.current = {
+        ...providersAlive.current,
+        [provider.id]: result.ok || noListing,
+      };
+      forceUpdate();
+      if (noListing) {
+        showNotification(t('core:aiNoModelDiscovery'), 'info');
+      } else if (result.ok) {
+        showNotification(
+          t('core:aiProbeOk', { count: result.modelCount ?? 0 }),
+          'info',
+        );
+      } else {
+        showNotification(
+          t('core:aiProbeFailed', { message: result.message }),
+          'warning',
+        );
+      }
+    } finally {
+      setVerifyingId(undefined);
+    }
+  }
+
+  /**
+   * Save & verify one provider: settings edits are already persisted on every
+   * change, so the real work is a live chat ping with the configured key and
+   * model. Unreachable still keeps the saved values — the notification just
+   * says why the check failed.
+   */
+  async function saveAndVerifyProvider(provider: AIProvider) {
+    setVerifyingId(provider.id);
+    try {
+      let result;
+      if (provider.defaultTextModel) {
+        result = await verifyProviderModel(provider, provider.defaultTextModel);
+      } else {
+        // No model configured yet — fall back to a cheap endpoint probe.
+        const alive = await checkProviderAlive(provider);
+        result = alive
+          ? { ok: true }
+          : { ok: false, message: t('core:aiEndpointUnreachable') };
+      }
+      providersAlive.current = {
+        ...providersAlive.current,
+        [provider.id]: result.ok,
+      };
+      forceUpdate();
+      if (result.ok) {
+        showNotification(
+          t('core:aiVerifyOk', { model: provider.defaultTextModel }),
+          'info',
+        );
+      } else {
+        showNotification(
+          t('core:aiVerifyFailed', { message: result.message }),
+          'warning',
+        );
+      }
+    } finally {
+      setVerifyingId(undefined);
+    }
   }
 
   function handleChangeProvider(id: string, props: keyof AIProvider, value) {
@@ -453,7 +538,7 @@ function SettingsAI(props: Props) {
                           <TsIconButton
                             tooltip={t('core:refreshServiceStatus')}
                             onClick={() => {
-                              checkOllamaAlive();
+                              probeAndNotifyEndpoint(provider);
                             }}
                           >
                             <ReloadIcon />
@@ -464,22 +549,97 @@ function SettingsAI(props: Props) {
                   }}
                 />
               </FormControl>
+              <FormControl>
+                <TsTextField
+                  disabled={externalConfig}
+                  fullWidth
+                  type="password"
+                  autoComplete="off"
+                  name="engineAuthKey"
+                  label={t('core:apiKey')}
+                  data-tid="engineAuthKeyTID"
+                  value={provider.authKey || ''}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                    handleChangeProvider(
+                      provider.id,
+                      'authKey',
+                      event.target.value,
+                    );
+                  }}
+                  placeholder="sk-…"
+                />
+              </FormControl>
+              {provider.engine === 'ollama' ? (
+                <SelectChatModel
+                  // Ollama needs a live endpoint for its model list (dropdown);
+                  // the list is endpoint-managed, so a select is enough there.
+                  disabled={!providersAlive.current[provider.id]}
+                  label={t('core:defaultAImodelText') + ' *'}
+                  handleChangeModel={(modelName: string) => {
+                    handleChangeProvider(
+                      provider.id,
+                      'defaultTextModel',
+                      modelName,
+                    );
+                    changeCurrentModel(modelName, closeSettings);
+                  }}
+                  aiProvider={provider}
+                  chosenModel={provider.defaultTextModel}
+                />
+              ) : (
+                <ModelListEditor
+                  provider={provider}
+                  disabled={externalConfig}
+                  models={Array.from(
+                    new Set<string>(
+                      [
+                        ...(provider.customModels || []),
+                        ...(provider.defaultTextModel
+                          ? [provider.defaultTextModel]
+                          : []),
+                      ].filter(Boolean),
+                    ),
+                  )}
+                  currentModel={provider.defaultTextModel}
+                  onAdd={(name) => {
+                    const customModels = [
+                      ...(provider.customModels || []),
+                      name,
+                    ];
+                    // First added model becomes the active one automatically.
+                    const defaultTextModel = provider.defaultTextModel || name;
+                    const providers = aiProviders.map((p) =>
+                      p.id === provider.id
+                        ? { ...p, customModels, defaultTextModel }
+                        : p,
+                    );
+                    dispatch(SettingsActions.setAiProviders(providers));
+                  }}
+                  onDelete={(name) => {
+                    const customModels = (provider.customModels || []).filter(
+                      (n) => n !== name,
+                    );
+                    const droppingCurrent = name === provider.defaultTextModel;
+                    const defaultTextModel = droppingCurrent
+                      ? customModels[0] || ''
+                      : provider.defaultTextModel;
+                    const providers = aiProviders.map((p) =>
+                      p.id === provider.id
+                        ? { ...p, customModels, defaultTextModel }
+                        : p,
+                    );
+                    dispatch(SettingsActions.setAiProviders(providers));
+                  }}
+                  onSetCurrent={(name) => {
+                    handleChangeProvider(provider.id, 'defaultTextModel', name);
+                  }}
+                />
+              )}
               <SelectChatModel
-                disabled={!providersAlive.current[provider.id]}
-                label={t('core:defaultAImodelText') + ' *'}
-                handleChangeModel={(modelName: string) => {
-                  handleChangeProvider(
-                    provider.id,
-                    'defaultTextModel',
-                    modelName,
-                  );
-                  changeCurrentModel(modelName, closeSettings);
-                }}
-                aiProvider={provider}
-                chosenModel={provider.defaultTextModel}
-              />
-              <SelectChatModel
-                disabled={!providersAlive.current[provider.id]}
+                disabled={
+                  provider.engine === 'ollama' &&
+                  !providersAlive.current[provider.id]
+                }
                 label={t('core:defaultAImodelImages')}
                 handleChangeModel={(modelName: string) => {
                   handleChangeProvider(
@@ -516,6 +676,23 @@ function SettingsAI(props: Props) {
                 }
                 label={t('core:engineEnabled')}
               />
+              <Box
+                sx={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  marginTop: 1,
+                }}
+              >
+                <TsButton
+                  variant="outlined"
+                  data-tid="saveVerifyProviderTID"
+                  loading={verifyingId === provider.id}
+                  disabled={externalConfig}
+                  onClick={() => saveAndVerifyProvider(provider)}
+                >
+                  {t('core:aiSaveAndVerify')}
+                </TsButton>
+              </Box>
             </FormGroup>
           </AccordionDetails>
         </Accordion>

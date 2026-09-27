@@ -6,6 +6,7 @@ import {
   EntryBookmarkIcon,
   NextDocumentIcon,
   PrevDocumentIcon,
+  ReloadIcon,
 } from '-/components/CommonIcons';
 import TsIconButton from '-/components/TsIconButton';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
@@ -24,10 +25,11 @@ interface Props {
   isFile: boolean;
   smallScreen: boolean;
   startClosingEntry: (event) => void;
+  reloadDocument: () => void;
 }
 
 function EntryContainerNav(props: Props) {
-  const { isFile, startClosingEntry, smallScreen } = props;
+  const { isFile, startClosingEntry, reloadDocument, smallScreen } = props;
   const { setActions } = usePerspectiveActionsContext();
   const keyBindings = useSelector(getKeyBindingObject);
   const hideProFeatures: boolean = useSelector(isHideProFeatures);
@@ -135,6 +137,16 @@ function EntryContainerNav(props: Props) {
             ) : (
               <NextDocumentIcon />
             )}
+          </TsIconButton>
+          <TsIconButton
+            tooltip={t('core:reloadFile')}
+            keyBinding={keyBindings.reloadDocument}
+            aria-label={t('core:reloadFile')}
+            data-tid="fileContainerReloadFile"
+            sx={{ marginLeft: smallScreen ? '5px' : 0 }}
+            onClick={reloadDocument}
+          >
+            <ReloadIcon />
           </TsIconButton>
         </>
       )}

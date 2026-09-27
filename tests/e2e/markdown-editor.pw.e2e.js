@@ -1,6 +1,8 @@
 /*
  * Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved.
  */
+import fs from 'fs';
+import pathLib from 'path';
 import { test, expect } from './fixtures';
 import {
   defaultLocationName,
@@ -127,5 +129,80 @@ test.describe('TST69 - Markdown editor', () => {
     await clickOn('[data-tid=propsActionsMenuTID]');
     await clickOn('[data-tid=reloadPropertiesTID]');
     await expectFileContain(newFileContent, 15000);
+  });
+
+  test('TST6904 - View mode: double click does not enter edit mode, edit button does [electron]', async () => {
+    const fileName = 'sample.md';
+    await openContextEntryMenu(
+      getGridFileSelector(fileName),
+      'fileMenuOpenFile',
+    );
+    await expectElementExist(
+      '[data-tid=OpenedTID' + dataTidFormat(fileName) + ']',
+      true,
+      8000,
+    );
+    // Wait until the viewer iframe has rendered the milkdown content
+    await expect
+      .poll(
+        async () => {
+          const fLocator = await frameLocator();
+          return await fLocator.locator('.milkdown').count();
+        },
+        { timeout: 15000 },
+      )
+      .toBeGreaterThan(0);
+
+    const iframeElement = await global.client.waitForSelector('iframe');
+    const frame = await iframeElement.contentFrame();
+    // Double click anywhere in the document body — must NOT switch to edit mode
+    await frame.dblclick('body');
+    await global.client.waitForTimeout(1500);
+
+    // Still in view mode: edit button visible, no editable content
+    await expectElementExist('[data-tid=fileContainerEditFile]', true, 5000);
+    const editable = await frame.$('.milkdown div[contenteditable=true]');
+    expect(editable).toBeNull();
+
+    // The edit button enters edit mode
+    await clickOn('[data-tid=fileContainerEditFile]');
+    await expect
+      .poll(
+        async () => {
+          const fLocator = await frameLocator();
+          return await fLocator
+            .locator('.milkdown div[contenteditable=true]')
+            .count();
+        },
+        { timeout: 15000 },
+      )
+      .toBeGreaterThan(0);
+  });
+
+  test('TST6905 - Reload opened md file via toolbar button picks up external changes [electron]', async ({
+    testDataDir,
+  }) => {
+    const fileName = 'sample.md';
+    await openContextEntryMenu(
+      getGridFileSelector(fileName),
+      'fileMenuOpenFile',
+    );
+    await expectElementExist(
+      '[data-tid=OpenedTID' + dataTidFormat(fileName) + ']',
+      true,
+      8000,
+    );
+
+    // Simulate an external program changing the file on disk
+    const reloadMarker = 'reloadMarker' + Date.now();
+    const filePath = pathLib.join(testDataDir, fileName);
+    fs.writeFileSync(
+      filePath,
+      fs.readFileSync(filePath, 'utf8') + '\n\n' + reloadMarker + '\n',
+    );
+
+    // Toolbar reload button refreshes the opened file from disk
+    await clickOn('[data-tid=fileContainerReloadFile]');
+    await expectFileContain(reloadMarker, 15000);
   });
 });

@@ -34,6 +34,8 @@ import {
   ListSubheader,
   MenuItem,
 } from '@mui/material';
+import Autocomplete from '@mui/material/Autocomplete';
+import TextField from '@mui/material/TextField';
 import InputAdornment from '@mui/material/InputAdornment';
 import { format, parseISO } from 'date-fns';
 import { ModelResponse } from 'ollama';
@@ -48,12 +50,25 @@ interface Props {
   aiProvider: AIProvider;
   chosenModel: string;
   handleChangeModel: (newModelName: string) => void;
+  /**
+   * Settings → AI allows typing a custom model name (endpoints without a
+   * usable /models listing). The chat/agent dialog dropdown is select-only:
+   * it just switches between models the endpoint (or settings) already knows.
+   */
+  allowManualModelInput?: boolean;
 }
 
 function SelectChatModel(props: Props) {
   const { t } = useTranslation();
-  const { id, label, aiProvider, chosenModel, handleChangeModel, disabled } =
-    props;
+  const {
+    id,
+    label,
+    aiProvider,
+    chosenModel,
+    handleChangeModel,
+    disabled,
+    allowManualModelInput = true,
+  } = props;
   const { removeModel, getAiClient, models } = useChatContext();
   const { openConfirmDialog } = useNotificationContext();
 
@@ -200,6 +215,61 @@ function SelectChatModel(props: Props) {
   const handleRemoveModel = () => {
     removeModel(chosenModel);
   };
+
+  // OpenAI-compatible engines: explicit-commit manual input (Enter or select
+  // from the endpoint's model list — no blur commit, no shadow memory list;
+  // per-provider multi-model lists live in provider.customModels).
+  const [manualInput, setManualInput] = useState(chosenModel || '');
+  useEffect(() => {
+    setManualInput(chosenModel || '');
+  }, [chosenModel]);
+
+  if (!isOllama && allowManualModelInput) {
+    const modelNames = Array.from(
+      new Set<string>(
+        (installedModels || []).map((m) => m.name).filter(Boolean),
+      ),
+    );
+    const commitModel = (name: string) => {
+      const trimmed = (name || '').trim();
+      if (trimmed && trimmed !== chosenModel) {
+        handleChangeModel(trimmed);
+      }
+    };
+    return (
+      <Autocomplete
+        freeSolo
+        disabled={disabled}
+        disableClearable
+        openOnFocus
+        options={modelNames}
+        inputValue={manualInput}
+        onInputChange={(event, value) => setManualInput(value)}
+        onChange={(event, value) => {
+          if (typeof value === 'string' && value.trim()) {
+            commitModel(value);
+          }
+        }}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            label={label ? label : ''}
+            placeholder={t('core:enterModelNameDescription')}
+            variant="outlined"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && manualInput.trim()) {
+                commitModel(manualInput);
+                (event.target as HTMLInputElement).blur();
+              }
+            }}
+          />
+        )}
+        id={id ? id : 'selectChatModelId'}
+        sx={{ '& .MuiInputBase-root': { padding: '0px' } }}
+      />
+    );
+  }
+
   function getTitle(model) {
     // OpenAI-compatible servers don't report a modified date.
     return model && model.modified_at
@@ -278,11 +348,64 @@ function SelectChatModel(props: Props) {
             </ListItemText>
           </MenuItem>
         ))
-      ) : (
+      ) : !isOllama && (aiProvider?.customModels || []).length > 0 ? null : (
         <MenuItem value="" disabled>
           {t('core:noAIModelsInstaller')}
         </MenuItem>
       )}
+      {!isOllama &&
+        (aiProvider?.customModels || [])
+          .filter(
+            (name) =>
+              name &&
+              !(installedModels || []).some((m) => m.name === name) &&
+              name !== chosenModel,
+          )
+          .map((name) => (
+            <MenuItem key={name} value={name}>
+              <ListItemIcon
+                sx={{
+                  display: 'inline-block',
+                  minWidth: '30px',
+                  paddingLeft: '3px',
+                }}
+              >
+                <AIIcon
+                  sx={{
+                    width: '24px',
+                    height: '24px',
+                    verticalAlign: 'middle',
+                  }}
+                />
+              </ListItemIcon>
+              <ListItemText
+                sx={{ display: 'inline-flex', alignItems: 'center' }}
+              >
+                {name}
+              </ListItemText>
+            </MenuItem>
+          ))}
+      {!isOllama &&
+        chosenModel &&
+        !(installedModels || []).some((m) => m.name === chosenModel) &&
+        !(aiProvider?.customModels || []).includes(chosenModel) && (
+          <MenuItem value={chosenModel}>
+            <ListItemIcon
+              sx={{
+                display: 'inline-block',
+                minWidth: '30px',
+                paddingLeft: '3px',
+              }}
+            >
+              <AIIcon
+                sx={{ width: '24px', height: '24px', verticalAlign: 'middle' }}
+              />
+            </ListItemIcon>
+            <ListItemText sx={{ display: 'inline-flex', alignItems: 'center' }}>
+              {chosenModel}
+            </ListItemText>
+          </MenuItem>
+        )}
       {isOllama && (
         <ListSubheader>{t('core:exampleInstallableModels')}</ListSubheader>
       )}

@@ -221,39 +221,6 @@ export default function buildDesktopMenu(props: any, i18n) {
           click: props.toggleOnboardingDialog,
         },
         {
-          label: '&' + i18n.t('whatsNew'),
-          click: () => {
-            shell.openExternal(Links.links.changelogURL);
-          },
-        },
-        {
-          label: '&' + i18n.t('followOnMastodon'),
-          click: () => {
-            shell.openExternal(Links.links.mastodon);
-          },
-        },
-        {
-          label: '&' + i18n.t('followOnX'),
-          click: () => {
-            shell.openExternal(Links.links.twitter);
-          },
-        },
-        {
-          type: 'separator',
-        },
-        {
-          label: '&' + i18n.t('suggestNewFeatures'),
-          click: () => {
-            shell.openExternal(Links.links.suggestFeature);
-          },
-        },
-        {
-          label: '&' + i18n.t('reportIssues'),
-          click: () => {
-            shell.openExternal(Links.links.reportIssue);
-          },
-        },
-        {
           type: 'separator',
         },
         {

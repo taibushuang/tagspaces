@@ -124,6 +124,22 @@
 
 > 完整审查与修复记录见 [`TODO-file-version-cleanup-review.md`](TODO-file-version-cleanup-review.md)（含遗留 P2 项）。
 
+### AI Agent（工具调用助手）
+
+**设计文档**：[`DESIGN-ai-agent.md`](DESIGN-ai-agent.md)。基于现有 AI 基础设施（`ChatProvider` / `AiClient` / `OpenAIClient`，全部在渲染层）扩展的轻量 tool-calling agent，**零新依赖**。
+
+**使用**：两个入口 —— ① 主工具栏右侧的 **AI Agent 按钮**（🤖 图标，弹窗内含完整聊天）；② 打开文件夹后 EntryContainer 的 AI Tab。两处都有 **Agent** 开关（localStorage `tsAiAgentMode`）。开启后消息走工具循环，工具步骤以 `🔧 name(args) → 结果` 流入聊天 markdown。Provider 需为 OpenAI 兼容引擎（Kimi/DeepSeek/火山方舟/内网网关均已加入 `aiPresets.ts` 预设），API Key 在设置 → AI 的每个引擎卡片内填写。
+
+**核心文件**：
+- `src/renderer/components/chat/AgentService.ts` — `runAgent()` 工具循环（maxSteps=8、流式 delta、tool_calls 增量拼装、abort、错误转 tool 结果）
+- `src/renderer/components/chat/AgentTools.ts` — `createAgentTools(deps)` 工厂：search_files / list_folder / get_entry_tags / add_tags / remove_tags / read_file_text（结果有截断护栏）
+- `src/renderer/components/chat/OpenAIClient.ts` — `chatOpenAICompletion()` 返回 `{ content, toolCalls }`（流式/非流式均支持 tool_calls）
+- `src/renderer/hooks/LocationIndexContextProvider.tsx` — `agentSearch()`：无 UI 副作用的搜索（不写 redux、不弹通知），直接返回结果
+
+**护栏（勿回退）**：第一版不含 rename/move/delete 工具（打标签可逆）；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。
+
+**已知限制**：自签名证书的内网网关会被渲染层 Chromium 网络栈拒绝（需装企业 CA 或后续加主进程代理）；`/v1/models` 列表不可用的端点（如方舟套餐）需在设置里手动添加模型。CORS 已解决：主进程窗口 `webSecurity: false`（main.ts），因为方舟等网关的 CORS 预检不放行 `Authorization` 且 Electron webRequest 拦不到预检，聊天/Agent/验证直连才能通（2026-09-27，已在真实应用内实测 200）。
+
 ### 打包注意事项（2026-09-25 起：无原生依赖）
 
 - koffi 及其 `install-koffi-*` 步骤已全部移除（package.json 脚本、`scripts/install-koffi-platform.js`、CI 校验）。

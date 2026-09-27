@@ -20,6 +20,7 @@ import AppConfig from '-/AppConfig';
 import PageNotification from '-/containers/PageNotification';
 import { FilePropertiesContextProvider } from '-/hooks/FilePropertiesContextProvider';
 import { FullScreenContextProvider } from '-/hooks/FullScreenContextProvider';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { usePanelsContext } from '-/hooks/usePanelsContext';
@@ -81,6 +82,7 @@ function MainPage() {
   const dispatch = useDispatch();
   const { openLink, openedEntry, isEntryInFullWidth, setEntryInFullWidth } =
     useOpenedEntryContext();
+  const { currentLocationId } = useCurrentLocationContext();
 
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
@@ -149,11 +151,17 @@ function MainPage() {
     // eslint-disable-next-line
   }, []);
 
+  // A file opened standalone (e.g. via OS file association / cmdopen) without
+  // a current location takes over the whole window like full-width mode: no
+  // folder list drawer, no welcome panel — just the file.
+  const standaloneEntry = !!openedEntry && !currentLocationId;
+  const fullWidthView = isEntryInFullWidth || standaloneEntry;
+
   useEffect(() => {
-    if (isEntryInFullWidth) {
+    if (fullWidthView) {
       setDrawerOpened(false);
     }
-  }, [isEntryInFullWidth]);
+  }, [fullWidthView]);
 
   // Expose desktop drawer width to CSS so the main content's paddingLeft
   // tracks the drawer size without re-creating the styled component on every drag.
@@ -269,7 +277,7 @@ function MainPage() {
     [keyBindings],
   );
 
-  const hideSplit = !openedEntry || isEntryInFullWidth;
+  const hideSplit = !openedEntry || fullWidthView;
 
   // Keep sizePx in sync with persisted percentage and container width.
   useEffect(() => {
@@ -351,7 +359,7 @@ function MainPage() {
           size={sizePx}
           min={400}
           hidden={hideSplit}
-          hiddenTake={isEntryInFullWidth ? 'secondary' : 'primary'}
+          hiddenTake={fullWidthView ? 'secondary' : 'primary'}
           onChange={onMainSplitChange}
           ariaLabel="Resize file list and preview"
         >
