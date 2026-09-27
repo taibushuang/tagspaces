@@ -198,6 +198,8 @@ function AgentPanel() {
       addTagsToFsEntry: (entry, tags) => addTagsToFsEntry(entry, tags),
       removeTagsFromEntry,
       loadTextFile: (path: string) => location.loadTextFilePromise(path),
+      readFileBytes: (path: string) =>
+        Promise.resolve(location.getFileContentPromise(path, 'arraybuffer')),
     });
   }, [
     findLocation,

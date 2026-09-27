@@ -1,6 +1,7 @@
 # TODO：AI 能力建设路线（后续目标）
 
 > 创建：2026-09-27
+> 场景目标态：`DESIGN-office-ai-workflow.md`（办公场景 AI 工作流，含工具差距清单）
 > 背景：AI Agent 基础集成已合入（commit `77b056732`）。本文档记录与官方
 > （tagspaces.org）AI 路线对比后的差距分析，以及后续建设目标。
 > 参考：`DESIGN-ai-agent.md`（本期设计）、官方 6.11 博客、tscmd 博客、

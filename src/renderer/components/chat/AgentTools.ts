@@ -25,6 +25,11 @@
  * always operate on the user's current location/selection.
  */
 import { AgentTool } from '-/components/chat/AgentService';
+import { extractPDFcontent } from '-/services/thumbsgenerator';
+import {
+  extractOfficeText,
+  isOfficeDocumentPath,
+} from '-/services/officeTextExtractor';
 import AppConfig from '-/AppConfig';
 import { TS } from '-/tagspaces.namespace';
 
@@ -44,12 +49,19 @@ export type AgentToolDeps = {
     tags?: Array<TS.Tag>,
   ) => Promise<string>;
   loadTextFile: (path: string) => Promise<string>;
+  /** Raw bytes for binary documents (pdf / docx / pptx / xlsx). */
+  readFileBytes: (path: string) => Promise<ArrayBuffer>;
 };
 
 const SEARCH_RESULT_LIMIT = 50;
 const READ_FILE_CHAR_LIMIT = 20000;
 /** Files bigger than this are refused for reading (token safety). */
 const READ_FILE_MAX_BYTES = 2 * 1024 * 1024;
+/**
+ * Office/PDF documents carry layout noise (embedded media) but extract to
+ * small text — allow a larger input ceiling than plain text files.
+ */
+const OFFICE_READ_MAX_BYTES = 20 * 1024 * 1024;
 
 function entryToSummary(entry: TS.FileSystemEntry) {
   return {
@@ -303,8 +315,10 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     {
       name: 'read_file_text',
       description:
-        'Read the text content of a file (documents, markdown, code, …). ' +
-        'Only text-based file types are supported; large files are truncated.',
+        'Read the text content of a file. Supports text-based files ' +
+        '(documents, markdown, code, …), PDF and Office documents ' +
+        '(docx / pptx / xlsx — text is extracted, layout is not preserved). ' +
+        'Large files are truncated.',
       parameters: {
         type: 'object',
         properties: {
@@ -318,20 +332,33 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       },
       execute: async (args) => {
         const path = requireString(args, 'path');
-        if (!isReadableTextFile(path)) {
+        const isOffice = isOfficeDocumentPath(path);
+        const isPdf = path.toLowerCase().endsWith('.pdf');
+        if (!isReadableTextFile(path) && !isOffice && !isPdf) {
           return {
-            error: `not a supported text file type; supported: ${AppConfig.aiSupportedFiletypes.text.join(
+            error: `not a supported file type; supported: text files (${AppConfig.aiSupportedFiletypes.text.join(
               ', ',
-            )}`,
+            )}), pdf, docx, pptx, xlsx`,
           };
         }
         const indexEntry = findEntryByPath(deps.getIndex(), path);
-        if (indexEntry && indexEntry.size > READ_FILE_MAX_BYTES) {
+        const maxBytes =
+          isOffice || isPdf ? OFFICE_READ_MAX_BYTES : READ_FILE_MAX_BYTES;
+        if (indexEntry && indexEntry.size > maxBytes) {
           return {
             error: `file too large to read (${indexEntry.size} bytes)`,
           };
         }
-        const content = await deps.loadTextFile(path);
+        let content: string;
+        if (isOffice) {
+          const bytes = await deps.readFileBytes(path);
+          content = extractOfficeText(bytes, path);
+        } else if (isPdf) {
+          const bytes = await deps.readFileBytes(path);
+          content = await extractPDFcontent(bytes);
+        } else {
+          content = await deps.loadTextFile(path);
+        }
         const maxChars = Math.max(
           1,
           Math.min(

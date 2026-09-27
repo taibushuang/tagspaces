@@ -1197,6 +1197,10 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       addTagsToFsEntry: (entry, tags) => addTagsToFsEntry(entry, tags),
       removeTagsFromEntry,
       loadTextFile: (path: string) => currentLocation.loadTextFilePromise(path),
+      readFileBytes: (path: string) =>
+        currentLocation
+          .getFileContentPromise(path, 'arraybuffer')
+          .then((buffer: ArrayBuffer) => buffer),
     });
   }
 
