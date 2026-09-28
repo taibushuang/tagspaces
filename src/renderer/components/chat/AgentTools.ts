@@ -88,6 +88,20 @@ function entryToSummary(entry: TS.FileSystemEntry) {
   };
 }
 
+/**
+ * Folder-scan variant: includes the current description so the agent can
+ * compose hierarchical folder summaries and skip already-summarized
+ * documents in one listing call (DESIGN-office-ai-workflow §7).
+ */
+function entryToScanSummary(entry: TS.FileSystemEntry) {
+  const description = entry.meta?.description || '';
+  return {
+    ...entryToSummary(entry),
+    hasAiSummary: description.includes('🤖 AI 摘要'),
+    description,
+  };
+}
+
 function findEntryByPath(
   index: TS.FileSystemEntry[] | undefined,
   path: string,
@@ -213,7 +227,9 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     {
       name: 'list_folder',
       description:
-        'List the children (files and sub-folders) of a folder. ' +
+        'List the children (files and sub-folders) of a folder with their ' +
+        'current descriptions (capped at 50 entries — for larger trees, list ' +
+        'sub-folders individually). ' +
         'Uses the current location index; omit the path for the folder ' +
         'currently open in the main view. Set recursive=true to include ' +
         'all descendants (needed for folder-wide scans).',
@@ -259,8 +275,11 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         });
         return {
           folder: folderPath,
+          recursive,
           count: children.length,
-          entries: children.slice(0, SEARCH_RESULT_LIMIT).map(entryToSummary),
+          entries: children
+            .slice(0, SEARCH_RESULT_LIMIT)
+            .map(entryToScanSummary),
         };
       },
     },
