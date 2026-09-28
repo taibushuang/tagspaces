@@ -1197,7 +1197,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       'For goal-driven requests (produce a report, plan or answer document):',
       '- identify the relevant folders: list_folder (recursive) and search_files with tag/type operators, guided by folder and file descriptions;',
       '- read the relevant documents with read_file_text, plus related knowledge notes;',
-      '- synthesize the requested content and write it as a markdown file with write_document (choose a sensible location and filename; respect the location conventions about output folders);',
+      '- synthesize the requested content and write it as a markdown file with write_deliverable (choose a sensible location and filename; respect the location conventions about output folders);',
       '- reply with a short summary and the output file path. Only write files when the goal implies a document as the deliverable; otherwise just reply.',
       `Always reply in the language the user writes in — a message written in Chinese MUST get a Chinese reply. UI language (${language}) is only a fallback when the user's language is unclear.`,
       ...(conventions

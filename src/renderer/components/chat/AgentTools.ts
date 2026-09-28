@@ -602,7 +602,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       },
     },
     {
-      name: 'write_document',
+      name: 'write_deliverable',
       description:
         "写文本方案 — create the goal's deliverable document (方案/报告/回复内容) " +
         'as a markdown file. Guardrails: ' +
