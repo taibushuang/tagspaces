@@ -52,6 +52,10 @@ export type AgentToolDeps = {
   loadTextFile: (path: string) => Promise<string>;
   /** Raw bytes for binary documents (pdf / docx / pptx / xlsx). */
   readFileBytes: (path: string) => Promise<ArrayBuffer>;
+  /** Absolute path of the current location root. */
+  currentLocationPath: string;
+  /** Move an entry into another folder of the same location (no overwrite). */
+  moveFile: (sourcePath: string, targetFolderPath: string) => Promise<boolean>;
   /** Current description of an entry (empty string when none). */
   getDescription: (path: string) => Promise<string>;
   /** Persist a new description for an entry (file or folder). */
@@ -478,6 +482,71 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           path,
           hasAiSummary: description.includes('🤖 AI 摘要'),
           description,
+        };
+      },
+    },
+    {
+      name: 'move_file',
+      description:
+        'Move a file or folder into another folder of the same location ' +
+        '(filing / archiving, e.g. sorting an inbox). Never overwrites an ' +
+        'existing target. Move first, then tag the moved entry.',
+      parameters: {
+        type: 'object',
+        properties: {
+          sourcePath: {
+            type: 'string',
+            description: 'absolute path of the file or folder to move',
+          },
+          targetFolder: {
+            type: 'string',
+            description: 'absolute path of the destination folder',
+          },
+        },
+        required: ['sourcePath', 'targetFolder'],
+      },
+      execute: async (args) => {
+        const sourcePath = requireString(args, 'sourcePath');
+        const targetFolder = requireString(args, 'targetFolder');
+        const norm = (p: string) =>
+          p.replace(/[\\/]+/g, '/').replace(/\/$/, '');
+        const source = norm(sourcePath);
+        const target = norm(targetFolder);
+        if (source === target) {
+          return { error: 'source and target folder are the same' };
+        }
+        if (target.startsWith(`${source}/`)) {
+          return { error: 'cannot move a folder into itself' };
+        }
+        const index = deps.getIndex();
+        const entry = findEntryByPath(index, source);
+        if (!entry) {
+          return {
+            error: 'source path not found in the current location index',
+          };
+        }
+        const targetIsKnown =
+          target === norm(deps.currentLocationPath) ||
+          findEntryByPath(index, target);
+        if (!targetIsKnown) {
+          return {
+            error: 'target folder not found in the current location index',
+          };
+        }
+        const name = source.split('/').pop();
+        if (index && index.some((e) => norm(e.path) === `${target}/${name}`)) {
+          return {
+            error: `an entry named "${name}" already exists in the target folder — nothing was moved`,
+          };
+        }
+        const ok = await deps.moveFile(sourcePath, targetFolder);
+        if (!ok) {
+          return { error: 'the move failed (check notifications for details)' };
+        }
+        return {
+          ok: true,
+          newPath: `${target}/${name}`,
+          note: 'the location index refreshes automatically after the move',
         };
       },
     },

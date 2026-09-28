@@ -213,7 +213,8 @@ export type GenerationSettings = {
 export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const { t } = useTranslation();
   const { showNotification } = useNotificationContext();
-  const { deleteDirectory, setDescriptionChange } = useIOActionsContext();
+  const { deleteDirectory, setDescriptionChange, moveFiles } =
+    useIOActionsContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
   const { agentSearch, getIndex } = useLocationIndexContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
@@ -1178,6 +1179,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       'Never invent file paths — only use paths returned by tools or given by the user.',
       'After tool calls, briefly summarize in text what you did or found.',
       'For "summarize this document/folder" requests, write the result with the set_description tool for the relevant file or folder (concise), in addition to replying.',
+      'When asked to file or sort documents (e.g. an inbox), move each item into its destination folder with move_file first, then tag it with set_description/read_file_text as needed. Never overwrite existing files.',
       'When asked to scan, review or summarize a folder, follow this default procedure:',
       '- list_folder with recursive=true, then read each document with read_file_text,',
       '- write a concise summary of every document into its description via set_description,',
@@ -1199,10 +1201,17 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       agentSearch,
       getIndex,
       currentLocationName: currentLocation ? currentLocation.name : '',
+      currentLocationPath: currentLocation ? currentLocation.path : '',
       currentDirectoryPath: currentDirectoryPath || '',
       selectedEntries,
       addTagsToFsEntry: (entry, tags) => addTagsToFsEntry(entry, tags),
       removeTagsFromEntry,
+      moveFile: (sourcePath: string, targetFolderPath: string) =>
+        moveFiles(
+          [sourcePath],
+          targetFolderPath,
+          currentLocation ? currentLocation.uuid : undefined,
+        ),
       loadTextFile: (path: string) => currentLocation.loadTextFilePromise(path),
       readFileBytes: (path: string) =>
         currentLocation

@@ -137,7 +137,7 @@ function AgentPanel() {
   const { currentDirectoryPath } = useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
-  const { setDescriptionChange } = useIOActionsContext();
+  const { setDescriptionChange, moveFiles } = useIOActionsContext();
 
   const [sessions, setSessions] = useState<AgentSession[]>(loadSessions);
   const [currentSessionId, setCurrentSessionId] = useState<string>(
@@ -195,10 +195,13 @@ function AgentPanel() {
       agentSearch,
       getIndex,
       currentLocationName: location ? location.name : '',
+      currentLocationPath: location ? location.path : '',
       currentDirectoryPath: currentDirectoryPath || '',
       selectedEntries,
       addTagsToFsEntry: (entry, tags) => addTagsToFsEntry(entry, tags),
       removeTagsFromEntry,
+      moveFile: (sourcePath: string, targetFolderPath: string) =>
+        moveFiles([sourcePath], targetFolderPath, location.uuid),
       loadTextFile: (path: string) => location.loadTextFilePromise(path),
       readFileBytes: (path: string) =>
         Promise.resolve(location.getFileContentPromise(path, 'arraybuffer')),
