@@ -161,3 +161,57 @@ AgentTools（注册表）                        ← 新增
    `search_files` → `add_tags` 工具链并在 UI 可见步骤。
 2. 无 tool-calling 能力的端点在连接测试时得到明确错误。
 3. `npm run build:renderer` + tsc 无新错误。
+
+## 7. 本期偏离与新增（2026-09-28 补录）
+
+实现落地时相对上文设计的偏离，以及后续轮次的新增：
+
+### 7.1 UI 形态偏离
+
+- 实际交付为 **AgentPanel（独立会话面板）** + **AiAgentDialog（Chat/Agent
+  双 Tab 入口）**，而非 §3.4 的 ChatView 内嵌开关方案；主工具栏右侧
+  🤖 按钮与 EntryContainer AI Tab 两个入口并存。Agent 开关状态仍存
+  localStorage（`tsAiAgentMode`）。
+- 会话持久化：AgentPanel 会话存 localStorage（`tsAiAgentSessions`），
+  与 §3.4「沿用 ChatItem 机制」不一致；迁移到 `.ts/ai/agent.json` 的
+  决策见 `TODO-ai-capabilities.md` Phase 6。
+
+### 7.2 多模型管理
+
+- Provider 增加 `customModels: string[]`（`ChatTypes.ts`），设置界面配套
+  `ModelListEditor`；解决 `/v1/models` 列表不可用的端点（如方舟套餐）
+  需手动添加模型的问题。
+
+### 7.3 验证体系
+
+- 设置 → AI 每个引擎卡片内填 API Key；「保存并验证」按钮 +
+  模型发现探活。注意：§3.1/§6.2 的「连接测试时探测 tool-calling」
+  **尚未接入 UI**（`checkAgentSupport` 已实现但闲置），欠账见
+  `TODO-ai-capabilities.md` Phase 1-②。
+
+### 7.4 CORS 与证书方案偏离
+
+- §3.6 原设想「主进程加代理 IPC」解决自签名证书，**实际未采用**。
+  实际方案：主进程窗口 `webSecurity: false`（main.ts）+
+  `ignore-certificate-errors`。原因：方舟等网关的 CORS 预检不放行
+  `Authorization` 且 Electron webRequest 拦不到预检，直连才能通
+  （2026-09-27 已在真实应用内实测 200）。
+
+### 7.5 后续轮次新增能力（超出第一版范围）
+
+- §4 护栏「不含 move」已放开：`move_file`（`efed0a6d1`，不覆盖、不提供
+  删除）、`set_description`（`e2b625d03`，人工内容保护）、
+  `write_text_file`（目标驱动的文档产出）。
+- `search_files` 支持 tscmd 风格查询操作符（`58c1cb887`）。
+- 约定文件注入：`locationConventions.ts` 读 location 根 `CLAUDE.md` /
+  `AGENTS.md` 注入 system prompt（`9bf2bb979`）。
+- 分层汇总前置：`list_folder` recursive + 结果携带描述、`get_description`
+  （`e61dcd463`、`1454bf51e`）。
+
+### 7.6 Ollama 冻结决策（2026-09-28）
+
+- 模型供给收敛为**内网网关（OpenAI 兼容）唯一通道**，放弃本地 Ollama
+  与离线 AI 场景。§2.2 提到的「此前为 Ollama/本地模型设计」的
+  `OllamaClient.ts` 保留不删（避免上游合并冲突）但不再投入。
+- 连带影响：tool-calling 能力探测（§3.1）从「友好提示」升级为硬门槛；
+  分层汇总等高调用量功能的成本全部走网关计费，增量缓存为硬性要求。

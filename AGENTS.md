@@ -136,7 +136,11 @@
 - `src/renderer/components/chat/OpenAIClient.ts` — `chatOpenAICompletion()` 返回 `{ content, toolCalls }`（流式/非流式均支持 tool_calls）
 - `src/renderer/hooks/LocationIndexContextProvider.tsx` — `agentSearch()`：无 UI 副作用的搜索（不写 redux、不弹通知），直接返回结果
 
-**护栏（勿回退）**：第一版不含 rename/move/delete 工具（打标签可逆）；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。
+**护栏（勿回退）**：不提供删除工具；move_file 目标已存在时不覆盖；打标签可逆；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。
+
+**模型供给决策（2026-09-28）**：内网网关（OpenAI 兼容）为**唯一通道**，本地 Ollama 冻结——`OllamaClient.ts` 保留不删但不再投入，离线 AI 场景放弃。分层汇总等高调用量功能全部走网关计费，增量缓存为硬性要求。
+
+**后续新增（详见 `TODO-ai-capabilities.md` 与 `DESIGN-ai-agent.md` §7）**：`set_description`（人工内容保护）、`move_file`（分拣归档）、`write_text_file`（文档产出）；`search_files` 支持 tscmd 风格操作符（`+tag`/`-tag`/`|tag`/`--type`）；约定文件注入 `locationConventions.ts`（location 根 `CLAUDE.md`/`AGENTS.md` → system prompt）；`list_folder` recursive + 携带描述、`get_description`（分层汇总前置）。
 
 **已知限制**：自签名证书的内网网关会被渲染层 Chromium 网络栈拒绝（需装企业 CA 或后续加主进程代理）；`/v1/models` 列表不可用的端点（如方舟套餐）需在设置里手动添加模型。CORS 已解决：主进程窗口 `webSecurity: false`（main.ts），因为方舟等网关的 CORS 预检不放行 `Authorization` 且 Electron webRequest 拦不到预检，聊天/Agent/验证直连才能通（2026-09-27，已在真实应用内实测 200）。
 

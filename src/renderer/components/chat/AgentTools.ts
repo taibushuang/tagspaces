@@ -64,6 +64,12 @@ export type AgentToolDeps = {
     entry: TS.FileSystemEntry,
     description: string,
   ) => Promise<boolean>;
+  /** Create/overwrite a text file. Rejects on IO errors; honors overwrite. */
+  writeTextFile: (
+    path: string,
+    content: string,
+    overwrite: boolean,
+  ) => Promise<void>;
 };
 
 const SEARCH_RESULT_LIMIT = 50;
@@ -592,6 +598,78 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           ok: true,
           newPath: `${target}/${name}`,
           note: 'the location index refreshes automatically after the move',
+        };
+      },
+    },
+    {
+      name: 'write_text_file',
+      description:
+        'Create (or replace) a text/markdown file — e.g. the report, plan ' +
+        'or answer document produced for a goal-driven request. Guardrails: ' +
+        'only .md/.txt; an existing file is never overwritten unless it was ' +
+        'AI-generated (contains the AI summary marker) or is empty.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description:
+              'absolute path of the file to write (must end in .md or .txt)',
+          },
+          content: {
+            type: 'string',
+            description: 'markdown/text content to write',
+          },
+          overwrite: {
+            type: 'boolean',
+            description:
+              'replace an existing file (allowed only when the existing file is AI-generated or empty)',
+          },
+        },
+        required: ['path', 'content'],
+      },
+      execute: async (args) => {
+        const path = requireString(args, 'path');
+        const content = String(args?.content ?? '');
+        if (!content.trim()) {
+          return { error: 'content is empty — nothing to write' };
+        }
+        const lower = path.toLowerCase();
+        if (!lower.endsWith('.md') && !lower.endsWith('.txt')) {
+          return { error: 'only .md and .txt files can be written' };
+        }
+        const overwrite = args?.overwrite === true;
+        const existing = findEntryByPath(deps.getIndex(), path);
+        if (existing && !overwrite) {
+          return {
+            error:
+              'file already exists — set overwrite=true only if you are sure it is AI-generated content',
+          };
+        }
+        if (existing && overwrite) {
+          const bytes = await deps.readFileBytes(path);
+          const existingContent = new TextDecoder('utf-8').decode(bytes).trim();
+          if (
+            existingContent &&
+            !existingContent.includes('🤖 AI 摘要') &&
+            !existingContent.includes('🤖 AI Summary')
+          ) {
+            return {
+              error:
+                'refusing to overwrite: the existing file looks human-written (no AI summary marker)',
+            };
+          }
+        }
+        try {
+          await deps.writeTextFile(path, content, overwrite && !!existing);
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+        return {
+          ok: true,
+          path,
+          bytes: content.length,
+          replacedExisting: !!existing,
         };
       },
     },

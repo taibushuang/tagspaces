@@ -107,6 +107,11 @@ type IOActionsContextData = {
   deleteEntries: (...entries: TS.FileSystemEntry[]) => Promise<boolean>;
   deleteDirectory: (directoryPath: string) => Promise<boolean>;
   deleteFile: (filePath: string, uuid: string) => Promise<boolean>;
+  saveTextFilePromise: (
+    param: any,
+    content: string,
+    overwrite: boolean,
+  ) => Promise<any>;
   moveDirs: (
     dirPaths: Array<string>,
     targetPath: string,
@@ -280,6 +285,7 @@ export const IOActionsContext = createContext<IOActionsContextData>({
   deleteEntries: undefined,
   deleteDirectory: undefined,
   deleteFile: undefined,
+  saveTextFilePromise: undefined,
   moveDirs: undefined,
   moveFiles: undefined,
   copyDirs: undefined,
@@ -2966,6 +2972,7 @@ export const IOActionsContextProvider = ({
       deleteEntries,
       deleteDirectory,
       deleteFile,
+      saveTextFilePromise,
       moveDirs,
       moveFiles,
       copyDirs,

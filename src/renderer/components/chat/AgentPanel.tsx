@@ -138,7 +138,8 @@ function AgentPanel() {
   const { currentDirectoryPath } = useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
-  const { setDescriptionChange, moveFiles } = useIOActionsContext();
+  const { setDescriptionChange, moveFiles, saveTextFilePromise } =
+    useIOActionsContext();
 
   const [sessions, setSessions] = useState<AgentSession[]>(loadSessions);
   const [currentSessionId, setCurrentSessionId] = useState<string>(
@@ -215,6 +216,10 @@ function AgentPanel() {
         ),
       setDescription: (entry: TS.FileSystemEntry, description: string) =>
         setDescriptionChange(entry, description),
+      writeTextFile: (path: string, content: string, overwrite: boolean) =>
+        Promise.resolve(
+          location.saveTextFilePromise({ path }, content, overwrite),
+        ).then(() => undefined),
     });
   }, [
     findLocation,
