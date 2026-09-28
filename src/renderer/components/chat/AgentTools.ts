@@ -26,6 +26,7 @@
  */
 import { AgentTool } from '-/components/chat/AgentService';
 import { applyAiSummary } from '-/components/chat/agentDescription';
+import { parseSearchOperators } from '-/components/chat/searchQueryParser';
 import { extractPDFcontent } from '-/services/thumbsgenerator';
 import {
   extractOfficeText,
@@ -137,11 +138,21 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       name: 'search_files',
       description:
         'Search files and folders in the connected TagSpaces locations. ' +
-        'Combines an optional free-text query with optional tag names ' +
-        '(OR semantics). Returns paths that can feed other tools.',
+        'Preferred parameter is `query` with tscmd-style operators: ' +
+        'plain words (free text, AND), "quoted phrases", +tag (must have), ' +
+        '-tag (must not have), |tag (any-of group), --type:documents ' +
+        '(type group: images/notes/documents/audio/video/archives/ebooks/' +
+        'emails/folders/files/untagged — or comma-separated extensions ' +
+        'like --type:pdf,docx). Example: "登录 +设计 -已归档 --type:pdf". ' +
+        'Legacy textQuery/tags parameters still work.',
       parameters: {
         type: 'object',
         properties: {
+          query: {
+            type: 'string',
+            description:
+              'search expression with operators, e.g. "登录 +设计 -已归档 --type:pdf"',
+          },
           textQuery: {
             type: 'string',
             description: 'free text to match in file/folder names and content',
@@ -167,12 +178,27 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
             Math.round(Number(args?.maxResults) || 25),
           ),
         );
+        const parsed = parseSearchOperators(
+          String(args?.query ?? args?.textQuery ?? ''),
+        );
+        const legacyTags = Array.isArray(args?.tags)
+          ? args.tags.map((t: any) => String(t))
+          : [];
+        const tagsOR = Array.from(
+          new Set([...parsed.tagsOR, ...legacyTags]),
+        ).map((title: string) => ({ title }));
         const results = await deps.agentSearch({
-          ...(args?.textQuery && { textQuery: String(args.textQuery) }),
-          ...(Array.isArray(args?.tags) &&
-            args.tags.length > 0 && {
-              tagsOR: args.tags.map((t: any) => ({ title: String(t) })),
-            }),
+          ...(parsed.textQuery && { textQuery: parsed.textQuery }),
+          ...(parsed.tagsAND.length > 0 && {
+            tagsAND: parsed.tagsAND.map((title: string) => ({ title })),
+          }),
+          ...(tagsOR.length > 0 && { tagsOR }),
+          ...(parsed.tagsNOT.length > 0 && {
+            tagsNOT: parsed.tagsNOT.map((title: string) => ({ title })),
+          }),
+          ...(parsed.fileTypes.length > 0 && {
+            fileTypes: parsed.fileTypes,
+          }),
           searchBoxing: args?.scope === 'global' ? 'global' : 'location',
           searchType: 'fuzzy',
           maxSearchResults: maxResults,
