@@ -25,6 +25,7 @@
  * always operate on the user's current location/selection.
  */
 import { AgentTool } from '-/components/chat/AgentService';
+import { applyAiSummary } from '-/components/chat/agentDescription';
 import { extractPDFcontent } from '-/services/thumbsgenerator';
 import {
   extractOfficeText,
@@ -51,6 +52,13 @@ export type AgentToolDeps = {
   loadTextFile: (path: string) => Promise<string>;
   /** Raw bytes for binary documents (pdf / docx / pptx / xlsx). */
   readFileBytes: (path: string) => Promise<ArrayBuffer>;
+  /** Current description of an entry (empty string when none). */
+  getDescription: (path: string) => Promise<string>;
+  /** Persist a new description for an entry (file or folder). */
+  setDescription: (
+    entry: TS.FileSystemEntry,
+    description: string,
+  ) => Promise<boolean>;
 };
 
 const SEARCH_RESULT_LIMIT = 50;
@@ -370,6 +378,64 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           path,
           truncated: content.length > maxChars,
           content: content.slice(0, maxChars),
+        };
+      },
+    },
+    {
+      name: 'set_description',
+      description:
+        'Write a summary/description for a file or folder into its ' +
+        'metadata description (visible in the entry properties panel). ' +
+        'Use this for "summarize this document/folder" requests instead of ' +
+        'only printing the summary. Human-written description content is ' +
+        'always preserved — the AI summary is stored as a marked block that ' +
+        'is appended or updated, never overwriting manual notes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'absolute path of the file or folder',
+          },
+          summary: {
+            type: 'string',
+            description:
+              'the summary text (markdown allowed). Keep it concise: ' +
+              'what this document/folder is about, key conclusions, ' +
+              'open action items if any.',
+          },
+        },
+        required: ['path', 'summary'],
+      },
+      execute: async (args) => {
+        const path = requireString(args, 'path');
+        const summary = requireString(args, 'summary');
+        const entry = findEntryByPath(deps.getIndex(), path);
+        if (!entry) {
+          return {
+            error: 'path not found in the current location index',
+          };
+        }
+        let existing = '';
+        try {
+          existing = await deps.getDescription(path);
+        } catch (e) {
+          existing = '';
+        }
+        const finalDescription = applyAiSummary(existing, summary);
+        const ok = await deps.setDescription(entry, finalDescription);
+        if (!ok) {
+          return { error: 'failed to save the description' };
+        }
+        return {
+          ok: true,
+          path,
+          mode: existing.trim()
+            ? existing.includes('🤖 AI 摘要')
+              ? 'updated'
+              : 'appended'
+            : 'created',
+          descriptionLength: finalDescription.length,
         };
       },
     },

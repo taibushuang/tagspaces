@@ -213,7 +213,7 @@ export type GenerationSettings = {
 export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const { t } = useTranslation();
   const { showNotification } = useNotificationContext();
-  const { deleteDirectory } = useIOActionsContext();
+  const { deleteDirectory, setDescriptionChange } = useIOActionsContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
   const { agentSearch, getIndex } = useLocationIndexContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
@@ -1177,6 +1177,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       "Prefer calling tools over guessing about the user's files. Use concise, lowercase tag titles.",
       'Never invent file paths — only use paths returned by tools or given by the user.',
       'After tool calls, briefly summarize in text what you did or found.',
+      'For "summarize this document/folder" requests, write the result with the set_description tool for the relevant file or folder (concise), in addition to replying.',
       '',
       `Connected location: ${currentLocation ? currentLocation.name : 'none'}`,
       `Current folder: ${currentDirectoryPath || 'unknown'}`,
@@ -1201,6 +1202,13 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         currentLocation
           .getFileContentPromise(path, 'arraybuffer')
           .then((buffer: ArrayBuffer) => buffer),
+      getDescription: (path: string) =>
+        currentLocation
+          .loadFileMetaDataPromise(path)
+          .then((meta: TS.FileSystemEntryMeta) => meta?.description || '')
+          .catch(() => ''),
+      setDescription: (entry: TS.FileSystemEntry, description: string) =>
+        setDescriptionChange(entry, description),
     });
   }
 

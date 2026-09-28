@@ -38,6 +38,7 @@ import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
 import { useChatContext } from '-/hooks/useChatContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { getDefaultAIProvider, getCurrentLanguage } from '-/reducers/settings';
@@ -136,6 +137,7 @@ function AgentPanel() {
   const { currentDirectoryPath } = useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
+  const { setDescriptionChange } = useIOActionsContext();
 
   const [sessions, setSessions] = useState<AgentSession[]>(loadSessions);
   const [currentSessionId, setCurrentSessionId] = useState<string>(
@@ -200,6 +202,15 @@ function AgentPanel() {
       loadTextFile: (path: string) => location.loadTextFilePromise(path),
       readFileBytes: (path: string) =>
         Promise.resolve(location.getFileContentPromise(path, 'arraybuffer')),
+      getDescription: (path: string) =>
+        Promise.resolve(
+          location
+            .loadFileMetaDataPromise(path)
+            .then((meta: TS.FileSystemEntryMeta) => meta?.description || '')
+            .catch(() => ''),
+        ),
+      setDescription: (entry: TS.FileSystemEntry, description: string) =>
+        setDescriptionChange(entry, description),
     });
   }, [
     findLocation,

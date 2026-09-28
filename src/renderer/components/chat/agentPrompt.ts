@@ -43,6 +43,7 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
     "Prefer calling tools over guessing about the user's files. Use concise, lowercase tag titles.",
     'Never invent file paths — only use paths returned by tools or given by the user.',
     'After tool calls, briefly summarize in text what you did or found.',
+    'For "summarize this document/folder" requests, write the result with the set_description tool for the relevant file or folder (concise), in addition to replying.',
     '',
     `Connected location: ${ctx.locationName || 'none'}`,
     `Current folder: ${ctx.currentDirectoryPath || 'unknown'}`,
