@@ -602,10 +602,10 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       },
     },
     {
-      name: 'write_text_file',
+      name: 'write_document',
       description:
-        'Create (or replace) a text/markdown file — e.g. the report, plan ' +
-        'or answer document produced for a goal-driven request. Guardrails: ' +
+        "写文本方案 — create the goal's deliverable document (方案/报告/回复内容) " +
+        'as a markdown file. Guardrails: ' +
         'only .md/.txt; an existing file is never overwritten unless it was ' +
         'AI-generated (contains the AI summary marker) or is empty.',
       parameters: {
