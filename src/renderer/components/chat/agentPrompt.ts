@@ -27,6 +27,8 @@ export type AgentPromptContext = {
   currentDirectoryPath: string;
   selectedEntries: TS.FileSystemEntry[];
   language: string;
+  /** User-maintained convention file content (CLAUDE.md), if any. */
+  conventions?: string;
 };
 
 export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
@@ -55,6 +57,12 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
     `Connected location: ${ctx.locationName || 'none'}`,
     `Current folder: ${ctx.currentDirectoryPath || 'unknown'}`,
     `Always reply in the language the user writes in — a message written in Chinese MUST get a Chinese reply. UI language (${ctx.language}) is only a fallback when the user's language is unclear.`,
+    ...(ctx.conventions
+      ? [
+          `Location conventions written by the user (CLAUDE.md) — follow them closely:`,
+          ctx.conventions,
+        ]
+      : []),
     selected ? `\nCurrently selected entries:\n${selected}` : '',
   ]
     .filter(Boolean)

@@ -39,6 +39,7 @@ import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { loadLocationConventions } from '-/components/chat/locationConventions';
 import { useChatContext } from '-/hooks/useChatContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { getDefaultAIProvider, getCurrentLanguage } from '-/reducers/settings';
@@ -302,6 +303,7 @@ function AgentPanel() {
               currentDirectoryPath: currentDirectoryPath || '',
               selectedEntries,
               language: interfaceLanguage || 'en',
+              conventions: await loadLocationConventions(findLocation()),
             }),
           },
           ...session.apiMessages,

@@ -19,6 +19,7 @@
 import AppConfig from '-/AppConfig';
 import { AgentEvent, runAgent } from '-/components/chat/AgentService';
 import { createAgentTools } from '-/components/chat/AgentTools';
+import { loadLocationConventions } from '-/components/chat/locationConventions';
 import {
   AIProvider,
   ChatImage,
@@ -1163,7 +1164,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     }
   }
 
-  function buildAgentSystemPrompt(): string {
+  function buildAgentSystemPrompt(conventions: string): string {
     const language = interfaceLanguage || 'en';
     const selected = (selectedEntries || [])
       .slice(0, 10)
@@ -1190,6 +1191,12 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       `Connected location: ${currentLocation ? currentLocation.name : 'none'}`,
       `Current folder: ${currentDirectoryPath || 'unknown'}`,
       `Always reply in the language the user writes in — a message written in Chinese MUST get a Chinese reply. UI language (${language}) is only a fallback when the user's language is unclear.`,
+      ...(conventions
+        ? [
+            `Location conventions written by the user (CLAUDE.md) — follow them closely:`,
+            conventions,
+          ]
+        : []),
       selected ? `\nCurrently selected entries:\n${selected}` : '',
     ]
       .filter(Boolean)
@@ -1276,8 +1283,9 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     }
     const history = getOllamaMessages(chatHistoryItems.current, model);
     addHistoryItem(msg, 'user');
+    const conventions = await loadLocationConventions(currentLocation);
     const messages = [
-      { role: 'system', content: buildAgentSystemPrompt() },
+      { role: 'system', content: buildAgentSystemPrompt(conventions) },
       ...history,
       { role: 'user', content: msg },
     ];
