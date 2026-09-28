@@ -38,7 +38,7 @@
 - [x] **#1 Office 文档内容提取**（docx/pptx/xlsx/pdf → 文本）
       `officeTextExtractor.ts`（fflate + XML 解析，PDF 走 pdfjs），
       `read_file_text` 已扩展；真实文档实测通过（commit `dcdfbd2ec`）。
-- [ ] **#9 set_description 工具**（总结落盘通道，分层汇总的前置）
+- [x] **#9 set_description 工具**（总结落盘通道，分层汇总的前置）
       包装现成 `setDescriptionChange`；护栏：人工描述非空时 AI 摘要以
       标记段落追加（`> 🤖 AI 摘要 日期：…`），已有 AI 段落则替换，人工内容
       永远保留（详见设计 §7.4）。
