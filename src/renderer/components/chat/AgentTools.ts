@@ -183,15 +183,21 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     {
       name: 'list_folder',
       description:
-        'List the direct children (files and sub-folders) of a folder. ' +
+        'List the children (files and sub-folders) of a folder. ' +
         'Uses the current location index; omit the path for the folder ' +
-        'currently open in the main view.',
+        'currently open in the main view. Set recursive=true to include ' +
+        'all descendants (needed for folder-wide scans).',
       parameters: {
         type: 'object',
         properties: {
           path: {
             type: 'string',
             description: 'absolute folder path; defaults to the current folder',
+          },
+          recursive: {
+            type: 'boolean',
+            description:
+              'include all descendants of the folder, not just direct children',
           },
         },
         required: [],
@@ -200,6 +206,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         const folderPath = args?.path
           ? String(args.path)
           : deps.currentDirectoryPath;
+        const recursive = args?.recursive === true;
         const index = deps.getIndex();
         if (!index || index.length === 0) {
           return {
@@ -214,8 +221,11 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           if (normalized === target || !normalized.startsWith(`${target}/`)) {
             return false;
           }
-          // direct children only: no further slash below the target
-          return !norm(e.path.slice(target.length + 1)).includes('/');
+          if (!recursive) {
+            // direct children only: no further slash below the target
+            return !norm(e.path.slice(target.length + 1)).includes('/');
+          }
+          return true;
         });
         return {
           folder: folderPath,
@@ -436,6 +446,38 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
               : 'appended'
             : 'created',
           descriptionLength: finalDescription.length,
+        };
+      },
+    },
+    {
+      name: 'get_description',
+      description:
+        'Read the current description of a file or folder. Use it to ' +
+        'check whether a document already has an AI summary before ' +
+        'summarizing it again, and to collect child descriptions when ' +
+        'composing a folder summary.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'absolute path of the file or folder',
+          },
+        },
+        required: ['path'],
+      },
+      execute: async (args) => {
+        const path = requireString(args, 'path');
+        let description = '';
+        try {
+          description = await deps.getDescription(path);
+        } catch (e) {
+          description = '';
+        }
+        return {
+          path,
+          hasAiSummary: description.includes('🤖 AI 摘要'),
+          description,
         };
       },
     },
