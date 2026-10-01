@@ -28,14 +28,12 @@ type AiAgentDialogContextData = {
   closeAiAgentDialog: () => void;
 };
 
-export const AiAgentDialogContext =
-  createContext<AiAgentDialogContextData>({
-    openAiAgentDialog: () => undefined,
-    closeAiAgentDialog: () => undefined,
-  });
+export const AiAgentDialogContext = createContext<AiAgentDialogContextData>({
+  openAiAgentDialog: () => undefined,
+  closeAiAgentDialog: () => undefined,
+});
 
-export const useAiAgentDialogContext = () =>
-  useContext(AiAgentDialogContext);
+export const useAiAgentDialogContext = () => useContext(AiAgentDialogContext);
 
 export const AiAgentDialogContextProvider = ({
   children,

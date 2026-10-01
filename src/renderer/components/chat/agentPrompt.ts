@@ -29,6 +29,8 @@ export type AgentPromptContext = {
   language: string;
   /** User-maintained convention file content (CLAUDE.md), if any. */
   conventions?: string;
+  /** User-defined skills (name + instruction) to inject into the prompt. */
+  customSkills?: Array<{ name: string; instruction: string }>;
 };
 
 export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
@@ -80,6 +82,15 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
       ? [
           `Location conventions written by the user (CLAUDE.md) — follow them closely:`,
           ctx.conventions,
+        ]
+      : []),
+    ...(ctx.customSkills && ctx.customSkills.length > 0
+      ? [
+          'User-defined skills — when the request matches a skill, follow its instruction:',
+          ...ctx.customSkills.flatMap((s) => [
+            `### Skill: ${s.name}`,
+            s.instruction,
+          ]),
         ]
       : []),
     selected ? `\nCurrently selected entries:\n${selected}` : '',

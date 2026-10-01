@@ -26,6 +26,12 @@
  */
 import { AgentTool } from '-/components/chat/AgentService';
 import {
+  executeCustomTool,
+  filterEnabledTools,
+  getCustomTools,
+  getDisabledTools,
+} from '-/components/chat/agentCapabilities';
+import {
   AI_SUMMARY_MARKER,
   applyAiSummary,
   isSummaryStale,
@@ -157,7 +163,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       'location = current location only, global = all connected locations',
   };
 
-  return [
+  const tools: AgentTool[] = [
     {
       name: 'list_locations',
       description:
@@ -726,4 +732,15 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       },
     },
   ];
+
+  const customTools: AgentTool[] = getCustomTools()
+    .filter((def) => def.enabled)
+    .map((def) => ({
+      name: def.name,
+      description: `${def.description} (user-defined HTTP tool)`,
+      parameters: def.parameters,
+      execute: (args: any) =>
+        executeCustomTool(def, JSON.stringify(args ?? {})),
+    }));
+  return filterEnabledTools([...tools, ...customTools]);
 }

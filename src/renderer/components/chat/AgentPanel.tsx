@@ -31,6 +31,7 @@ import {
 import { AgentEvent, runAgent } from '-/components/chat/AgentService';
 import { createAgentTools } from '-/components/chat/AgentTools';
 import { buildAgentSystemPrompt } from '-/components/chat/agentPrompt';
+import { getEnabledCustomSkills } from '-/components/chat/agentCapabilities';
 import TsIconButton from '-/components/TsIconButton';
 import TsSelect from '-/components/TsSelect';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
@@ -362,6 +363,10 @@ function AgentPanel() {
               selectedEntries,
               language: interfaceLanguage || 'en',
               conventions: await loadLocationConventions(findLocation()),
+              customSkills: getEnabledCustomSkills().map((s) => ({
+                name: s.name,
+                instruction: s.instruction,
+              })),
             }),
           },
           ...session.apiMessages,

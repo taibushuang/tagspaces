@@ -19,6 +19,7 @@
 import AppConfig from '-/AppConfig';
 import { AgentEvent, runAgent } from '-/components/chat/AgentService';
 import { createAgentTools } from '-/components/chat/AgentTools';
+import { getEnabledCustomSkills } from '-/components/chat/agentCapabilities';
 import { loadLocationConventions } from '-/components/chat/locationConventions';
 import {
   AIProvider,
@@ -1196,6 +1197,15 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       '',
       `Connected location: ${currentLocation ? currentLocation.name : 'none'}`,
       `Current folder: ${currentDirectoryPath || 'unknown'}`,
+      ...(getEnabledCustomSkills().length > 0
+        ? [
+            'User-defined skills — when the request matches a skill, follow its instruction:',
+            ...getEnabledCustomSkills().flatMap((s) => [
+              `### Skill: ${s.name}`,
+              s.instruction,
+            ]),
+          ]
+        : []),
       'For goal-driven requests (produce a report, plan or answer document):',
       '- identify the relevant folders: list_folder (recursive) and search_files with tag/type operators, guided by folder and file descriptions;',
       '- read the relevant documents with read_file_text, plus related knowledge notes;',

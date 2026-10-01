@@ -26,6 +26,7 @@
  */
 import { CloseIcon } from '-/components/CommonIcons';
 import AgentPanel from '-/components/chat/AgentPanel';
+import AiCapabilitiesDialog from '-/components/chat/AiCapabilitiesDialog';
 import { useTranslation } from 'react-i18next';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
@@ -34,6 +35,7 @@ import Tabs from '@mui/material/Tabs';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
+import ExtensionOutlinedIcon from '@mui/icons-material/ExtensionOutlined';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 
 // Lazy on purpose: a static import would create a dependency cycle
@@ -50,7 +52,9 @@ const DEFAULT_WIDTH = 480;
 
 function readStoredWidth(): number {
   const stored = Number(localStorage.getItem(PANEL_WIDTH_KEY));
-  return Number.isFinite(stored) && stored >= MIN_WIDTH ? stored : DEFAULT_WIDTH;
+  return Number.isFinite(stored) && stored >= MIN_WIDTH
+    ? stored
+    : DEFAULT_WIDTH;
 }
 
 interface Props {
@@ -62,6 +66,7 @@ function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
   const { open, onClose } = props;
   const [view, setView] = useState<'chat' | 'agent'>('chat');
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
   const [width, setWidth] = useState<number>(readStoredWidth);
   const resizing = useRef(false);
   const widthRef = useRef(width);
@@ -71,7 +76,9 @@ function AiAgentDialog(props: Props) {
     const onMove = (e: MouseEvent) => {
       if (!resizing.current) return;
       const max = Math.min(window.innerWidth * 0.7, window.innerWidth - 40);
-      setWidth(Math.max(MIN_WIDTH, Math.min(window.innerWidth - e.clientX, max)));
+      setWidth(
+        Math.max(MIN_WIDTH, Math.min(window.innerWidth - e.clientX, max)),
+      );
     };
     const onUp = () => {
       if (!resizing.current) return;
@@ -131,23 +138,54 @@ function AiAgentDialog(props: Props) {
         }}
       >
         <Typography variant="h6">{t('core:aiAgentTitle')}</Typography>
-        <IconButton aria-label={t('core:close')} onClick={onClose} size="small">
-          <CloseIcon />
-        </IconButton>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          <IconButton
+            aria-label={t('core:aiCapabilitiesTitle')}
+            data-tid="aiCapabilitiesOpenTID"
+            onClick={() => setCapabilitiesOpen(true)}
+            size="small"
+          >
+            <ExtensionOutlinedIcon />
+          </IconButton>
+          <IconButton
+            aria-label={t('core:close')}
+            onClick={onClose}
+            size="small"
+          >
+            <CloseIcon />
+          </IconButton>
+        </Box>
       </Box>
+      <AiCapabilitiesDialog
+        open={capabilitiesOpen}
+        onClose={() => setCapabilitiesOpen(false)}
+      />
       <Tabs
         value={view}
         onChange={(event, nextView) => setView(nextView)}
         sx={{ marginBottom: 1, minHeight: 'auto', paddingX: 2 }}
       >
         <Tab value="chat" label={t('core:aiChatTab')} />
-        <Tab value="agent" label={t('core:aiAgentMode')} data-tid="aiAgentTabTID" />
+        <Tab
+          value="agent"
+          label={t('core:aiAgentMode')}
+          data-tid="aiAgentTabTID"
+        />
       </Tabs>
-      <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <Box
+        sx={{
+          flexGrow: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         {view === 'agent' ? (
           <AgentPanel />
         ) : (
-          <Suspense fallback={<CircularProgress size={24} sx={{ margin: 'auto' }} />}>
+          <Suspense
+            fallback={<CircularProgress size={24} sx={{ margin: 'auto' }} />}
+          >
             <ChatView />
           </Suspense>
         )}
