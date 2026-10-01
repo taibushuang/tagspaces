@@ -214,7 +214,9 @@ export function getVisiblePerspectives(
     if (!enabledPerspectives.includes(p.id)) {
       return false;
     }
-    if (hideProFeatures && !pro && p.pro === true) {
+    // Pro perspectives have no implementation in this repository (closed-source
+    // @tagspacespro module is never installed) — never offer them in the UI.
+    if (p.pro === true && (!pro || hideProFeatures)) {
       return false;
     }
     return true;

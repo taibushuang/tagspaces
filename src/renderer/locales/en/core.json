@@ -1112,6 +1112,7 @@
   "generationNotSupportedFor": "AI generation not supported for: {{name}}",
   "aiNoProviderConfigured": "No AI provider is configured. Open the AI settings to add one.",
   "aiSaveAndVerify": "Save & Verify",
+  "toggleDevTools": "Toggle Developer Tools (F12)",
   "aiVerifyOk": "Model {{model}} verified — endpoint and key are working.",
   "aiAgentUnsupported": "Saved. Chat works, but this model does not support tool calling — the AI Agent will not work: {{message}}",
   "aiVerifyFailed": "Saved, but the model check failed: {{message}}",

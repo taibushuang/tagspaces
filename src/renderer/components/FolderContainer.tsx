@@ -60,6 +60,7 @@ import {
   AIIcon,
   GoBackIcon,
   GoForwardIcon,
+  IssueIcon,
   MainMenuIcon,
   PerspectiveIcon,
   SearchIcon,
@@ -496,6 +497,37 @@ function FolderContainer({ toggleDrawer, drawerOpened, hidden }: Props) {
                 }}
               >
                 <AIIcon color={hasAIChat ? 'primary' : 'inherit'} />
+              </TsToggleButton>
+            </ToggleButtonGroup>
+          )}
+          {AppConfig.isElectron && (
+            <ToggleButtonGroup
+              size="small"
+              aria-label="toggle devtools"
+              exclusive
+            >
+              <TsToggleButton
+                value=""
+                tooltip={t('core:toggleDevTools')}
+                aria-label="devtools-label"
+                data-tid="devToolsTID"
+                sx={{
+                  marginLeft: '5px',
+                  backgroundColor: theme.palette.background.default,
+                  border: `1px solid ${theme.palette.divider}`,
+                  '&:hover': {
+                    backgroundColor:
+                      theme.palette.mode === 'dark'
+                        ? theme.palette.grey[800]
+                        : theme.palette.grey[200],
+                    borderColor: theme.palette.text.secondary,
+                  },
+                }}
+                onClick={() => {
+                  window.electronIO.ipcRenderer.sendMessage('toggle-devtools');
+                }}
+              >
+                <IssueIcon />
               </TsToggleButton>
             </ToggleButtonGroup>
           )}

@@ -736,6 +736,9 @@ app
       ipcMain.on('setZoomFactor', (event, zoomLevel) => {
         BrowserWindow.getFocusedWindow()?.webContents.setZoomFactor(zoomLevel);
       });
+      ipcMain.on('toggle-devtools', () => {
+        BrowserWindow.getFocusedWindow()?.webContents.toggleDevTools();
+      });
 
       ipcMain.on('global-shortcuts-enabled', (e, globalShortcuts) => {
         globalShortcutsEnabled = globalShortcuts;

@@ -96,7 +96,8 @@ export type Channels =
   | 'getCredentialKeyStatus'
   | 'getWindowCount'
   | 'flushStorageData'
-  | 'fetchTile';
+  | 'fetchTile'
+  | 'toggle-devtools';
 
 const electronHandler = {
   ipcRenderer: {
