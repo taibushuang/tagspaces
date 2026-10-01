@@ -134,7 +134,7 @@ function AgentPanel() {
   const defaultAiProvider = useSelector(getDefaultAIProvider);
   const interfaceLanguage = useSelector(getCurrentLanguage);
   const { findLocation } = useCurrentLocationContext();
-  const { agentSearch, getIndex } = useLocationIndexContext();
+  const { agentSearch, getIndex, findEntry } = useLocationIndexContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
@@ -196,6 +196,7 @@ function AgentPanel() {
     return createAgentTools({
       agentSearch,
       getIndex,
+      findEntry,
       currentLocationName: location ? location.name : '',
       currentLocationPath: location ? location.path : '',
       currentDirectoryPath: currentDirectoryPath || '',

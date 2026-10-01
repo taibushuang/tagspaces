@@ -221,7 +221,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     saveTextFilePromise,
   } = useIOActionsContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
-  const { agentSearch, getIndex } = useLocationIndexContext();
+  const { agentSearch, getIndex, findEntry } = useLocationIndexContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
   const { tagGroups } = useEditedTagLibraryContext();
   const { openFileUploadDialog } = useFileUploadDialogContext();
@@ -1219,6 +1219,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     return createAgentTools({
       agentSearch,
       getIndex,
+      findEntry,
       currentLocationName: currentLocation ? currentLocation.name : '',
       currentLocationPath: currentLocation ? currentLocation.path : '',
       currentDirectoryPath: currentDirectoryPath || '',

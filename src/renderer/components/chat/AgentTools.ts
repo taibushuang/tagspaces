@@ -43,6 +43,13 @@ export type AgentToolDeps = {
   agentSearch: (searchQuery: TS.SearchQuery) => Promise<TS.FileSystemEntry[]>;
   /** Index of the current location (may be empty if not yet built). */
   getIndex: () => TS.FileSystemEntry[] | undefined;
+  /**
+   * Resolve one path to an entry — in-memory index first, on-disk index
+   * fallback (same source as agentSearch). Tools MUST use this instead of
+   * scanning getIndex() directly, otherwise paths returned by search_files
+   * are unresolvable while the interactive index is not loaded.
+   */
+  findEntry: (path: string) => Promise<TS.FileSystemEntry | undefined>;
   currentLocationName: string;
   currentDirectoryPath: string;
   selectedEntries: TS.FileSystemEntry[];
@@ -112,22 +119,6 @@ function entryToScanSummary(entry: TS.FileSystemEntry) {
     summaryStale: isSummaryStale(description, entry.lmdt),
     description,
   };
-}
-
-function findEntryByPath(
-  index: TS.FileSystemEntry[] | undefined,
-  path: string,
-): TS.FileSystemEntry | undefined {
-  if (!index) {
-    return undefined;
-  }
-  const norm = (p: string) => p.replace(/[\\/]+/g, '/');
-  const target = norm(path);
-  return (
-    index.find((e) => norm(e.path) === target) ||
-    // tolerate missing/extra extension casing
-    index.find((e) => norm(e.path).toLowerCase() === target.toLowerCase())
-  );
 }
 
 function isReadableTextFile(path: string): boolean {
@@ -316,7 +307,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       },
       execute: async (args) => {
         const path = requireString(args, 'path');
-        const entry = findEntryByPath(deps.getIndex(), path);
+        const entry = await deps.findEntry(path);
         if (!entry) {
           return {
             error: `entry not found in the location index: ${path}`,
@@ -352,7 +343,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         if (tags.length === 0) {
           throw new Error('tags array is empty');
         }
-        const entry = findEntryByPath(deps.getIndex(), path);
+        const entry = await deps.findEntry(path);
         if (!entry) {
           return { error: `entry not found in the location index: ${path}` };
         }
@@ -389,7 +380,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       },
       execute: async (args) => {
         const path = requireString(args, 'path');
-        const entry = findEntryByPath(deps.getIndex(), path);
+        const entry = await deps.findEntry(path);
         if (!entry) {
           return { error: `entry not found in the location index: ${path}` };
         }
@@ -429,7 +420,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
             )}), pdf, docx, pptx, xlsx`,
           };
         }
-        const indexEntry = findEntryByPath(deps.getIndex(), path);
+        const indexEntry = await deps.findEntry(path);
         const maxBytes =
           isOffice || isPdf ? OFFICE_READ_MAX_BYTES : READ_FILE_MAX_BYTES;
         if (indexEntry && indexEntry.size > maxBytes) {
@@ -490,7 +481,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       execute: async (args) => {
         const path = requireString(args, 'path');
         const summary = requireString(args, 'summary');
-        const entry = findEntryByPath(deps.getIndex(), path);
+        const entry = await deps.findEntry(path);
         if (!entry) {
           return {
             error: 'path not found in the current location index',
@@ -544,7 +535,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         } catch (e) {
           description = '';
         }
-        const lmdt = findEntryByPath(deps.getIndex(), path)?.lmdt;
+        const lmdt = (await deps.findEntry(path))?.lmdt;
         const hasAiSummary = description.includes(AI_SUMMARY_MARKER);
         return {
           path,
@@ -587,23 +578,23 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         if (target.startsWith(`${source}/`)) {
           return { error: 'cannot move a folder into itself' };
         }
-        const index = deps.getIndex();
-        const entry = findEntryByPath(index, source);
+        const entry = await deps.findEntry(sourcePath);
         if (!entry) {
           return {
-            error: 'source path not found in the current location index',
+            error:
+              'source path not found in the current location index (if the index was just reloaded, re-run search_files and use a path from its results)',
           };
         }
         const targetIsKnown =
           target === norm(deps.currentLocationPath) ||
-          findEntryByPath(index, target);
+          !!(await deps.findEntry(target));
         if (!targetIsKnown) {
           return {
             error: 'target folder not found in the current location index',
           };
         }
         const name = source.split('/').pop();
-        if (index && index.some((e) => norm(e.path) === `${target}/${name}`)) {
+        if (await deps.findEntry(`${target}/${name}`)) {
           return {
             error: `an entry named "${name}" already exists in the target folder — nothing was moved`,
           };
@@ -657,7 +648,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           return { error: 'only .md and .txt files can be written' };
         }
         const overwrite = args?.overwrite === true;
-        const existing = findEntryByPath(deps.getIndex(), path);
+        const existing = await deps.findEntry(path);
         if (existing && !overwrite) {
           return {
             error:

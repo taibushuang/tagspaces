@@ -102,6 +102,12 @@ type LocationIndexContextData = {
   ) => void;
   /** UI-silent search for AI agent tools; returns results directly. */
   agentSearch: (searchQuery: TS.SearchQuery) => Promise<TS.FileSystemEntry[]>;
+  /**
+   * Resolve one path to an entry, checking the in-memory index first and
+   * falling back to the on-disk index (same source as agentSearch) so agent
+   * tools work even while the interactive index is not loaded.
+   */
+  findEntry: (path: string) => Promise<TS.FileSystemEntry | undefined>;
   setIndex: (i: TS.FileSystemEntry[], location?: CommonLocation) => void;
   reflectUpdateSidecarMeta: (path: string, entryMeta: Object) => void;
   findLinks: (
@@ -126,6 +132,7 @@ export const LocationIndexContext = createContext<LocationIndexContextData>({
   searchLocationIndex: () => {},
   searchAllLocations: () => {},
   agentSearch: () => Promise.resolve([]),
+  findEntry: () => Promise.resolve(undefined),
   setIndex: () => {},
   findLinks: undefined,
   checkIndexExist: undefined,
@@ -277,6 +284,67 @@ export function LocationIndexContextProvider({
 
   function getIndex() {
     return index.current;
+  }
+
+  /**
+   * Resolve one path to an entry. Checks the in-memory index first, then
+   * falls back to the on-disk index of each connected location (the same
+   * source agentSearch uses) so agent tools can resolve paths found by
+   * search even while the interactive index has not been loaded yet.
+   */
+  async function findEntry(
+    path: string,
+  ): Promise<TS.FileSystemEntry | undefined> {
+    const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '');
+    const target = norm(path);
+    const inMemory = (index.current || []).find(
+      (e: TS.FileSystemEntry) => norm(e.path) === target,
+    );
+    if (inMemory) {
+      return inMemory;
+    }
+    const targets: CommonLocation[] = currentLocation
+      ? [currentLocation]
+      : locations;
+    for (const location of targets) {
+      try {
+        const locationPath = await getLocationPath(location);
+        let directoryIndex = await loadIndexFromDisk(
+          locationPath,
+          location.uuid,
+        );
+        if (
+          !location.disableIndexing &&
+          (!directoryIndex || directoryIndex.length < 1)
+        ) {
+          const isCloudLocation = location.type === locationType.TYPE_CLOUD;
+          directoryIndex = await createDirectoryIndexWrapper(
+            {
+              path: locationPath,
+              locationID: location.uuid,
+              ...(isCloudLocation && { bucketName: location.bucketName }),
+            },
+            location.fullTextIndex,
+            location.ignorePatternPaths,
+            enableWS,
+            undefined,
+            false,
+          );
+        }
+        const match = (directoryIndex || []).find(
+          (e: TS.FileSystemEntry) => norm(e.path) === target,
+        );
+        if (match) {
+          return match;
+        }
+      } catch (e) {
+        console.log(
+          `findEntry: failed to search location ${location?.name}`,
+          e,
+        );
+      }
+    }
+    return undefined;
   }
 
   function indexExpired() {
@@ -1523,6 +1591,7 @@ export function LocationIndexContextProvider({
     searchLocationIndex,
     searchAllLocations,
     agentSearch,
+    findEntry,
     setIndex,
     getIndex,
     getLastIndex,
