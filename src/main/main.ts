@@ -482,6 +482,40 @@ const createWindow = async (i18n: any) => {
     }
   });
 
+  // Auto-allow pasting in the DevTools console (self-XSS warning). The
+  // --unsafely-disable-devtools-self-xss-warnings switch is unreliable in
+  // Electron, so flip the frontend setting directly every time DevTools
+  // opens. Logs paste-related setting names for diagnostics.
+  mainWindow.webContents.on('devtools-opened', () => {
+    const devTools = mainWindow.webContents.devToolsWebContents;
+    if (!devTools) return;
+    devTools
+      .executeJavaScript(
+        `(() => {
+          const out = { set: [], found: [] };
+          try {
+            const S = Common.Settings.Settings.instance();
+            let settings = [];
+            if (S.getRegisteredSettings) settings = S.getRegisteredSettings();
+            else if (S.registeredSettings) {
+              settings = S.registeredSettings instanceof Map
+                ? [...S.registeredSettings.values()]
+                : Object.values(S.registeredSettings);
+            }
+            for (const s of settings) {
+              if (s && /past|xss/i.test(s.name)) {
+                out.found.push(s.name + '=' + s.get());
+                if (/past/i.test(s.name)) { try { s.set(true); out.set.push(s.name); } catch (e) {} }
+              }
+            }
+          } catch (e) { out.error = String(e); }
+          return JSON.stringify(out);
+        })()`,
+      )
+      .then((r: string) => console.log('[devtools] paste settings:', r))
+      .catch((e: unknown) => console.log('[devtools] introspect failed:', e));
+  });
+
   mainWindow.on('ready-to-show', () => {
     if (!mainWindow) throw new Error('"mainWindow" is not defined');
     if (process.env.START_MINIMIZED) mainWindow.minimize();
@@ -630,6 +664,13 @@ app.commandLine.appendSwitch('ignore-certificate-errors');
 // Internal build: no self-XSS paste warning in DevTools — pasting diagnostic
 // snippets is a routine part of debugging this app.
 app.commandLine.appendSwitch('unsafely-disable-devtools-self-xss-warnings');
+
+// Dev only: always expose the CDP debugging port so external tooling can
+// inspect the running app (the dev-server/electronmon chain launches this
+// binary without extra args).
+if (!app.isPackaged) {
+  app.commandLine.appendSwitch('remote-debugging-port', '9222');
+}
 
 app
   .whenReady()
