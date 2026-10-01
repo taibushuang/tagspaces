@@ -28,22 +28,22 @@
 
 ## 本地开发启动（dev server）——单实例铁律
 
-- **同一时间只允许一个应用实例**。双实例共用同一个 userData（LevelDB 锁冲突 +
-  localStorage 互相覆盖），曾把用户配置的 AI provider 清空过。
+- **单实例由应用自身强制**（`main.ts` 的 `app.requestSingleInstanceLock()`）：
+  第二个进程会立即自行退出并把焦点还给已有实例（锁按 userData 目录隔离，
+  `-p` 便携目录不同的实例仍可并存）。这意味着手动 `electron .`、dev watcher
+  重启、误双击都不可能再产生并行实例——看到进程数 >1 才是异常。
+- 双实例的历史危害：共用 userData 的两个实例存储引擎互相覆盖，曾把用户配置
+  的 AI provider 清空过。
 - 启动机制要清楚：`npm run start` → `start:renderer` 里的 **concurrently 会同时
   派生「主进程 webpack --watch + electronmon」**。electronmon 的职责是保持一个
-  应用实例运行、bundle 变了自动重启。**不要在 dev server 之外再手动
-  `electron .` 起应用**——那必然变成两个实例。
-- 启动前先查重：`ps -eo pid,command | grep "[E]lectron.app/Contents/MacOS/Electron ."`，
-  有存活实例就直接用，不要起新的。
+  应用实例运行、bundle 变了自动重启；其拉起的多余实例会被单实例锁拒绝。
 - **dev 构建自带 CDP 调试端口**：`main.ts` 在 `!app.isPackaged` 时固定
   `remote-debugging-port=9222`（见 "Dev only" 注释块）。外部工具（AI 会话、
   调试脚本）直接连 `http://localhost:9222/json` 即可检查/驱动运行中的应用，
   **永远不需要为了调试再起第二个实例**。
-- 修正主进程代码后要让 electronmon 重启应用：重建 bundle
-  （`npx cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.main.dev.ts`），
-  electronmon 监视 bundle 自动重启；若它没反应，杀掉 electron 进程由它复活，
-  最后手段才手动 `electron .`（先确认没有别的实例存活）。
+- 修正主进程代码后要让应用重启：重建 bundle
+  （`npx cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.main.dev.ts`）
+  并重启 electron 进程（杀掉后由 electronmon 复活，或手动重启）。
 - 渲染层改动走 HMR，无需重启；改 main/preload 必须重启应用才生效。
 
 ## 打包规范
@@ -172,6 +172,22 @@ description 只放精华。单测 `tests/unit/agentDescription.test.js`。
 **后续新增（均已落地，详见 `TODO-ai-capabilities.md` 与 `DESIGN-ai-agent.md` §7）**：`set_description`（人工内容保护）、`move_file`（分拣归档）、`write_deliverable`（.md/.txt 文档产出，含文本回复/文件两种目标模式，不覆盖人写文件）；`search_files` 支持 tscmd 风格操作符（`+tag`/`-tag`/`|tag`/`--type`）；约定文件注入 `locationConventions.ts`（location 根 `CLAUDE.md`/`AGENTS.md` → system prompt）；`list_folder` recursive + 携带描述、`get_description`（分层汇总前置）。设置页「保存并验证」含 tool-calling 能力探测（`checkAgentSupport`，不支持时 warning 提示）。
 
 **已知限制**：自签名证书的内网网关会被渲染层 Chromium 网络栈拒绝（需装企业 CA 或后续加主进程代理）；`/v1/models` 列表不可用的端点（如方舟套餐）需在设置里手动添加模型。CORS 已解决：主进程窗口 `webSecurity: false`（main.ts），因为方舟等网关的 CORS 预检不放行 `Authorization` 且 Electron webRequest 拦不到预检，聊天/Agent/验证直连才能通（2026-09-27，已在真实应用内实测 200）。
+
+### 待办（Todo）
+
+个人轻量待办清单，展示"还有哪些代办要做"。**入口**：主工具栏 Checklist 按钮（带未完成数 Badge）→ 弹窗（状态 tabs / 搜索 / 排序 / 勾选完成 / 标记进行中 / 编辑 / 删除 / 导出 Markdown）。
+
+**存储（2026-10-01 落地）**：无数据库引擎、无新依赖——与 `.ts/tsi.json` 同款哲学，主进程 `TodoDatabase`（内存主副本 + 校验 + 原子写 tmp→rename + 10 份轮转备份 + 损坏自动回滚到 `.bak.*`）。数据文件 `app.getPath('userData')/todo/todos.json`（不污染 git 仓库）。
+
+**核心文件**：
+- `src/main/todoStore.ts` — `TodoDatabase` 纯逻辑（无 electron 依赖，可单测）：校验 / list 筛选排序 / 生命周期（done 写 completedAt、恢复清空）/ `renderTodosMarkdown`（`[ ]`/`[~]`/`[x]` 语法，与仓库 TODO-*.md 一致）
+- `src/main/todoStoreIpc.ts` — `initTodoStore()`：组装 userData 路径 + 注册 `todo:list/create/update/remove/exportMarkdown/getPath` 六个 `ipcMain.handle`
+- `src/renderer/components/todo/` — `TodoListDialog`（数据经 props 从 ContextProvider 传入，照 FileVersionCleanup 模式保持 import 图无环）/ `TodoEditDialog`（标题/说明/状态/优先级/标签/项目/截止日期+时间/循环）/ `TodoItem` / `todoService.ts`（类型化 invoke 封装）/ `todoUtils.ts`（筛选排序纯函数）
+- `tests/unit/todoStore.test.js` — 20 例（校验/排序/原子写/备份/损坏恢复/md 渲染）
+
+**挂载链**：`main.ts:34` 已 import `mainEvents`，`loadMainEvents()` 开头调 `initTodoStore()`——**不碰 main.ts**。IPC 通道名加在 `preload.ts` 的 `Channels` 联合类型。
+
+**数据模型预留**：`parentId` / `estimateMinutes` 字段已入 schema（v1 不暴露 UI），将来上子任务/估时免迁移。二期方向：TODO-*.md 导入（勾选回写）、`reminderAt` 到期系统通知。
 
 ### 打包注意事项（2026-09-25 起：无原生依赖）
 

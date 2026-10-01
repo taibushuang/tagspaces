@@ -61,6 +61,27 @@ if (isDebug || testMode) {
   console.log = () => {};
 }
 
+// --- Single Instance Lock ---
+// A second app process (manual relaunch, dev watcher respawn, double-click)
+// must never run in parallel: two instances share one userData profile and
+// their storage engines clobber each other (observed: AI provider settings
+// wiped). The losing instance quits immediately; 'second-instance' focuses
+// the winner. The lock file is scoped per userData dir, so `-p` portable
+// profiles started from different directories can still coexist.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+  process.exit(0);
+}
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
+});
+
 // --- Parse Startup Arguments ---
 process.argv.forEach((arg, count) => {
   console.log('Opening file: ' + arg);
