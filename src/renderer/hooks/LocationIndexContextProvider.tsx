@@ -337,6 +337,24 @@ export function LocationIndexContextProvider({
         if (match) {
           return match;
         }
+        // The on-disk index can be stale (e.g. the agent has just created
+        // the folder/file). Fall back to a direct filesystem stat so freshly
+        // written paths are resolvable immediately.
+        try {
+          const stats = await location.getPropertiesPromise(path);
+          if (stats) {
+            return {
+              path,
+              name: path.split(/[\\/]/).pop() || path,
+              isFile: stats.isFile !== false,
+              lmdt: stats.lmdt || Date.now(),
+              size: stats.size || 0,
+              tags: [],
+            } as TS.FileSystemEntry;
+          }
+        } catch (statError) {
+          /* not present in this location */
+        }
       } catch (e) {
         console.log(
           `findEntry: failed to search location ${location?.name}`,
