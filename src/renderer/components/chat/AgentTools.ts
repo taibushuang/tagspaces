@@ -50,6 +50,13 @@ export type AgentToolDeps = {
    * are unresolvable while the interactive index is not loaded.
    */
   findEntry: (path: string) => Promise<TS.FileSystemEntry | undefined>;
+  /** Children of any folder in any connected location. */
+  listChildren: (
+    path: string,
+    recursive?: boolean,
+  ) => Promise<TS.FileSystemEntry[]>;
+  /** Connected locations (name + path) — lets the agent work globally. */
+  listLocations: () => Array<{ name: string; path: string }>;
   currentLocationName: string;
   currentDirectoryPath: string;
   selectedEntries: TS.FileSystemEntry[];
@@ -151,6 +158,23 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
   };
 
   return [
+    {
+      name: 'list_locations',
+      description:
+        'List the connected TagSpaces locations (name + absolute path). ' +
+        'Call this first when no specific folder is open: it shows which ' +
+        'folders on this machine you can search and organize. Files can be ' +
+        'moved only within one location (folder), never across locations.',
+      parameters: { type: 'object', properties: {}, required: [] },
+      execute: async () => {
+        const locations = deps.listLocations();
+        return {
+          count: locations.length,
+          locations: locations.map((l) => ({ name: l.name, path: l.path })),
+          note: 'organize within each location; moving across locations is not supported',
+        };
+      },
+    },
     {
       name: 'search_files',
       description:
@@ -260,8 +284,27 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         const recursive = args?.recursive === true;
         const index = deps.getIndex();
         if (!index || index.length === 0) {
+          // The interactive index is not loaded — fall back to the on-disk
+          // index of the owning location (works for any connected folder,
+          // even when no location is currently open).
+          const children = await deps.listChildren(folderPath, recursive);
+          if (children.length === 0) {
+            return {
+              error:
+                'location index is not loaded and the folder has no indexed children; use search_files instead',
+            };
+          }
           return {
-            error: 'location index is not loaded yet; use search_files instead',
+            folder: folderPath,
+            recursive,
+            count: children.length,
+            ...(children.length > SEARCH_RESULT_LIMIT && {
+              truncated: true,
+              note: 'only the first entries are listed — for very large folders prefer a separate summary note',
+            }),
+            entries: children
+              .slice(0, SEARCH_RESULT_LIMIT)
+              .map(entryToScanSummary),
           };
         }
         const norm = (p: string) =>

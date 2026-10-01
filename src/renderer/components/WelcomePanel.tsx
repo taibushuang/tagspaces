@@ -17,6 +17,7 @@
  */
 
 import {
+  AIIcon,
   CreateFileIcon,
   HelpIcon,
   KeyShortcutsIcon,
@@ -28,6 +29,7 @@ import {
 import HowToStart from '-/components/HowToStart';
 import RenderHistory from '-/components/RenderHistory';
 import { useCreateEditLocationDialogContext } from '-/components/dialogs/hooks/useCreateEditLocationDialogContext';
+import { useAiAgentDialogContext } from '-/components/dialogs/hooks/AiAgentDialogContextProvider';
 import { useKeyboardDialogContext } from '-/components/dialogs/hooks/useKeyboardDialogContext';
 import { useLinkDialogContext } from '-/components/dialogs/hooks/useLinkDialogContext';
 import { useNewFileDialogContext } from '-/components/dialogs/hooks/useNewFileDialogContext';
@@ -82,6 +84,7 @@ function WelcomePanel() {
   const theme = useTheme();
   const { openCreateEditLocationDialog } = useCreateEditLocationDialogContext();
   const { openNewFileDialog } = useNewFileDialogContext();
+  const { openAiAgentDialog } = useAiAgentDialogContext();
   const { openKeyboardDialog } = useKeyboardDialogContext();
   const { openLinkDialog } = useLinkDialogContext();
   const { fileOpenHistory, fileEditHistory, folderOpenHistory } =
@@ -169,6 +172,17 @@ function WelcomePanel() {
           backgroundColor: theme.palette.background.default,
         }}
       >
+        <ListItem disablePadding>
+          <ListItemButton onClick={openAiAgentDialog}>
+            <ListItemIcon>
+              <AIIcon />
+            </ListItemIcon>
+            <ListItemText
+              primary={t('core:aiAgentTitle')}
+              className={classes.listItem}
+            />
+          </ListItemButton>
+        </ListItem>
         <ListItem disablePadding>
           <ListItemButton onClick={() => openNewFileDialog()}>
             <ListItemIcon>

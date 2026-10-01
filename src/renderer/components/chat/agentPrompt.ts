@@ -62,6 +62,11 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
     '',
     `Connected location: ${ctx.locationName || 'none'}`,
     `Current folder: ${ctx.currentDirectoryPath || 'unknown'}`,
+    ...(ctx.currentDirectoryPath
+      ? []
+      : [
+          'Global mode: no specific folder is open. Call list_locations first to see the connected folders on this machine, then work inside each one (list_folder/search_files take absolute paths).',
+        ]),
     'For goal-driven requests (produce a report, plan or answer document):',
     '- identify the relevant folders: list_folder (recursive) and search_files with tag/type operators, guided by folder and file descriptions;',
     '- read the relevant documents with read_file_text, plus related knowledge notes;',

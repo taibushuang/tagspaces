@@ -48,6 +48,7 @@ import {
 } from '-/utils/indexReflect';
 import useFirstRender from '-/utils/useFirstRender';
 import { locationType } from '@tagspaces/tagspaces-common/misc';
+import { findLocationContainingPath } from '-/utils/locationUtils';
 import {
   cleanRootPath,
   cleanTrailingDirSeparator,
@@ -108,6 +109,11 @@ type LocationIndexContextData = {
    * tools work even while the interactive index is not loaded.
    */
   findEntry: (path: string) => Promise<TS.FileSystemEntry | undefined>;
+  /** Children of any folder inside any connected location. */
+  listChildren: (
+    path: string,
+    recursive?: boolean,
+  ) => Promise<TS.FileSystemEntry[]>;
   setIndex: (i: TS.FileSystemEntry[], location?: CommonLocation) => void;
   reflectUpdateSidecarMeta: (path: string, entryMeta: Object) => void;
   findLinks: (
@@ -133,6 +139,7 @@ export const LocationIndexContext = createContext<LocationIndexContextData>({
   searchAllLocations: () => {},
   agentSearch: () => Promise.resolve([]),
   findEntry: () => Promise.resolve(undefined),
+  listChildren: () => Promise.resolve([]),
   setIndex: () => {},
   findLinks: undefined,
   checkIndexExist: undefined,
@@ -303,10 +310,26 @@ export function LocationIndexContextProvider({
     if (inMemory) {
       return inMemory;
     }
-    const targets: CommonLocation[] = currentLocation
-      ? [currentLocation]
-      : locations;
+    const targets: CommonLocation[] = (() => {
+      // Check the location that owns this path first — the agent may work on
+      // a folder other than the one currently open.
+      const owning = findLocationContainingPath(locations, path);
+      if (owning) {
+        return [owning, ...locations.filter((l) => l.uuid !== owning.uuid)];
+      }
+      return currentLocation
+        ? [
+            currentLocation,
+            ...locations.filter((l) => l.uuid !== currentLocation.uuid),
+          ]
+        : [...locations];
+    })();
+    const seen = new Set<string>();
     for (const location of targets) {
+      if (!location || seen.has(location.uuid)) {
+        continue;
+      }
+      seen.add(location.uuid);
       try {
         const locationPath = await getLocationPath(location);
         let directoryIndex = await loadIndexFromDisk(
@@ -363,6 +386,59 @@ export function LocationIndexContextProvider({
       }
     }
     return undefined;
+  }
+
+  /**
+   * List the children of an arbitrary folder inside any connected location
+   * (used by the AI agent tools when no folder is open, or when the target
+   * belongs to a different location than the one currently open).
+   */
+  async function listChildren(
+    path: string,
+    recursive = false,
+  ): Promise<TS.FileSystemEntry[]> {
+    const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/$/, '');
+    const target = norm(path);
+    const owning =
+      findLocationContainingPath(locations, path) || currentLocation;
+    if (!owning) {
+      return [];
+    }
+    try {
+      const locationPath = await getLocationPath(owning);
+      let directoryIndex = await loadIndexFromDisk(locationPath, owning.uuid);
+      if (
+        !owning.disableIndexing &&
+        (!directoryIndex || directoryIndex.length < 1)
+      ) {
+        const isCloudLocation = owning.type === locationType.TYPE_CLOUD;
+        directoryIndex = await createDirectoryIndexWrapper(
+          {
+            path: locationPath,
+            locationID: owning.uuid,
+            ...(isCloudLocation && { bucketName: owning.bucketName }),
+          },
+          owning.fullTextIndex,
+          owning.ignorePatternPaths,
+          enableWS,
+          undefined,
+          false,
+        );
+      }
+      return (directoryIndex || []).filter((e: TS.FileSystemEntry) => {
+        const normalized = norm(e.path);
+        if (normalized === target || !normalized.startsWith(`${target}/`)) {
+          return false;
+        }
+        if (!recursive) {
+          return !norm(e.path.slice(target.length + 1)).includes('/');
+        }
+        return true;
+      });
+    } catch (e) {
+      console.log(`listChildren: failed for ${path}`, e);
+      return [];
+    }
   }
 
   function indexExpired() {
@@ -1610,6 +1686,7 @@ export function LocationIndexContextProvider({
     searchAllLocations,
     agentSearch,
     findEntry,
+    listChildren,
     setIndex,
     getIndex,
     getLastIndex,

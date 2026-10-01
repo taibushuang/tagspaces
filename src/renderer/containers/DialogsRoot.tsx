@@ -29,10 +29,12 @@ import { LicenseDialogContextProvider } from '-/components/dialogs/hooks/License
 import { FilePickerDialogContextProvider } from '-/components/dialogs/hooks/FilePickerDialogContextProvider';
 import { LinkDialogContextProvider } from '-/components/dialogs/hooks/LinkDialogContextProvider';
 import { FileVersionCleanupDialogContextProvider } from '-/components/dialogs/hooks/FileVersionCleanupDialogContextProvider';
+import { TodoListContextProvider } from '-/components/todo/TodoListContextProvider';
 import { MenuContextProvider } from '-/components/dialogs/hooks/MenuContextProvider';
 import { NewAudioDialogContextProvider } from '-/components/dialogs/hooks/NewAudioDialogContextProvider';
 import { NewFileDialogContextProvider } from '-/components/dialogs/hooks/NewFileDialogContextProvider';
 import { OnboardingDialogContextProvider } from '-/components/dialogs/hooks/OnboardingDialogContextProvider';
+import { AiAgentDialogContextProvider } from '-/components/dialogs/hooks/AiAgentDialogContextProvider';
 import { PerspectiveOnboardingContextProvider } from '-/components/dialogs/hooks/PerspectiveOnboardingContextProvider';
 import { BuyProDialogContextProvider } from '-/components/dialogs/hooks/BuyProDialogContextProvider';
 import { ProTeaserDialogContextProvider } from '-/components/dialogs/hooks/ProTeaserDialogContextProvider';
@@ -59,6 +61,7 @@ const providers = [
   // the DOM), and the Settings dialog's children are descendants of whichever
   // providers wrap it from the outside.
   PerspectiveOnboardingContextProvider,
+  AiAgentDialogContextProvider,
   SettingsDialogContextProvider,
   // FilePickerDialogContextProvider must wrap NewFileDialogContextProvider so
   // the "Choose file or folder" button in the Create Link File dialog (rendered
@@ -91,6 +94,7 @@ const providers = [
   DownloadUrlContextProvider,
   ImportMacTagDialogContextProvider,
   FileVersionCleanupDialogContextProvider,
+  TodoListContextProvider,
   MenuContextProvider,
 ];
 

@@ -221,12 +221,14 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     saveTextFilePromise,
   } = useIOActionsContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
-  const { agentSearch, getIndex, findEntry } = useLocationIndexContext();
+  const { agentSearch, getIndex, findEntry, listChildren } =
+    useLocationIndexContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
   const { tagGroups } = useEditedTagLibraryContext();
   const { openFileUploadDialog } = useFileUploadDialogContext();
   const { selectedEntries } = useSelectedEntriesContext();
-  const { findLocation } = useCurrentLocationContext();
+  const { findLocation, findLocationByPath, locations } =
+    useCurrentLocationContext();
   const { saveFilePromise, deleteEntriesPromise } = usePlatformFacadeContext();
   const { openedEntry } = useOpenedEntryContext();
   const models = useRef<ModelResponse[]>([]);
@@ -1216,32 +1218,68 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   }
 
   function buildAgentTools() {
+    const locationForPath = (path: string) =>
+      findLocationByPath(path) || findLocation() || undefined;
     return createAgentTools({
       agentSearch,
       getIndex,
       findEntry,
+      listChildren,
+      listLocations: () =>
+        locations.map((l) => ({ name: l.name, path: l.path })),
       currentLocationName: currentLocation ? currentLocation.name : '',
       currentLocationPath: currentLocation ? currentLocation.path : '',
       currentDirectoryPath: currentDirectoryPath || '',
       selectedEntries,
       addTagsToFsEntry: (entry, tags) => addTagsToFsEntry(entry, tags),
       removeTagsFromEntry,
-      moveFile: (sourcePath: string, targetFolderPath: string) =>
-        moveFiles(
-          [sourcePath],
-          targetFolderPath,
-          currentLocation ? currentLocation.uuid : undefined,
-        ),
-      loadTextFile: (path: string) => currentLocation.loadTextFilePromise(path),
-      readFileBytes: (path: string) =>
-        currentLocation
+      moveFile: (sourcePath: string, targetFolderPath: string) => {
+        const srcLoc = locationForPath(sourcePath);
+        const tgtLoc = locationForPath(targetFolderPath);
+        if (!srcLoc) {
+          return Promise.reject(
+            new Error('source path is not inside any connected location'),
+          );
+        }
+        if (!tgtLoc || srcLoc.uuid !== tgtLoc.uuid) {
+          return Promise.reject(
+            new Error(
+              'cross-location move is not supported — organize within each folder',
+            ),
+          );
+        }
+        return moveFiles([sourcePath], targetFolderPath, srcLoc.uuid);
+      },
+      loadTextFile: (path: string) => {
+        const loc = locationForPath(path);
+        if (!loc) {
+          return Promise.reject(
+            new Error('path is not inside any connected location'),
+          );
+        }
+        return loc.loadTextFilePromise(path);
+      },
+      readFileBytes: (path: string) => {
+        const loc = locationForPath(path);
+        if (!loc) {
+          return Promise.reject(
+            new Error('path is not inside any connected location'),
+          );
+        }
+        return loc
           .getFileContentPromise(path, 'arraybuffer')
-          .then((buffer: ArrayBuffer) => buffer),
-      getDescription: (path: string) =>
-        currentLocation
+          .then((buffer: ArrayBuffer) => buffer);
+      },
+      getDescription: (path: string) => {
+        const loc = locationForPath(path);
+        if (!loc) {
+          return Promise.resolve('');
+        }
+        return loc
           .loadFileMetaDataPromise(path)
           .then((meta: TS.FileSystemEntryMeta) => meta?.description || '')
-          .catch(() => ''),
+          .catch(() => '');
+      },
       setDescription: (entry: TS.FileSystemEntry, description: string) =>
         setDescriptionChange(entry, description),
       writeTextFile: (path: string, content: string, overwrite: boolean) =>

@@ -133,8 +133,10 @@ function AgentPanel() {
   const { currentModel } = useChatContext();
   const defaultAiProvider = useSelector(getDefaultAIProvider);
   const interfaceLanguage = useSelector(getCurrentLanguage);
-  const { findLocation } = useCurrentLocationContext();
-  const { agentSearch, getIndex, findEntry } = useLocationIndexContext();
+  const { findLocation, findLocationByPath, locations } =
+    useCurrentLocationContext();
+  const { agentSearch, getIndex, findEntry, listChildren } =
+    useLocationIndexContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
@@ -193,37 +195,87 @@ function AgentPanel() {
 
   const buildTools = useCallback(() => {
     const location = findLocation();
+    const locationForPath = (path: string) =>
+      findLocationByPath(path) || location || undefined;
     return createAgentTools({
       agentSearch,
       getIndex,
       findEntry,
+      listChildren,
+      listLocations: () =>
+        locations.map((l) => ({ name: l.name, path: l.path })),
       currentLocationName: location ? location.name : '',
       currentLocationPath: location ? location.path : '',
       currentDirectoryPath: currentDirectoryPath || '',
       selectedEntries,
       addTagsToFsEntry: (entry, tags) => addTagsToFsEntry(entry, tags),
       removeTagsFromEntry,
-      moveFile: (sourcePath: string, targetFolderPath: string) =>
-        moveFiles([sourcePath], targetFolderPath, location.uuid),
-      loadTextFile: (path: string) => location.loadTextFilePromise(path),
-      readFileBytes: (path: string) =>
-        Promise.resolve(location.getFileContentPromise(path, 'arraybuffer')),
-      getDescription: (path: string) =>
-        Promise.resolve(
-          location
+      moveFile: (sourcePath: string, targetFolderPath: string) => {
+        const srcLoc = locationForPath(sourcePath);
+        const tgtLoc = locationForPath(targetFolderPath);
+        if (!srcLoc) {
+          return Promise.reject(
+            new Error('source path is not inside any connected location'),
+          );
+        }
+        if (!tgtLoc || srcLoc.uuid !== tgtLoc.uuid) {
+          return Promise.reject(
+            new Error(
+              'cross-location move is not supported — organize within each folder',
+            ),
+          );
+        }
+        return moveFiles([sourcePath], targetFolderPath, srcLoc.uuid);
+      },
+      loadTextFile: (path: string) => {
+        const loc = locationForPath(path);
+        if (!loc) {
+          return Promise.reject(
+            new Error('path is not inside any connected location'),
+          );
+        }
+        return loc.loadTextFilePromise(path);
+      },
+      readFileBytes: (path: string) => {
+        const loc = locationForPath(path);
+        if (!loc) {
+          return Promise.reject(
+            new Error('path is not inside any connected location'),
+          );
+        }
+        return Promise.resolve(loc.getFileContentPromise(path, 'arraybuffer'));
+      },
+      getDescription: (path: string) => {
+        const loc = locationForPath(path);
+        if (!loc) {
+          return Promise.resolve('');
+        }
+        return Promise.resolve(
+          loc
             .loadFileMetaDataPromise(path)
             .then((meta: TS.FileSystemEntryMeta) => meta?.description || '')
             .catch(() => ''),
-        ),
+        );
+      },
       setDescription: (entry: TS.FileSystemEntry, description: string) =>
         setDescriptionChange(entry, description),
-      writeTextFile: (path: string, content: string, overwrite: boolean) =>
-        Promise.resolve(
-          location.saveTextFilePromise({ path }, content, overwrite),
-        ).then(() => undefined),
+      writeTextFile: (path: string, content: string, overwrite: boolean) => {
+        const loc = locationForPath(path);
+        if (!loc) {
+          return Promise.reject(
+            new Error('path is not inside any connected location'),
+          );
+        }
+        return Promise.resolve(
+          loc.saveTextFilePromise({ path }, content, overwrite),
+        ).then(() => undefined);
+      },
     });
   }, [
     findLocation,
+    findLocationByPath,
+    locations,
+    listChildren,
     agentSearch,
     getIndex,
     currentDirectoryPath,

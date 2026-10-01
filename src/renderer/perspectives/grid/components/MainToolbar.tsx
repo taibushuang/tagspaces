@@ -32,16 +32,17 @@ import {
   ShareIcon,
   SortingIcon,
   TagIcon,
+  TodoIcon,
   UnSelectedIcon,
   VersionCleanupIcon,
 } from '-/components/CommonIcons';
 import TsToolbarButton from '-/components/TsToolbarButton';
 import ZoomComponent from '-/components/ZoomComponent';
 import { useAiGenerationDialogContext } from '-/components/dialogs/hooks/useAiGenerationDialogContext';
-import AiAgentDialog from '-/components/chat/AiAgentDialog';
-import { useState } from 'react';
+import { useAiAgentDialogContext } from '-/components/dialogs/hooks/AiAgentDialogContextProvider';
 import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
 import { useFileVersionCleanupDialogContext } from '-/components/dialogs/hooks/useFileVersionCleanupDialogContext';
+import useTodoListContext from '-/components/todo/useTodoListContext';
 import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
@@ -54,7 +55,7 @@ import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
 import { Pro } from '-/pro';
 import { getKeyBindingObject, isHideProFeatures } from '-/reducers/settings';
-import { Box, Divider, Toolbar } from '@mui/material';
+import { Box, Badge, Divider, Toolbar } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
@@ -89,7 +90,7 @@ function MainToolbar(props: Props) {
 
   const { t } = useTranslation();
   const theme = useTheme();
-  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
+  const { openAiAgentDialog } = useAiAgentDialogContext();
   const { openEntry, openedEntry, fileChanged, actuallyCloseFiles } =
     useOpenedEntryContext();
   const {
@@ -106,6 +107,7 @@ function MainToolbar(props: Props) {
   const { openDeleteMultipleEntriesDialog } =
     useDeleteMultipleEntriesDialogContext();
   const { openFileVersionCleanupDialog } = useFileVersionCleanupDialogContext();
+  const { openTodoListDialog, pendingCount } = useTodoListContext();
 
   function showProperties() {
     if (openedEntry?.path === currentDirectoryPath) {
@@ -337,13 +339,35 @@ function MainToolbar(props: Props) {
       )}
       <Box sx={{ flexGrow: 1 }} />
       <Box sx={{ display: 'flex' }}>
+        <Badge
+          badgeContent={pendingCount}
+          color="error"
+          overlap="circular"
+          invisible={pendingCount === 0}
+          sx={{
+            '& .MuiBadge-badge': {
+              fontSize: 10,
+              minWidth: 16,
+              height: 16,
+            },
+          }}
+        >
+          <TsToolbarButton
+            tooltip={t('core:todoTitle')}
+            title={t('core:todoTitle')}
+            data-tid={`${prefixDataTID}PerspectiveTodo`}
+            onClick={() => openTodoListDialog()}
+          >
+            <TodoIcon />
+          </TsToolbarButton>
+        </Badge>
         <TsToolbarButton
           tooltip={t('core:aiAgentTitle')}
           title={t('core:aiAgentTitle')}
           data-tid={prefixDataTID + 'PerspectiveAiAgentTID'}
-          onClick={() => setAgentDialogOpen(true)}
+          onClick={openAiAgentDialog}
         >
-          <AIIcon color={agentDialogOpen ? 'primary' : 'inherit'} />
+          <AIIcon />
         </TsToolbarButton>
         <TsToolbarButton
           tooltip={
@@ -363,10 +387,6 @@ function MainToolbar(props: Props) {
           )}
         </TsToolbarButton>
       </Box>
-      <AiAgentDialog
-        open={agentDialogOpen}
-        onClose={() => setAgentDialogOpen(false)}
-      />
     </Toolbar>
   );
 }
