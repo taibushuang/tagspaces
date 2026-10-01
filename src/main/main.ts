@@ -627,6 +627,10 @@ protocol.register();
 // only talks to endpoints the user configured themselves.
 app.commandLine.appendSwitch('ignore-certificate-errors');
 
+// Internal build: no self-XSS paste warning in DevTools — pasting diagnostic
+// snippets is a routine part of debugging this app.
+app.commandLine.appendSwitch('unsafely-disable-devtools-self-xss-warnings');
+
 app
   .whenReady()
   .then(() => {
