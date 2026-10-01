@@ -84,7 +84,7 @@ export default {
   loadsLocationMetaData: false,
   searchInSubfolders: true,
   watchCurrentDirectory: false,
-  firstRun: true,
+  firstRun: false, // skip the license-acceptance gate (internal build)
   onboardingCompleted: false,
   hideHowToStart: true,
   onboardingVersion: 0,
@@ -98,7 +98,7 @@ export default {
   persistTagsInSidecarFile: false, // old name writeMetaToSidecarFile -> persistTagsInSidecarFile
   filenameTagPlacedAtEnd,
   addTagsToLibrary: true,
-  interfaceLanguage: 'en',
+  interfaceLanguage: 'zh_CN',
   useTrashCan: true,
   useEverythingSearch: true,
   everythingPath: undefined, // custom Everything install dir / exe / dll path (Windows)
