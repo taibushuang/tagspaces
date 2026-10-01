@@ -20,6 +20,7 @@ import {
   AI_SUMMARY_MARKER,
   applyAiSummary,
   buildAiSummaryBlock,
+  isSummaryStale,
 } from '-/components/chat/agentDescription';
 
 describe('agentDescription', () => {
@@ -59,5 +60,44 @@ describe('agentDescription', () => {
       '> 二',
       '> 三',
     ]);
+  });
+
+  test('isSummaryStale: no description or no AI block → stale', () => {
+    expect(isSummaryStale('', 1700000000000)).toBe(true);
+    expect(isSummaryStale('人工写的说明', 1700000000000)).toBe(true);
+  });
+
+  test('isSummaryStale: fresh when lmdt is on/before summary day', () => {
+    const block = buildAiSummaryBlock('摘要');
+    const sameDay = new Date('2026-09-28T18:30:00').getTime();
+    const before = new Date('2026-09-20T00:00:00').getTime();
+    expect(isSummaryStale(block, sameDay)).toBe(false);
+    expect(isSummaryStale(block, before)).toBe(false);
+    // no usable timestamp → trust the summary
+    expect(isSummaryStale(block)).toBe(false);
+    expect(isSummaryStale(block, 0)).toBe(false);
+  });
+
+  test('isSummaryStale: file modified after summary day → stale', () => {
+    const block = buildAiSummaryBlock('摘要'); // block carries today's date
+    const afterTomorrow = new Date(
+      new Date().getFullYear() + 1,
+      0,
+      1,
+    ).getTime();
+    expect(isSummaryStale(block, afterTomorrow)).toBe(true);
+  });
+
+  test('isSummaryStale: unparseable date → stale (safe direction)', () => {
+    const bad = `${AI_SUMMARY_MARKER} （无日期）：\n> 内容`;
+    expect(isSummaryStale(bad, 1700000000000)).toBe(true);
+  });
+
+  test('applyAiSummary round-trip keeps staleness consistent', () => {
+    const desc = applyAiSummary('人工说明。', '摘要');
+    const beforeEdit = new Date('2020-01-01T00:00:00').getTime();
+    const afterEdit = new Date('2099-01-01T00:00:00').getTime();
+    expect(isSummaryStale(desc, beforeEdit)).toBe(false);
+    expect(isSummaryStale(desc, afterEdit)).toBe(true);
   });
 });

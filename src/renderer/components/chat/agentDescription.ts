@@ -59,3 +59,30 @@ export function applyAiSummary(existing: string, summary: string): string {
   const head = base.slice(0, markerIndex).replace(/\s+$/, '');
   return head ? `${head}\n\n${block}` : block;
 }
+
+/**
+ * Incremental-summary staleness check (DESIGN-office-ai-workflow §7.3):
+ * an entry needs (re-)summarizing when it has no AI summary block, or when
+ * the file was modified after the summary was written (`lmdt` from the
+ * location index, epoch ms). Pure function — trivially unit-testable.
+ *
+ * Returns true (stale) when the date in the AI block cannot be parsed —
+ * failing towards re-summarizing is the safe direction.
+ */
+export function isSummaryStale(description: string, lmdt?: number): boolean {
+  if (!description || !description.includes(AI_SUMMARY_MARKER)) {
+    return true;
+  }
+  const match = description.match(/AI 摘要 (\d{4}-\d{2}-\d{2})/);
+  if (!match) {
+    return true;
+  }
+  if (!lmdt || lmdt <= 0) {
+    // No usable modification timestamp — trust the existing summary.
+    return false;
+  }
+  // Summary covers up to the end of its day; a file touched on the same
+  // day as the summary is still considered fresh.
+  const summaryDayEnd = new Date(`${match[1]}T23:59:59.999`).getTime();
+  return lmdt > summaryDayEnd;
+}

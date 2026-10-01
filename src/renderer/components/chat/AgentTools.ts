@@ -25,7 +25,11 @@
  * always operate on the user's current location/selection.
  */
 import { AgentTool } from '-/components/chat/AgentService';
-import { applyAiSummary } from '-/components/chat/agentDescription';
+import {
+  AI_SUMMARY_MARKER,
+  applyAiSummary,
+  isSummaryStale,
+} from '-/components/chat/agentDescription';
 import { parseSearchOperators } from '-/components/chat/searchQueryParser';
 import { extractPDFcontent } from '-/services/thumbsgenerator';
 import {
@@ -95,15 +99,17 @@ function entryToSummary(entry: TS.FileSystemEntry) {
 }
 
 /**
- * Folder-scan variant: includes the current description so the agent can
- * compose hierarchical folder summaries and skip already-summarized
- * documents in one listing call (DESIGN-office-ai-workflow §7).
+ * Folder-scan variant: includes the current description plus incremental
+ * staleness so the agent can compose hierarchical folder summaries and
+ * skip fresh summaries in one listing call (DESIGN-office-ai-workflow §7).
+ * An entry can be skipped only when hasAiSummary && !summaryStale.
  */
 function entryToScanSummary(entry: TS.FileSystemEntry) {
   const description = entry.meta?.description || '';
   return {
     ...entryToSummary(entry),
-    hasAiSummary: description.includes('🤖 AI 摘要'),
+    hasAiSummary: description.includes(AI_SUMMARY_MARKER),
+    summaryStale: isSummaryStale(description, entry.lmdt),
     description,
   };
 }
@@ -233,9 +239,11 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     {
       name: 'list_folder',
       description:
-        'List the children (files and sub-folders) of a folder with their ' +
-        'current descriptions (capped at 50 entries — for larger trees, list ' +
-        'sub-folders individually). ' +
+        'List the children (files and sub-folders) of a folder. Each entry ' +
+        'carries its current description plus hasAiSummary/summaryStale — ' +
+        'skip entries where hasAiSummary is true AND summaryStale is false ' +
+        '(capped at 50 entries; truncated=true means the folder is very ' +
+        'large — prefer a separate summary note). ' +
         'Uses the current location index; omit the path for the folder ' +
         'currently open in the main view. Set recursive=true to include ' +
         'all descendants (needed for folder-wide scans).',
@@ -283,6 +291,13 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           folder: folderPath,
           recursive,
           count: children.length,
+          ...(children.length > SEARCH_RESULT_LIMIT && {
+            truncated: true,
+            note:
+              `only the first ${SEARCH_RESULT_LIMIT} entries are listed — ` +
+              'for very large folders prefer summarizing into a separate ' +
+              'note file (write_deliverable) and keeping the description short',
+          }),
           entries: children
             .slice(0, SEARCH_RESULT_LIMIT)
             .map(entryToScanSummary),
@@ -496,7 +511,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           ok: true,
           path,
           mode: existing.trim()
-            ? existing.includes('🤖 AI 摘要')
+            ? existing.includes(AI_SUMMARY_MARKER)
               ? 'updated'
               : 'appended'
             : 'created',
@@ -508,9 +523,9 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       name: 'get_description',
       description:
         'Read the current description of a file or folder. Use it to ' +
-        'check whether a document already has an AI summary before ' +
-        'summarizing it again, and to collect child descriptions when ' +
-        'composing a folder summary.',
+        'check whether a document already has an up-to-date AI summary ' +
+        '(hasAiSummary && !summaryStale) before summarizing it again, and ' +
+        'to collect child descriptions when composing a folder summary.',
       parameters: {
         type: 'object',
         properties: {
@@ -529,9 +544,12 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         } catch (e) {
           description = '';
         }
+        const lmdt = findEntryByPath(deps.getIndex(), path)?.lmdt;
+        const hasAiSummary = description.includes(AI_SUMMARY_MARKER);
         return {
           path,
-          hasAiSummary: description.includes('🤖 AI 摘要'),
+          hasAiSummary,
+          summaryStale: isSummaryStale(description, lmdt),
           description,
         };
       },
