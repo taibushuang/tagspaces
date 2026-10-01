@@ -1113,6 +1113,7 @@
   "aiNoProviderConfigured": "尚未配置 AI 提供商。请打开 AI 设置以添加一个。",
   "aiSaveAndVerify": "保存并验证",
   "aiVerifyOk": "模型 {{model}} 验证通过——端点和密钥均可正常工作。",
+  "aiAgentUnsupported": "已保存。对话可用，但该模型不支持工具调用——AI Agent 功能将无法使用：{{message}}",
   "aiVerifyFailed": "已保存，但模型验证失败：{{message}}",
   "aiEndpointUnreachable": "无法连接到端点",
   "aiProbeOk": "端点可达，发现 {{count}} 个模型。",

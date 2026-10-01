@@ -1113,6 +1113,7 @@
   "aiNoProviderConfigured": "No AI provider is configured. Open the AI settings to add one.",
   "aiSaveAndVerify": "Save & Verify",
   "aiVerifyOk": "Model {{model}} verified — endpoint and key are working.",
+  "aiAgentUnsupported": "Saved. Chat works, but this model does not support tool calling — the AI Agent will not work: {{message}}",
   "aiVerifyFailed": "Saved, but the model check failed: {{message}}",
   "aiEndpointUnreachable": "Endpoint is not reachable",
   "aiProbeOk": "Endpoint reachable — {{count}} model(s) listed.",

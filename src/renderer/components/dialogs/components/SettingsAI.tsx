@@ -33,6 +33,7 @@ import TsSwitch from '-/components/TsSwitch';
 import TsTextField from '-/components/TsTextField';
 import TsTooltip from '-/components/TsTooltip';
 import { AIProvider } from '-/components/chat/ChatTypes';
+import { checkAgentSupport } from '-/components/chat/AgentService';
 import {
   probeProviderEndpoint,
   verifyProviderModel,
@@ -208,6 +209,28 @@ function SettingsAI(props: Props) {
       };
       forceUpdate();
       if (result.ok) {
+        // Tool-calling probe (P0 acceptance #2): only meaningful for
+        // OpenAI-compatible endpoints — the agent loop depends on it, so
+        // surface a clear warning here instead of failing mid-agent-run.
+        // Informational only: the chat itself works and settings stay saved.
+        if (
+          provider.engine === 'openai-compatible' &&
+          provider.defaultTextModel
+        ) {
+          const agentError = await checkAgentSupport(
+            provider.url,
+            provider.authKey,
+            provider.defaultTextModel,
+          );
+          if (agentError) {
+            showNotification(
+              t('core:aiAgentUnsupported', { message: agentError }),
+              'warning',
+            );
+            setVerifyingId(undefined);
+            return;
+          }
+        }
         showNotification(
           t('core:aiVerifyOk', { model: provider.defaultTextModel }),
           'info',
