@@ -584,7 +584,11 @@ function ChatView() {
                   onKeyDown={(event) => {
                     if (
                       (event.key === 'Enter' || event.code === 'Enter') &&
-                      !event.shiftKey
+                      !event.shiftKey &&
+                      // IME: Enter confirms the candidate (composition), it
+                      // must not send the message mid-typing (CJK input)
+                      !event.nativeEvent.isComposing &&
+                      event.keyCode !== 229
                     ) {
                       event.preventDefault();
                       event.stopPropagation();
