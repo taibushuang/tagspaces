@@ -47,6 +47,13 @@ export type AgentMessage = Record<string, any>;
 
 /** Hard budget of model round-trips per run (guards against tool loops). */
 export const MAX_AGENT_STEPS = 8;
+/**
+ * When the step budget is exhausted, the model gets a checkpoint prompt:
+ * it must summarize progress and either continue (fresh budget) or wrap
+ * up with the final answer. This caps how many times the budget can be
+ * renewed, so a runaway loop still terminates (8 × (1+4) rounds max).
+ */
+export const MAX_AGENT_CHECKPOINTS = 4;
 /** Tool results longer than this get truncated before going back to the model. */
 export const TOOL_RESULT_CHAR_LIMIT = 4000;
 
@@ -131,6 +138,8 @@ export async function runAgent(
   const conversation: AgentMessage[] = [...messages];
   let finalContent = '';
   let aborted = false;
+  let stepsSinceCheckpoint = 0;
+  let checkpointsUsed = 0;
 
   const request: ChatRequest = {
     model,
@@ -139,10 +148,27 @@ export async function runAgent(
   };
   (request as any).tools = tools.map(toOpenAITool);
 
-  for (let step = 0; step < maxSteps; step += 1) {
+  // eslint-disable-next-line no-constant-condition -- bounded by checkpoints + abort
+  while (true) {
     if (signal?.aborted) {
       aborted = true;
       break;
+    }
+    if (stepsSinceCheckpoint >= maxSteps) {
+      if (checkpointsUsed >= MAX_AGENT_CHECKPOINTS) {
+        break; // total budget exhausted — hard stop below
+      }
+      checkpointsUsed += 1;
+      // Checkpoint: the model must report progress and either continue
+      // with real work (fresh budget) or deliver the final answer. Its
+      // streamed reply makes the progress report visible to the user.
+      conversation.push({
+        role: 'user',
+        content:
+          `⏸️ Step budget of ${maxSteps} tool rounds reached. Before doing anything else, briefly summarize progress (what is done, what remains — in the user's language). ` +
+          'Then, if you are making real progress and not repeating the same calls, proceed with the next tool call to continue the task. ' +
+          'If the task is complete or you are stuck, reply with the final answer for the user instead.',
+      });
     }
     // eslint-disable-next-line no-await-in-loop -- each round depends on the previous tool results
     const result = await chatOpenAICompletion(
@@ -165,6 +191,13 @@ export async function runAgent(
     if (toolCalls.length === 0) {
       finalContent = result.content || '';
       break;
+    }
+    if (stepsSinceCheckpoint >= maxSteps) {
+      // The model answered the checkpoint by continuing to work — grant a
+      // fresh budget for the next stretch.
+      stepsSinceCheckpoint = 0;
+    } else {
+      stepsSinceCheckpoint += 1;
     }
 
     // Keep any text emitted alongside the tool calls in the transcript
@@ -209,7 +242,10 @@ export async function runAgent(
   }
 
   if (!finalContent && !aborted) {
-    const message = `agent stopped after ${maxSteps} steps without a final answer`;
+    const message =
+      checkpointsUsed > 0
+        ? `agent stopped: step budget exhausted even after ${checkpointsUsed} checkpoint continuation(s) without a final answer`
+        : `agent stopped after ${maxSteps} steps without a final answer`;
     onEvent({ type: 'error', message });
   }
   return { messages: conversation, content: finalContent, aborted };
