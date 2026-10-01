@@ -31,6 +31,10 @@ import {
   setPersistorRef,
 } from '../services/encryptAtRestState';
 import { inferKeySource } from '../services/credentialsBootstrap';
+import {
+  backupAiProviders,
+  restoreAiProvidersIfNeeded,
+} from '../services/aiProvidersBackup';
 
 const configureStore = (initialState) => {
   // Redux Configuration
@@ -97,8 +101,10 @@ const configureStore = (initialState) => {
   // persisted settings; the subscription only takes over once rehydration
   // has run (the gate above).
   store.subscribe(syncEncryptState);
+  store.subscribe(() => backupAiProviders(store.getState()));
 
   const persistor = persistStore(store, null, () => {
+    restoreAiProvidersIfNeeded(store);
     // languageChanged event is not handled in main process on store loaded (App is not ready)
     setTimeout(() => {
       if (AppConfig.isElectron) {

@@ -29,6 +29,10 @@ import {
   setPersistorRef,
 } from '../services/encryptAtRestState';
 import { inferKeySource } from '../services/credentialsBootstrap';
+import {
+  backupAiProviders,
+  restoreAiProvidersIfNeeded,
+} from '../services/aiProvidersBackup';
 
 const enhancer = compose(
   applyMiddleware(thunk), // , router)
@@ -64,7 +68,9 @@ function configureStore(initialState) {
   // persisted settings; the subscription only takes over once rehydration
   // has run (the gate above).
   store.subscribe(syncEncryptState);
+  store.subscribe(() => backupAiProviders(store.getState()));
   const persistor = persistStore(store, null, () => {
+    restoreAiProvidersIfNeeded(store);
     // document.dispatchEvent(new Event('storeLoaded'));
     // console.log('Store rehydrated.');
     setTimeout(() => {
