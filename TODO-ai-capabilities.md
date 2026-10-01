@@ -35,15 +35,19 @@
       在方舟（glm-5.3-flash）上完整跑一遍设计验收用例：
       "帮我找出当前文件夹里所有 pdf 并打上 invoice 标签"，
       确认 `search_files` → `add_tags` 工具链触发且 UI 可见步骤。
-- [ ] **验收②：tool-calling 能力探测接入 UI**
-      `AgentService.checkAgentSupport` 已实现但闲置。把能力探测接进
-      「保存并验证」按钮：探测请求带 tools，不支持函数调用的端点在验证时
-      明确报错（设计验收标准 2），而不是等真正跑 agent 才失败。
-      涉及 `src/renderer/components/dialogs/components/SettingsAI.tsx`。
-- [ ] **验收③：`npm run build:renderer` 全量构建通过**
-      此前只验证过 `tsc --noEmit`，生产构建未跑。
+- [x] **验收②：tool-calling 能力探测接入 UI**
+      `checkAgentSupport` 已接入「保存并验证」：OpenAI 兼容端点验证通过后
+      追加 tool-calling 探测，不支持时 warning 明确提示（不阻断保存，
+      i18n key `aiAgentUnsupported`）。
+- [x] **验收③：`npm run build:renderer` 全量构建通过**
+      2026-10-01 生产构建通过（tsc --noEmit + 单测 456 全过）。
 
 ## Phase 2 — 任务表产出（原 P1 #2）
+
+> 2026-09-28 起 xlsx 生成**推迟**：先落地了目标驱动的 .md 文档产出
+> （`write_deliverable`，`9526dfaa0`..`095a2b5e7`，含文本回复/文件两种
+> 目标模式），已覆盖"报告/方案/周报"类产出。xlsx 任务表待真实场景需要时
+> 再做（选型不变：零依赖手写 xlsx，CSV 兜底）。
 
 - [ ] **xlsx 生成**（`create_spreadsheet` 工具）
       agent 从需求文档提取待办生成 Excel 任务表落盘到 `任务/`（列：
@@ -59,11 +63,13 @@
 
 - [x] 前置：recursive `list_folder`、`get_description`（`e61dcd463`）
 - [x] 前置：`list_folder` 结果携带描述（`1454bf51e`）
-- [~] **分层汇总主体**：系统提示词引导（总结→写 description；文件夹汇总
+- [x] **分层汇总主体**：系统提示词引导（总结→写 description；文件夹汇总
       →先子后父；超大 folder→独立笔记+精华进 description）+ 增量缓存
-      （AI 摘要标记 + 索引 size/mtime 判定 + `待总结`/`已总结` 标签驱动）。
+      （AI 摘要标记 + `isSummaryStale` 按 lmdt/摘要日期判定过期 +
+      `待总结`/`已总结` 标签驱动；`list_folder`/`get_description` 输出
+      `summaryStale` 字段）。单测：`tests/unit/agentDescription.test.js`。
       验收：3 层嵌套、50+ Office 文档测试库，首跑+增量跑各一次，调用次数
-      符合设计 §7.5 成本表。
+      符合设计 §7.5 成本表（**待实机**）。
 
 ## Phase 4 — 检索表达力（原 P2）✅ 全部完成
 
@@ -118,4 +124,6 @@
 - [x] Office 文档内容提取（`dcdfbd2ec`，officeTextExtractor + read_file_text）
 - [x] set_description 工具（`e2b625d03`，人工内容保护见设计 §7.4）
 - [x] move_file 工具（`efed0a6d1`，分拣归档）
-- [x] write_text_file 工具（目标驱动的报告/文档产出，进行中待提交）
+- [x] write_text_file 工具（目标驱动的报告/文档产出；后更名为
+      `write_deliverable`，并新增目标模式：文本回复 vs 文件产出，
+      `9526dfaa0`..`095a2b5e7`）

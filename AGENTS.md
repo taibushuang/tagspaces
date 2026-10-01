@@ -140,7 +140,16 @@
 
 **模型供给决策（2026-09-28）**：内网网关（OpenAI 兼容）为**唯一通道**，本地 Ollama 冻结——`OllamaClient.ts` 保留不删但不再投入，离线 AI 场景放弃。分层汇总等高调用量功能全部走网关计费，增量缓存为硬性要求。
 
-**后续新增（详见 `TODO-ai-capabilities.md` 与 `DESIGN-ai-agent.md` §7）**：`set_description`（人工内容保护）、`move_file`（分拣归档）、`write_text_file`（文档产出）；`search_files` 支持 tscmd 风格操作符（`+tag`/`-tag`/`|tag`/`--type`）；约定文件注入 `locationConventions.ts`（location 根 `CLAUDE.md`/`AGENTS.md` → system prompt）；`list_folder` recursive + 携带描述、`get_description`（分层汇总前置）。
+**分层汇总（2026-10-01 落地，详见 `DESIGN-office-ai-workflow.md` §7）**：
+map-reduce 三级金字塔（文件→子文件夹→父文件夹，向上只汇总描述不碰原文）。
+增量缓存硬性要求（网关计费）：`agentDescription.ts` 的 `isSummaryStale()`
+按「AI 摘要块日期 vs entry.lmdt」判定过期，`list_folder`/`get_description`
+输出 `summaryStale`，跳过条件 = `hasAiSummary && !summaryStale`；
+`待总结`/`已总结` 标签驱动进度（用现有 add_tags/remove_tags）；
+超大 folder（list_folder 截断）→ 完整汇总写独立笔记（write_deliverable），
+description 只放精华。单测 `tests/unit/agentDescription.test.js`。
+
+**后续新增（均已落地，详见 `TODO-ai-capabilities.md` 与 `DESIGN-ai-agent.md` §7）**：`set_description`（人工内容保护）、`move_file`（分拣归档）、`write_deliverable`（.md/.txt 文档产出，含文本回复/文件两种目标模式，不覆盖人写文件）；`search_files` 支持 tscmd 风格操作符（`+tag`/`-tag`/`|tag`/`--type`）；约定文件注入 `locationConventions.ts`（location 根 `CLAUDE.md`/`AGENTS.md` → system prompt）；`list_folder` recursive + 携带描述、`get_description`（分层汇总前置）。设置页「保存并验证」含 tool-calling 能力探测（`checkAgentSupport`，不支持时 warning 提示）。
 
 **已知限制**：自签名证书的内网网关会被渲染层 Chromium 网络栈拒绝（需装企业 CA 或后续加主进程代理）；`/v1/models` 列表不可用的端点（如方舟套餐）需在设置里手动添加模型。CORS 已解决：主进程窗口 `webSecurity: false`（main.ts），因为方舟等网关的 CORS 预检不放行 `Authorization` 且 Electron webRequest 拦不到预检，聊天/Agent/验证直连才能通（2026-09-27，已在真实应用内实测 200）。
 
