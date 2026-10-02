@@ -1,5 +1,25 @@
 # Agent Instructions for TagSpaces
 
+## 长期目标：蒸馏个人工作（一切能力建设的 Why）
+
+本工具所有 AI 能力建设的长期目标，是**逐渐蒸馏提取用户一个人工作中用到的
+知识和流程，把用户持续不断地从流程和知识中释放出来**，让其聚焦在关键的
+判断力上，并释放主动性到更具创造力和更重要的工作上去。
+
+「蒸馏同事」的真正原理：与其说是复制一个人，不如说是把一个人工作中**最
+标准化、最可被流程化的那部分经验**做一次"数据化提取"。**蒸走的是流程，
+蒸不走的是人在复杂环境中的判断力和主动性**——后者恰恰要留给用户。
+
+由此推出的建设原则（做新功能/评估新想法时对照）：
+
+- 每个能力都要能回答："这把用户从哪段流程或知识中释放出来了？"
+- 优先蒸馏**重复率高、规则清晰**的工作流（整理、汇总、产出、检索）；
+  判断密集的环节（方案取舍、优先级、对外沟通）不做替代，做辅助。
+- Agent 被蒸馏出来的经验应**沉淀为可复用资产**（约定文件、知识库条目、
+  自定义技能/工具），而不是一次性对话。
+- 能力路线图见 `TODO-ai-capabilities.md`，场景目标态见
+  `DESIGN-office-ai-workflow.md`。
+
 ## 通用要求
 
 - **思考过程和讨论交流一律使用中文**（包括内部分析、计划、解释和总结）。代码、注释、commit message、i18n 英文文案仍用英文。
@@ -211,6 +231,40 @@ description 只放精华。单测 `tests/unit/agentDescription.test.js`。
 **AI Agent 工具（2026-10-02 落地）**：`src/renderer/components/chat/AgentTools.ts` 新增 4 个待办工具（走 `todoApi` IPC，web 端无 electronIO 时返回不可用提示）：`todo_list`（列表 + stats，≤50 条护栏）、`todo_create`（title 必填，可选 priority/tags/project/dueDate/description）、`todo_complete`（按 id 标记 done）、`todo_update_status`（open/doing/done）。异常一律 `{ error }` 回传模型。
 
 **数据模型预留**：`parentId` / `estimateMinutes` 字段已入 schema（v1 不暴露 UI），将来上子任务/估时免迁移。二期方向：TODO-*.md 导入（勾选回写）、`reminderAt` 到期系统通知。
+
+### Pro 功能隐藏（2026-10-02 落地）
+
+**背景**：本仓库不含 `@tagspacespro/tagspacespro` 模块（`src/renderer/pro/index.ts` 里 `Pro` 恒为 undefined，Pro 功能全部不可用）。为避免向用户暴露一堆置灰的 Pro 控件 / 升级广告，把所有 Pro 相关 UI 从操作入口层面清除，同时**保留 `hideProFeatures` 机制本身作为内置开关**（默认开启）。
+
+**内置开关**：
+- `src/renderer/reducers/settings-default.ts` — `hideProFeatures: true`
+- `src/renderer/reducers/settings.ts` — `isHideProFeatures` selector **恒返回 true**（不再读持久化的 `state.settings.hideProFeatures`，防止 redux-persist 恢复旧值 `false` 覆盖默认）。仅 `AppConfig.ExtHideProFeatures`（ext config）可显式覆盖为 false。
+- 设置界面里原来的「隐藏 Pro 功能」开关项已删除，但 reducer 的 `setHideProFeatures` action 保留（无 UI 触发，无害）。
+
+**清除的界面入口**：
+- 设置对话框：`SettingsGeneral.tsx` 移除 5 项 Pro 设置项（自动保存描述 / 文件版本 / 从位置读取标签 / 工作区 / 隐藏 Pro 功能开关）；`SettingsDialog.tsx` 移除整个「文件模板」tab（`SettingsTab.Templates` 已从 enum 删除，`SettingsTemplates.tsx` 变为无引用的死代码，保留未删）
+- `AboutDialog.tsx`：移除「升级到 Pro」按钮、PRO/LITE 徽标、产品名 Pro 后缀
+- `HelpFeedbackPanel.tsx`：移除「achieve more · TagSpaces Pro」菜单项、恢复购买/取消订阅项
+- `SearchMenu.tsx`：移除「导出/导入保存的搜索」（Pro 项）
+- `CustomLogo.tsx`：移除顶栏 `LITE` 标签
+- `MobileNavigation.tsx`：移除移动端底部 `ProTeaser` 广告横幅
+
+**未走门控的 Pro 控件补齐隐藏**（沿用 `!hideProFeatures &&` 或 `Pro &&` 条件）：
+- `EntryProperties.tsx`：背景色/调色板/缩略图/背景图按钮
+- `CreateEditLocationDialog.tsx`：工作区、失焦重载、只读模式、监听变更、禁用索引
+- `CreateTagGroupDialog.tsx` / `EditTagGroupDialog.tsx`：标签组位置、工作区字段
+- `ExportImportPanel.tsx`：「保存的搜索」备份区（`renderSection` 开头 `hideProFeatures && sectionIsPro('searches')` 直接 return null）
+- `LinksTab.tsx`：链接图按钮（`LinksGraph` 不存在时隐藏）
+- `CreateFile.tsx`：模板管理按钮（模板 tab 已删，按钮随之移除；`NewFileDialog` 不再传 `onClose` 给 `CreateFile`）
+- `TagLibraryMenu.tsx`：「从位置刷新标签组」
+- `EntryContainerButtons.tsx`：自动保存开关
+- `StoredSearches.tsx`：书签区块（`showBookmarksSection = Pro && …`）
+- `AiGenDescButton.tsx` / `AiGenTagsButton.tsx`：Lite 下整体 `return null`（AI 生成按钮）
+- `MainToolbar.tsx`：主工具栏 AI 生成按钮（点击会弹 Pro 升级提示）
+
+**保留未删（无入口即不可达）**：`BuyProDialog.tsx` / `ProTeaserDialog.tsx` / `ProTeaser.tsx` / `ProTeaserSlides.tsx` / `services/iap.ts` 及它们的 Context Provider 仍挂载在 `DialogsRoot.tsx`，但所有打开入口已清除，永远不会显示——保留以避免 import 图断裂，便于未来恢复。
+
+**注意事项**：受影响的 e2e 测试（`changeThumbnailTID`、`saveTagInLocationTID`、`templatesDialogTID` 等）均带 `_pro` 平台标签，只在 Pro 构建下运行，本部署不跑，故未改动。
 
 ### 打包注意事项（2026-09-25 起：无原生依赖）
 
