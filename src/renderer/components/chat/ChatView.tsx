@@ -32,7 +32,6 @@ import TsTextField from '-/components/TsTextField';
 import ChatDndTargetFile from '-/components/chat/ChatDndTargetFile';
 import ChatMenu from '-/components/chat/ChatMenu';
 import { AIProvider, ChatMode } from '-/components/chat/ChatTypes';
-import PromptEditDialog from '-/components/chat/PromptEditDialog';
 import SelectChatModel from '-/components/chat/SelectChatModel';
 import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 import ChatMdEditor from '-/components/md/ChatMdEditor';
@@ -49,6 +48,7 @@ import {
 import { MilkdownProvider } from '@milkdown/react';
 import { Box, Divider, FormControlLabel, Grid, Stack } from '@mui/material';
 import CircularProgress from '@mui/material/CircularProgress';
+import Button from '@mui/material/Button';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -70,21 +70,6 @@ import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import TsMenuList from '../TsMenuList';
 
-interface AiPrompt {
-  id?: string;
-  title: string;
-  content: string;
-}
-
-// @todo Retrieve von ext config
-const defaultPrompts: AiPrompt[] = [
-  // {
-  //   title: 'Correct German spelling ',
-  //   content:
-  //     'You are a professional text corrector. Improve the text grammatically in German.',
-  // },
-];
-
 function ChatView() {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -94,10 +79,10 @@ function ChatView() {
     newChatMessage,
     newAgentMessage,
     agentMode,
-    setAgentMode,
     changeCurrentModel,
     setModel,
     currentModel,
+    models,
     isTyping,
     cancelMessage,
   } = useChatContext();
@@ -112,35 +97,10 @@ function ChatView() {
   const textInputRef = useRef<HTMLInputElement>(null);
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
-  const [promptAnchorEl, setPromptAnchorEl] =
+  const [modelMenuAnchor, setModelMenuAnchor] =
     React.useState<null | HTMLElement>(null);
   const [promptHistory, setPromptHistory] = React.useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = React.useState<number>(-1);
-  const [aiPrompts, setAiPrompts] = React.useState<AiPrompt[]>([]);
-  const [dialogOpen, setDialogOpen] = React.useState<boolean>(false);
-  const [editingPromptId, setEditingPromptId] = React.useState<string | null>(
-    null,
-  );
-  const [dialogTitle, setDialogTitle] = React.useState<string>('');
-  const [dialogContent, setDialogContent] = React.useState<string>('');
-  const [deleteConfirmOpen, setDeleteConfirmOpen] =
-    React.useState<boolean>(false);
-
-  // Load prompts from localStorage on mount
-  useEffect(() => {
-    const savedPrompts = localStorage.getItem('tsAiPrompts');
-    if (savedPrompts) {
-      try {
-        const parsed = JSON.parse(savedPrompts);
-        setAiPrompts(parsed);
-      } catch (e) {
-        console.error('Failed to parse saved prompts:', e);
-        setAiPrompts(defaultPrompts);
-      }
-    } else {
-      setAiPrompts(defaultPrompts);
-    }
-  }, []);
 
   // Input change handler
   const handleInputChange = useCallback(
@@ -208,39 +168,6 @@ function ChatView() {
         forceUpdate();
       });
   }, [agentMode, newAgentMessage, newChatMessage, promptHistory]);
-
-  // Prompt menu handlers
-  const handlePromptClick = useCallback(
-    (event: React.MouseEvent<HTMLElement>) => {
-      setPromptAnchorEl(event.currentTarget);
-    },
-    [],
-  );
-
-  const handlePromptClose = useCallback(() => {
-    setPromptAnchorEl(null);
-  }, []);
-
-  const handlePromptSelect = useCallback((prompt: string) => {
-    setPromptAnchorEl(null);
-    if (textInputRef.current) {
-      const cursorPos =
-        textInputRef.current.selectionStart || chatMsg.current.length;
-      const before = chatMsg.current.substring(0, cursorPos);
-      const after = chatMsg.current.substring(cursorPos);
-      chatMsg.current = before + prompt + after;
-      forceUpdate();
-      setHistoryIndex(-1);
-      // Restore cursor position after prompt insertion
-      setTimeout(() => {
-        if (textInputRef.current) {
-          textInputRef.current.selectionStart = cursorPos + prompt.length;
-          textInputRef.current.selectionEnd = cursorPos + prompt.length;
-          textInputRef.current.focus();
-        }
-      }, 0);
-    }
-  }, []);
 
   // Menu handlers
   const handleMoreClick = useCallback(
@@ -317,124 +244,8 @@ function ChatView() {
     }
   }, []);
 
-  // Prompt management handlers
-  const savePromptsToStorage = useCallback((prompts: AiPrompt[]) => {
-    localStorage.setItem('tsAiPrompts', JSON.stringify(prompts));
-  }, []);
-
-  const handleOpenCreatePrompt = useCallback(() => {
-    setEditingPromptId(null);
-    setDialogTitle('');
-    setDialogContent('');
-    setDialogOpen(true);
-    setPromptAnchorEl(null);
-  }, []);
-
-  const handleOpenEditPrompt = useCallback((prompt: AiPrompt) => {
-    setEditingPromptId(prompt.id || null);
-    setDialogTitle(prompt.title);
-    setDialogContent(prompt.content);
-    setDialogOpen(true);
-    setPromptAnchorEl(null);
-  }, []);
-
-  const handleCloseDialog = useCallback(() => {
-    setDialogOpen(false);
-    setEditingPromptId(null);
-    setDialogTitle('');
-    setDialogContent('');
-  }, []);
-
-  const handleSavePrompt = useCallback(() => {
-    if (!dialogTitle.trim() || !dialogContent.trim()) {
-      showNotification(t('core:mandatoryFieldsEmpty'), 'error', false);
-      return;
-    }
-
-    let updatedPrompts: AiPrompt[];
-    if (editingPromptId) {
-      // Edit existing prompt
-      updatedPrompts = aiPrompts.map((p) =>
-        p.id === editingPromptId
-          ? { ...p, title: dialogTitle, content: dialogContent }
-          : p,
-      );
-    } else {
-      // Create new prompt
-      const newPrompt: AiPrompt = {
-        id: getUuid(),
-        title: dialogTitle,
-        content: dialogContent,
-      };
-      updatedPrompts = [...aiPrompts, newPrompt];
-    }
-
-    setAiPrompts(updatedPrompts);
-    savePromptsToStorage(updatedPrompts);
-    handleCloseDialog();
-    showNotification(
-      editingPromptId ? t('core:promptUpdated') : t('core:promptCreated'),
-      'info',
-      false,
-    );
-  }, [
-    dialogTitle,
-    dialogContent,
-    editingPromptId,
-    aiPrompts,
-    savePromptsToStorage,
-    handleCloseDialog,
-    showNotification,
-    t,
-  ]);
-
-  const handleDeletePrompt = useCallback(() => {
-    if (editingPromptId) {
-      const updatedPrompts = aiPrompts.filter((p) => p.id !== editingPromptId);
-      setAiPrompts(updatedPrompts);
-      savePromptsToStorage(updatedPrompts);
-      handleCloseDialog();
-      showNotification(t('core:promptDeleted'), 'info', false);
-      setPromptAnchorEl(null);
-    }
-  }, [
-    editingPromptId,
-    aiPrompts,
-    savePromptsToStorage,
-    handleCloseDialog,
-    showNotification,
-    t,
-  ]);
-
-  const handleOpenDeleteConfirm = useCallback(() => {
-    setDeleteConfirmOpen(true);
-  }, []);
-
-  const handleCloseDeleteConfirm = useCallback(() => {
-    setDeleteConfirmOpen(false);
-  }, []);
-
-  const getSelectedIFrameContent = () => {
-    const iframe = document.getElementsByTagName('iframe')[0];
-    const iframeWindow = iframe?.contentWindow;
-    const selection = iframeWindow?.getSelection();
-    const selectionText = selection?.toString();
-    if (selectionText) {
-      return selectionText;
-    } else {
-      const childIframe =
-        iframeWindow.document.getElementsByTagName('iframe')[0];
-      const subselection = childIframe?.contentWindow.getSelection();
-      return subselection?.toString() || '';
-    }
-  };
-
-  const appendSelectionToPrompt = () => {
-    const selectedText = getSelectedIFrameContent();
-    chatMsg.current = chatMsg.current + '\n\n' + selectedText;
-    forceUpdate();
-  };
-
+  // (Prompt template feature removed — reusable prompts now live as
+  //  custom skills and knowledge base entries.)
   const { FILE } = NativeTypes;
 
   return (
@@ -604,31 +415,28 @@ function ChatView() {
                     input: {
                       startAdornment: (
                         <InputAdornment position="start">
-                          <TsIconButton
+                          <Button
                             size="small"
-                            onClick={handlePromptClick}
-                            aria-label={t('core:aiPrompts')}
-                            aria-controls={
-                              Boolean(promptAnchorEl)
-                                ? 'prompt-menu'
-                                : undefined
-                            }
-                            tooltip={t('core:aiPrompts')}
-                            aria-haspopup="true"
-                            aria-expanded={
-                              Boolean(promptAnchorEl) ? 'true' : undefined
-                            }
+                            data-tid="modelPickerTID"
+                            onClick={(e) => setModelMenuAnchor(e.currentTarget)}
+                            endIcon={<ArrowDropUpIcon />}
+                            sx={{
+                              minWidth: 0,
+                              textTransform: 'none',
+                              maxWidth: 130,
+                              overflow: 'hidden',
+                              paddingX: 0.5,
+                            }}
                           >
-                            <AIIcon fontSize="small" />
-                            <ArrowDropUpIcon />
-                          </TsIconButton>
+                            {currentModel?.name || t('core:chooseModel')}
+                          </Button>
                           <Menu
-                            id="prompt-menu"
-                            anchorEl={promptAnchorEl}
-                            open={Boolean(promptAnchorEl)}
-                            onClose={handlePromptClose}
+                            data-tid="modelPickerMenuTID"
+                            anchorEl={modelMenuAnchor}
+                            open={Boolean(modelMenuAnchor)}
+                            onClose={() => setModelMenuAnchor(null)}
                             anchorOrigin={{
-                              vertical: 'top',
+                              vertical: 'bottom',
                               horizontal: 'left',
                             }}
                             transformOrigin={{
@@ -636,52 +444,28 @@ function ChatView() {
                               horizontal: 'left',
                             }}
                           >
-                            <TsMenuList>
-                              <MenuItem onClick={handleOpenCreatePrompt}>
-                                {t('core:createPrompt')}
+                            {Array.from(
+                              new Set<string>([
+                                ...(currentModel?.name
+                                  ? [currentModel.name]
+                                  : []),
+                                ...(aiDefaultProvider.customModels || []),
+                                ...(models || [])
+                                  .map((m) => m.name)
+                                  .filter(Boolean),
+                              ]),
+                            ).map((name) => (
+                              <MenuItem
+                                key={name}
+                                selected={name === currentModel?.name}
+                                onClick={() => {
+                                  handleChangeModel(name);
+                                  setModelMenuAnchor(null);
+                                }}
+                              >
+                                {name}
                               </MenuItem>
-                              {aiPrompts.length > 0 && <Divider />}
-                              {aiPrompts.map((aiPrompt) => (
-                                <MenuItem
-                                  key={aiPrompt.id || aiPrompt.title}
-                                  onClick={() => {
-                                    handlePromptSelect(aiPrompt.content);
-                                  }}
-                                  sx={{ flexGrow: 1 }}
-                                >
-                                  <Stack
-                                    direction="row"
-                                    spacing={1}
-                                    sx={{
-                                      width: '100%',
-                                      alignItems: 'center',
-                                    }}
-                                  >
-                                    <Box sx={{ flexGrow: 1 }}>
-                                      {aiPrompt.title}
-                                    </Box>
-                                    <TsIconButton
-                                      size="small"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleOpenEditPrompt(aiPrompt);
-                                      }}
-                                      tooltip={t('core:edit')}
-                                    >
-                                      <EditIcon fontSize="small" />
-                                    </TsIconButton>
-                                  </Stack>
-                                </MenuItem>
-                              ))}
-                              {openedEntry?.isFile && (
-                                <>
-                                  <Divider />
-                                  <MenuItem onClick={appendSelectionToPrompt}>
-                                    {t('core:appendSelectionToPrompt')}
-                                  </MenuItem>
-                                </>
-                              )}
-                            </TsMenuList>
+                            ))}
                           </Menu>
                         </InputAdornment>
                       ),
@@ -722,33 +506,6 @@ function ChatView() {
           </Grid>
         </Grid>
       </Grid>
-      {/* Edit/Create Prompt Dialog */}
-      <PromptEditDialog
-        open={dialogOpen}
-        editingPromptId={editingPromptId}
-        dialogTitle={dialogTitle}
-        dialogContent={dialogContent}
-        onTitleChange={setDialogTitle}
-        onContentChange={setDialogContent}
-        onSave={handleSavePrompt}
-        onClose={handleCloseDialog}
-        onDelete={handleOpenDeleteConfirm}
-      />
-      {/* Delete Confirmation Dialog */}
-      <ConfirmDialog
-        open={deleteConfirmOpen}
-        onClose={handleCloseDeleteConfirm}
-        title={t('core:deletePromptConfirm')}
-        content={t('core:deletePromptConfirmDescription')}
-        confirmCallback={(result) => {
-          if (result) {
-            handleDeletePrompt();
-          }
-        }}
-        customCancelText={t('core:cancel')}
-        customConfirmText={t('core:delete')}
-        list={[]}
-      />
     </Box>
   );
 }
