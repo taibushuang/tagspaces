@@ -372,6 +372,9 @@ function AgentPanel() {
             }),
           },
           ...session.apiMessages,
+          // The user's message MUST be part of the API conversation — it is
+          // only appended to session.apiMessages via the run result below.
+          { role: 'user', content: text },
         ],
         tools: buildTools(),
         signal: abortController.signal,
