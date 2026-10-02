@@ -101,13 +101,17 @@ const BUILTIN_SKILLS: Array<{ id: string; nameKey: string; descKey: string }> =
 
 interface Props {
   onClose: () => void;
+  /** Initial inner tab (tools/skills) when embedded in the work area. */
+  initialTab?: 'tools' | 'skills';
+  /** Hide the inner tool/skill tabs (the work area provides top-level ones). */
+  hideTabs?: boolean;
 }
 
 function AiCapabilitiesPanel(props: Props) {
   const { t } = useTranslation();
-  const { onClose } = props;
+  const { onClose, initialTab, hideTabs } = props;
   const { showNotification } = useNotificationContext();
-  const [tab, setTab] = useState<'tools' | 'skills'>('tools');
+  const [tab, setTab] = useState<'tools' | 'skills'>(initialTab || 'tools');
   const [search, setSearch] = useState('');
   // re-render trigger after storage mutations
   const [, setVersion] = useState(0);
@@ -354,14 +358,16 @@ function AiCapabilitiesPanel(props: Props) {
           onChange={(e) => setSearch(e.target.value)}
           data-tid="aiCapabilitiesSearchTID"
         />
-        <Tabs
-          value={tab}
-          onChange={(e, v) => setTab(v)}
-          sx={{ minHeight: 'auto' }}
-        >
-          <Tab value="tools" label={t('core:aiCapToolsTab')} />
-          <Tab value="skills" label={t('core:aiCapSkillsTab')} />
-        </Tabs>
+        {!hideTabs && (
+          <Tabs
+            value={tab}
+            onChange={(e, v) => setTab(v)}
+            sx={{ minHeight: 'auto' }}
+          >
+            <Tab value="tools" label={t('core:aiCapToolsTab')} />
+            <Tab value="skills" label={t('core:aiCapSkillsTab')} />
+          </Tabs>
+        )}
 
         {tab === 'tools' && (
           <Box>

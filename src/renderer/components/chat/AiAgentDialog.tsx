@@ -35,7 +35,6 @@ import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
-import ExtensionOutlinedIcon from '@mui/icons-material/ExtensionOutlined';
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 
 // Lazy on purpose: a static import would create a dependency cycle
@@ -60,7 +59,9 @@ interface Props {
 function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
   const { open, onClose, width, onWidthChange } = props;
-  const [view, setView] = useState<'chat' | 'agent' | 'kb' | 'cap'>('chat');
+  const [view, setView] = useState<
+    'chat' | 'agent' | 'kb' | 'tools' | 'skills'
+  >('chat');
   const resizing = useRef(false);
 
   useEffect(() => {
@@ -147,16 +148,17 @@ function AiAgentDialog(props: Props) {
             data-tid="aiAgentTabTID"
           />
           <Tab value="kb" label={t('core:aiKbTab')} data-tid="aiKbTabTID" />
-          <Tab value="cap" label={t('core:aiCapTab')} data-tid="aiCapTabTID" />
+          <Tab
+            value="tools"
+            label={t('core:aiCapToolsTab')}
+            data-tid="aiToolsTabTID"
+          />
+          <Tab
+            value="skills"
+            label={t('core:aiCapSkillsTab')}
+            data-tid="aiSkillsTabTID"
+          />
         </Tabs>
-        <IconButton
-          aria-label={t('core:aiCapabilitiesTitle')}
-          data-tid="aiCapabilitiesOpenTID"
-          onClick={() => setView('cap')}
-          size="small"
-        >
-          <ExtensionOutlinedIcon />
-        </IconButton>
         <IconButton aria-label={t('core:close')} onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
@@ -173,8 +175,12 @@ function AiAgentDialog(props: Props) {
           <AgentPanel />
         ) : view === 'kb' ? (
           <KnowledgeBasePanel />
-        ) : view === 'cap' ? (
-          <AiCapabilitiesPanel onClose={() => setView('agent')} />
+        ) : view === 'tools' || view === 'skills' ? (
+          <AiCapabilitiesPanel
+            initialTab={view === 'skills' ? 'skills' : 'tools'}
+            hideTabs
+            onClose={() => setView('agent')}
+          />
         ) : (
           <Suspense
             fallback={<CircularProgress size={24} sx={{ margin: 'auto' }} />}
