@@ -44,6 +44,8 @@ import {
 } from '-/services/officeTextExtractor';
 import AppConfig from '-/AppConfig';
 import { TS } from '-/tagspaces.namespace';
+import todoApi from '-/components/todo/todoService';
+import { TodoItem } from '-/components/todo/todoTypes';
 
 export type AgentToolDeps = {
   agentSearch: (searchQuery: TS.SearchQuery) => Promise<TS.FileSystemEntry[]>;
@@ -148,6 +150,28 @@ function requireString(args: any, field: string): string {
     throw new Error(`missing required string parameter: ${field}`);
   }
   return value;
+}
+
+const TODO_STATUSES = ['open', 'doing', 'done'];
+const TODO_PRIORITIES = ['high', 'medium', 'low'];
+const TODO_UNAVAILABLE =
+  'todo tools are only available in the desktop app (todo data is stored on the main process)';
+
+function isTodoAvailable(): boolean {
+  return typeof window !== 'undefined' && !!(window as any).electronIO;
+}
+
+/** Compact, token-safe view of a todo item for the agent loop. */
+function todoToSummary(item: TodoItem) {
+  return {
+    id: item.id,
+    title: item.title,
+    status: item.status,
+    priority: item.priority,
+    ...(item.dueDate ? { dueDate: item.dueDate } : {}),
+    ...(item.project ? { project: item.project } : {}),
+    ...(item.tags.length > 0 ? { tags: item.tags } : {}),
+  };
 }
 
 /**
@@ -729,6 +753,178 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           bytes: content.length,
           replacedExisting: !!existing,
         };
+      },
+    },
+    {
+      name: 'todo_list',
+      description:
+        'List todos from the personal todo list (未完成置顶：open → doing → done). ' +
+        'Returns stats plus up to 50 items — enough to pick the id you need, ' +
+        'then act with todo_complete / todo_update_status.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            enum: TODO_STATUSES,
+            description: 'filter by status; omit for all',
+          },
+          keyword: {
+            type: 'string',
+            description: 'text to search in title/description',
+          },
+          limit: {
+            type: 'number',
+            description: `max items to return (default ${SEARCH_RESULT_LIMIT})`,
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        if (!isTodoAvailable()) return { error: TODO_UNAVAILABLE };
+        try {
+          const status = args?.status;
+          if (status !== undefined && !TODO_STATUSES.includes(status)) {
+            return { error: `invalid status: ${status}` };
+          }
+          const result = await todoApi.list({
+            status,
+            keyword:
+              typeof args?.keyword === 'string' && args.keyword.trim()
+                ? args.keyword.trim()
+                : undefined,
+          });
+          const limit = Math.min(
+            Number(args?.limit) || SEARCH_RESULT_LIMIT,
+            SEARCH_RESULT_LIMIT,
+          );
+          return {
+            total: result.stats.total,
+            stats: result.stats,
+            items: result.items.slice(0, limit).map(todoToSummary),
+          };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'todo_create',
+      description:
+        'Create a todo in the personal todo list (新建待办). ' +
+        'Only the title is required; priority defaults to medium.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'todo title (required)' },
+          description: { type: 'string', description: 'optional detail' },
+          priority: {
+            type: 'string',
+            enum: TODO_PRIORITIES,
+            description: 'default medium',
+          },
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'optional tags',
+          },
+          project: {
+            type: 'string',
+            description: 'optional project/category',
+          },
+          dueDate: {
+            type: 'string',
+            description: 'optional due date, YYYY-MM-DD',
+          },
+        },
+        required: ['title'],
+      },
+      execute: async (args) => {
+        if (!isTodoAvailable()) return { error: TODO_UNAVAILABLE };
+        try {
+          const priority = args?.priority;
+          if (priority !== undefined && !TODO_PRIORITIES.includes(priority)) {
+            return { error: `invalid priority: ${priority}` };
+          }
+          const item = await todoApi.create({
+            title: requireString(args, 'title'),
+            description:
+              typeof args?.description === 'string' && args.description.trim()
+                ? args.description.trim()
+                : undefined,
+            priority,
+            tags: Array.isArray(args?.tags)
+              ? args.tags.map((tag) => String(tag))
+              : undefined,
+            project:
+              typeof args?.project === 'string' && args.project.trim()
+                ? args.project.trim()
+                : undefined,
+            dueDate:
+              typeof args?.dueDate === 'string' && args.dueDate.trim()
+                ? args.dueDate.trim()
+                : undefined,
+          });
+          return { ok: true, todo: todoToSummary(item) };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'todo_complete',
+      description:
+        'Mark a todo as done (标记完成). The todo moves to the done state ' +
+        'and out of the pending list.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'todo id (see todo_list)' },
+        },
+        required: ['id'],
+      },
+      execute: async (args) => {
+        if (!isTodoAvailable()) return { error: TODO_UNAVAILABLE };
+        try {
+          const item = await todoApi.update(requireString(args, 'id'), {
+            status: 'done',
+          });
+          return { ok: true, todo: todoToSummary(item) };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'todo_update_status',
+      description:
+        'Update the status of a todo: open (待办), doing (进行中) or done (已完成).',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'todo id (see todo_list)' },
+          status: {
+            type: 'string',
+            enum: TODO_STATUSES,
+            description: 'new status',
+          },
+        },
+        required: ['id', 'status'],
+      },
+      execute: async (args) => {
+        if (!isTodoAvailable()) return { error: TODO_UNAVAILABLE };
+        try {
+          const status = args?.status;
+          if (!TODO_STATUSES.includes(status)) {
+            return { error: `invalid status: ${status}` };
+          }
+          const item = await todoApi.update(requireString(args, 'id'), {
+            status,
+          });
+          return { ok: true, todo: todoToSummary(item) };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
       },
     },
   ];

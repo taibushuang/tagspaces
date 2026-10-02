@@ -32,6 +32,10 @@ import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { useTodoListContext } from '-/components/todo/TodoListContextProvider';
+import TodoListPanel from '-/components/todo/TodoListPanel';
+import { useAiCapabilitiesContext } from '-/components/chat/AiCapabilitiesContextProvider';
+import AiCapabilitiesPanel from '-/components/chat/AiCapabilitiesPanel';
 import {
   AvailablePerspectives,
   hasExternalPerspectiveComponent,
@@ -267,6 +271,21 @@ function RenderPerspective(props: Props) {
   const currentDirectoryPath = currentDirectory?.path;
   const { openPerspectiveOnboarding } = usePerspectiveOnboardingContext();
   const seenOnboardings = useSelector(getSeenPerspectiveOnboardings);
+  const {
+    isTodoOpen,
+    items,
+    stats,
+    loading,
+    error,
+    dataPath,
+    createTodo,
+    updateTodo,
+    removeTodo,
+    exportMarkdown,
+    toggleTodoList,
+  } = useTodoListContext();
+  const { isAiCapabilitiesOpen, toggleAiCapabilities } =
+    useAiCapabilitiesContext();
 
   // Auto-open the perspective's onboarding dialog the first time the user
   // switches into it. Only runs for perspectives that ship an
@@ -332,6 +351,29 @@ function RenderPerspective(props: Props) {
       );
     }
     return wrap(PerspectiveIDs.GRID, <GridPerspectiveAsync />);
+  }
+
+  // 待办"挤占式"展示：打开时整个内容区切换为待办面板，再次点击工具栏按钮恢复。
+  if (isTodoOpen) {
+    return (
+      <TodoListPanel
+        items={items}
+        stats={stats}
+        loading={loading}
+        error={error}
+        dataPath={dataPath}
+        createTodo={createTodo}
+        updateTodo={updateTodo}
+        removeTodo={removeTodo}
+        exportMarkdown={exportMarkdown}
+        onClose={toggleTodoList}
+      />
+    );
+  }
+
+  // AI 技能与工具"挤占式"展示：同样替换内容区（通用设计思路，见 AGENTS.md）。
+  if (isAiCapabilitiesOpen) {
+    return <AiCapabilitiesPanel onClose={toggleAiCapabilities} />;
   }
 
   if (showWelcomePanel) {

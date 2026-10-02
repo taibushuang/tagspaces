@@ -34,12 +34,10 @@ import SettingsFileTypes from '-/components/dialogs/components/SettingsFileTypes
 import SettingsGeneral from '-/components/dialogs/components/SettingsGeneral';
 import SettingsKeyBindings from '-/components/dialogs/components/SettingsKeyBindings';
 import SettingsPerspectives from '-/components/dialogs/components/SettingsPerspectives';
-import SettingsTemplates from '-/components/dialogs/components/SettingsTemplates';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import type { SettingsBackupIntent } from '-/services/export-import-validators';
 import { openURLExternally } from '-/services/utils-io';
-import ArticleIcon from '@mui/icons-material/Article';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import Paper from '@mui/material/Paper';
@@ -54,7 +52,6 @@ import { useTranslation } from 'react-i18next';
 export enum SettingsTab {
   General = 'general',
   FileTypes = 'fileTypes',
-  Templates = 'templates',
   KeyBindings = 'keyBindings',
   Extensions = 'extensions',
   Perspectives = 'perspectives',
@@ -147,21 +144,6 @@ function SettingsDialog(props: Props) {
           label={t('core:fileTypeTab')}
         />
         <Tab
-          value={SettingsTab.Templates}
-          sx={{
-            textTransform: 'unset',
-            justifyContent: 'flex-start',
-          }}
-          data-tid="templatesDialogTID"
-          iconPosition="start"
-          icon={smallScreen ? '' : <ArticleIcon />}
-          label={
-            <span style={{ whiteSpace: 'nowrap' }}>
-              {t('core:templatesTab')}
-            </span>
-          }
-        />
-        <Tab
           value={SettingsTab.KeyBindings}
           sx={{
             textTransform: 'unset',
@@ -232,7 +214,6 @@ function SettingsDialog(props: Props) {
       >
         {currentTab === SettingsTab.General && <SettingsGeneral />}
         {currentTab === SettingsTab.FileTypes && <SettingsFileTypes />}
-        {currentTab === SettingsTab.Templates && <SettingsTemplates />}
         {currentTab === SettingsTab.KeyBindings && <SettingsKeyBindings />}
         {currentTab === SettingsTab.Extensions && <SettingsExtensions />}
         {currentTab === SettingsTab.Perspectives && <SettingsPerspectives />}

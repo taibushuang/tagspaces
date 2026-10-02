@@ -97,7 +97,13 @@ export type Channels =
   | 'getWindowCount'
   | 'flushStorageData'
   | 'fetchTile'
-  | 'toggle-devtools';
+  | 'toggle-devtools'
+  | 'todo:list'
+  | 'todo:create'
+  | 'todo:update'
+  | 'todo:remove'
+  | 'todo:exportMarkdown'
+  | 'todo:getPath';
 
 const electronHandler = {
   ipcRenderer: {

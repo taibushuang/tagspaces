@@ -1141,6 +1141,13 @@
   "aiCapFillRequired": "Please fill in name, description and endpoint URL",
   "aiCapParamsSummary": "Parameters",
   "aiCapEmpty": "Nothing here yet.",
+  "aiKbTab": "Knowledge base",
+  "aiKbNew": "New entry",
+  "aiKbSearch": "Search knowledge base…",
+  "aiKbBuiltIn": "Built-in",
+  "aiKbTitle": "Title",
+  "aiKbContent": "Content (Markdown)",
+  "aiKbEmpty": "Select an entry to read.",
   "aiCapSkillOrganizeName": "Organize & file",
   "aiCapSkillOrganizeDesc": "Sort documents into per-topic folders and tag them; never overwrites existing files.",
   "aiCapSkillSummarizeName": "Hierarchical summaries",
@@ -1330,5 +1337,6 @@
   "todoRecurrenceweekly": "Weekly",
   "todoRecurrencemonthly": "Monthly",
   "todoRecurrenceyearly": "Yearly",
-  "todoRecurrenceInterval": "Interval"
+  "todoRecurrenceInterval": "Interval",
+  "todoClose": "Close"
 }

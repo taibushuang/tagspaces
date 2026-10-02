@@ -18,22 +18,16 @@
 
 import {
   AboutIcon,
-  CancelSubscriptionIcon,
   ForumIcon,
   HelpIcon,
   KeyShortcutsIcon,
   OnboardingIcon,
-  ProTeaserIcon,
-  RestoreIcon,
   TranslationIcon,
   WebClipperIcon,
 } from '-/components/CommonIcons';
 import { useAboutDialogContext } from '-/components/dialogs/hooks/useAboutDialogContext';
 import { useKeyboardDialogContext } from '-/components/dialogs/hooks/useKeyboardDialogContext';
 import { useOnboardingDialogContext } from '-/components/dialogs/hooks/useOnboardingDialogContext';
-import { useProTeaserDialogContext } from '-/components/dialogs/hooks/useProTeaserDialogContext';
-import { Pro } from '-/pro';
-import { isIapAvailable, restoreProPurchase } from '-/services/iap';
 import { AppDispatch } from '-/reducers/app';
 import {
   actions as SettingsActions,
@@ -48,7 +42,6 @@ import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
-import { useTheme } from '@mui/material/styles';
 import Links from 'assets/links';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
@@ -56,14 +49,12 @@ import SidePanelTitle from './SidePanelTitle';
 
 function HelpFeedbackPanel() {
   const { t } = useTranslation();
-  const theme = useTheme();
   const desktopMode = useSelector(isDesktopMode);
   const howToStartHidden = useSelector(isHowToStartHidden);
   const dispatch: AppDispatch = useDispatch();
   const { openAboutDialog } = useAboutDialogContext();
   const { openOnboardingDialog } = useOnboardingDialogContext();
   const { openKeyboardDialog } = useKeyboardDialogContext();
-  const { openProTeaserDialog } = useProTeaserDialogContext();
 
   return (
     <Box
@@ -172,43 +163,14 @@ function HelpFeedbackPanel() {
           </ListItemButton>
         </ListItem>
         <Divider />
-        {isIapAvailable() ? (
-          // Mobile Pro is a one-time non-consumable IAP — there is no
-          // subscription to cancel. Offer Restore Purchases instead, gated
-          // on IAP availability (not on Pro) so a reinstalled user can restore
-          // before the entitlement has been re-applied. The billing-free Lite
-          // APK reports IAP unavailable, so the button is hidden there.
-          <ListItem disablePadding>
-            <ListItemButton onClick={() => restoreProPurchase()}>
-              <ListItemIcon>
-                <RestoreIcon />
-              </ListItemIcon>
-              <ListItemText>{t('peri:restorePurchases')}</ListItemText>
-            </ListItemButton>
-          </ListItem>
-        ) : (
-          Pro && (
-            <ListItem disablePadding>
-              <ListItemButton
-                onClick={() =>
-                  openURLExternally(Links.links.cancelSubscription, true)
-                }
-              >
-                <ListItemIcon>
-                  <CancelSubscriptionIcon />
-                </ListItemIcon>
-                <ListItemText>{t('core:cancelSubscription')}</ListItemText>
-              </ListItemButton>
-            </ListItem>
-          )
-        )}
-        <Divider />
         <ListItem disablePadding>
-          <ListItemButton onClick={() => openProTeaserDialog()}>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.helpTranslating, true)}
+          >
             <ListItemIcon>
-              <ProTeaserIcon />
+              <TranslationIcon />
             </ListItemIcon>
-            <ListItemText>{t('achieveMore') + ' TagSpaces Pro'}</ListItemText>
+            <ListItemText>{t('core:helpWithTranslation')}</ListItemText>
           </ListItemButton>
         </ListItem>
       </List>

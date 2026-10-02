@@ -31,7 +31,11 @@ import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
 import { Pro } from '-/pro';
 import { AppDispatch } from '-/reducers/app';
 import { getLocations } from '-/reducers/locations';
-import { actions as SettingsActions, getSettings } from '-/reducers/settings';
+import {
+  actions as SettingsActions,
+  getSettings,
+  isHideProFeatures,
+} from '-/reducers/settings';
 import {
   TransferEnvelope,
   TransferSection,
@@ -108,6 +112,7 @@ function ExportImportPanel(props: Props) {
   const { addLocations } = useCurrentLocationContext();
 
   const hasPro = Boolean(Pro && Pro.UI);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   // Locations export/import is a free feature; only saved searches stay Pro.
   const sectionIsPro = (s: TransferSection) => s === 'searches';
   const sectionEnabled = (s: TransferSection) => !sectionIsPro(s) || hasPro;
@@ -480,6 +485,9 @@ function ExportImportPanel(props: Props) {
   };
 
   const renderSection = (s: TransferSection) => {
+    if (hideProFeatures && sectionIsPro(s)) {
+      return null; // saved-searches transfer is a Pro feature — hidden
+    }
     const enabledHere = sectionEnabled(s);
     const isInvalid = mode === 'import' && invalidSections.includes(s);
     const presentInImport =

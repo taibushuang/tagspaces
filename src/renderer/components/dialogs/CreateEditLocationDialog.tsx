@@ -718,22 +718,24 @@ function CreateEditLocationDialog(props: Props) {
                 </FormControl>
               )}
               {content}
-              <WorkSpacesDropdown
-                disabled={!Pro}
-                dataTid="locationWorkspaceTID"
-                workSpaceId={workSpaceId}
-                setWorkSpaceId={setWorkSpaceId}
-                workSpaces={workSpaces}
-                label={
-                  <>
-                    {t('core:workspace')}
-                    <ProLabel />
-                  </>
-                }
-                onOpenNewWorkspace={() =>
-                  workSpacesContext.openNewWorkspaceDialog()
-                }
-              />
+              {!hideProFeatures && (
+                <WorkSpacesDropdown
+                  disabled={!Pro}
+                  dataTid="locationWorkspaceTID"
+                  workSpaceId={workSpaceId}
+                  setWorkSpaceId={setWorkSpaceId}
+                  workSpaces={workSpaces}
+                  label={
+                    <>
+                      {t('core:workspace')}
+                      <ProLabel />
+                    </>
+                  }
+                  onOpenNewWorkspace={() =>
+                    workSpacesContext.openNewWorkspaceDialog()
+                  }
+                />
+              )}
               <FormControlLabel
                 labelPlacement="start"
                 sx={{ justifyContent: 'space-between', marginLeft: 0 }}
@@ -823,32 +825,34 @@ function CreateEditLocationDialog(props: Props) {
                   }
                 />
               )}
-              <FormControlLabel
-                labelPlacement="start"
-                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
-                control={
-                  <TsSwitch
-                    // disabled={!Pro}
-                    data-tid="reloadOnFocusTID"
-                    name="reloadOnFocus"
-                    checked={reloadOnFocus}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setReloadOnFocus(event.target.checked)
-                    }
-                  />
-                }
-                label={
-                  <>
-                    {t('core:reloadOnFocus')}
-                    <InfoIcon
-                      tooltip={t(
-                        'Reloads the current folder, when the app regains focus in order to show changes which may have happened in the background.',
-                      )}
+              {!hideProFeatures && (
+                <FormControlLabel
+                  labelPlacement="start"
+                  sx={{ justifyContent: 'space-between', marginLeft: 0 }}
+                  control={
+                    <TsSwitch
+                      // disabled={!Pro}
+                      data-tid="reloadOnFocusTID"
+                      name="reloadOnFocus"
+                      checked={reloadOnFocus}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                        setReloadOnFocus(event.target.checked)
+                      }
                     />
-                    <ProLabel />
-                  </>
-                }
-              />
+                  }
+                  label={
+                    <>
+                      {t('core:reloadOnFocus')}
+                      <InfoIcon
+                        tooltip={t(
+                          'Reloads the current folder, when the app regains focus in order to show changes which may have happened in the background.',
+                        )}
+                      />
+                      <ProLabel />
+                    </>
+                  }
+                />
+              )}
             </FormGroup>
           </AccordionDetails>
         </Accordion>
@@ -863,28 +867,30 @@ function CreateEditLocationDialog(props: Props) {
           </AccordionSummary>
           <AccordionDetails>
             <FormGroup>
-              <FormControlLabel
-                labelPlacement="start"
-                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
-                control={
-                  <TsSwitch
-                    disabled={!Pro}
-                    data-tid="changeReadOnlyMode"
-                    name="isReadOnly"
-                    checked={isReadOnly}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setIsReadOnly(event.target.checked)
-                    }
-                  />
-                }
-                label={
-                  <>
-                    {t('core:readonlyModeSwitch')}
-                    <ProLabel />
-                  </>
-                }
-              />
-              {devMode && (
+              {!hideProFeatures && (
+                <FormControlLabel
+                  labelPlacement="start"
+                  sx={{ justifyContent: 'space-between', marginLeft: 0 }}
+                  control={
+                    <TsSwitch
+                      disabled={!Pro}
+                      data-tid="changeReadOnlyMode"
+                      name="isReadOnly"
+                      checked={isReadOnly}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                        setIsReadOnly(event.target.checked)
+                      }
+                    />
+                  }
+                  label={
+                    <>
+                      {t('core:readonlyModeSwitch')}
+                      <ProLabel />
+                    </>
+                  }
+                />
+              )}
+              {devMode && !hideProFeatures && (
                 <FormControlLabel
                   disabled={
                     !Pro ||
@@ -926,27 +932,29 @@ function CreateEditLocationDialog(props: Props) {
                 }
                 label={<>{t('core:disableThumbnailGeneration')}</>}
               />
-              <FormControlLabel
-                labelPlacement="start"
-                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
-                control={
-                  <TsSwitch
-                    disabled={!Pro}
-                    data-tid="disableIndexingTID"
-                    name="disableIndexing"
-                    checked={disableIndexing}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setIndexDisable(event.target.checked)
-                    }
-                  />
-                }
-                label={
-                  <>
-                    {t('core:disableIndexing')}
-                    <ProLabel />
-                  </>
-                }
-              />
+              {!hideProFeatures && (
+                <FormControlLabel
+                  labelPlacement="start"
+                  sx={{ justifyContent: 'space-between', marginLeft: 0 }}
+                  control={
+                    <TsSwitch
+                      disabled={!Pro}
+                      data-tid="disableIndexingTID"
+                      name="disableIndexing"
+                      checked={disableIndexing}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                        setIndexDisable(event.target.checked)
+                      }
+                    />
+                  }
+                  label={
+                    <>
+                      {t('core:disableIndexing')}
+                      <ProLabel />
+                    </>
+                  }
+                />
+              )}
               <FormControlLabel
                 labelPlacement="start"
                 sx={{ justifyContent: 'space-between', marginLeft: 0 }}

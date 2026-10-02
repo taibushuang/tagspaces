@@ -172,7 +172,7 @@ function StoredSearches(props: Props) {
   const folderOpenExpanded = filterActive || props.folderOpenHistory;
 
   const showSearchesSection = !filterActive || !noSearchesFound;
-  const showBookmarksSection = !filterActive || bookmarksAvailable;
+  const showBookmarksSection = Pro && (!filterActive || bookmarksAvailable);
   const showFileOpenSection = !filterActive || openedFilesAvailable;
   const showFileEditSection = !filterActive || editedFilesAvailable;
   const showFolderOpenSection = !filterActive || openedFoldersAvailable;

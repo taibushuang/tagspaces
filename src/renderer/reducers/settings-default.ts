@@ -67,7 +67,9 @@ export default {
   maxSearchResult: 1000,
   desktopMode,
   devMode: AppConfig.ExtDevMode ? AppConfig.ExtDevMode : false,
-  hideProFeatures: false,
+  // Pro features are not available in this build; hide all Pro-related UI
+  // by default (can be overridden by the ExtHideProFeatures ext config).
+  hideProFeatures: true,
   autoSaveDescription: false,
   saveTagInLocation:
     typeof AppConfig.ExtUseLocationTags === 'undefined'

@@ -42,7 +42,7 @@ import { useAiGenerationDialogContext } from '-/components/dialogs/hooks/useAiGe
 import { useAiAgentDialogContext } from '-/components/dialogs/hooks/AiAgentDialogContextProvider';
 import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
 import { useFileVersionCleanupDialogContext } from '-/components/dialogs/hooks/useFileVersionCleanupDialogContext';
-import useTodoListContext from '-/components/todo/useTodoListContext';
+import { useTodoListContext } from '-/components/todo/TodoListContextProvider';
 import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
@@ -107,7 +107,7 @@ function MainToolbar(props: Props) {
   const { openDeleteMultipleEntriesDialog } =
     useDeleteMultipleEntriesDialogContext();
   const { openFileVersionCleanupDialog } = useFileVersionCleanupDialogContext();
-  const { openTodoListDialog, pendingCount } = useTodoListContext();
+  const { isTodoOpen, toggleTodoList, pendingCount } = useTodoListContext();
 
   function showProperties() {
     if (openedEntry?.path === currentDirectoryPath) {
@@ -228,7 +228,7 @@ function MainToolbar(props: Props) {
             <TagIcon />
           </TsToolbarButton>
         )}
-        {!currentLocation?.isReadOnly && (
+        {!currentLocation?.isReadOnly && !hideProFeatures && (
           <TsToolbarButton
             tooltip={t('core:aiGenSelectedEntries')}
             title={t('core:aiSettingsTab')}
@@ -356,9 +356,9 @@ function MainToolbar(props: Props) {
             tooltip={t('core:todoTitle')}
             title={t('core:todoTitle')}
             data-tid={`${prefixDataTID}PerspectiveTodo`}
-            onClick={() => openTodoListDialog()}
+            onClick={() => toggleTodoList()}
           >
-            <TodoIcon />
+            <TodoIcon color={isTodoOpen ? 'primary' : 'inherit'} />
           </TsToolbarButton>
         </Badge>
         <TsToolbarButton

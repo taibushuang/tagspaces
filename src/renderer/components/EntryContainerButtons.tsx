@@ -26,7 +26,11 @@ import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import TsSwitch from '-/components/TsSwitch';
 import { Pro } from '-/pro';
-import { isDesktopMode, isRevisionsEnabled } from '-/reducers/settings';
+import {
+  isDesktopMode,
+  isHideProFeatures,
+  isRevisionsEnabled,
+} from '-/reducers/settings';
 import { Box, ButtonGroup } from '@mui/material';
 import TsTooltip from '-/components/TsTooltip';
 import React from 'react';
@@ -52,6 +56,7 @@ function EntryContainerButtons(props: EntryContainerButtonsProps) {
   const { showNotification } = useNotificationContext();
   const revisionsEnabled = useSelector(isRevisionsEnabled);
   const desktopMode = useSelector(isDesktopMode);
+  const hideProFeatures = useSelector(isHideProFeatures);
 
   const cLocation = findLocation(openedEntry.locationID);
 
@@ -71,25 +76,27 @@ function EntryContainerButtons(props: EntryContainerButtonsProps) {
     }
   };
 
-  const autoSave = isEditable(openedEntry) && revisionsEnabled && (
-    <TsTooltip
-      title={
-        t('core:autosave') +
-        (!Pro ? ' - ' + t('core:thisFunctionalityIsAvailableInPro') : '')
-      }
-    >
-      <span>
-        <TsSwitch
-          data-tid="autoSaveTID"
-          checked={openedEntry.meta && openedEntry.meta.autoSave}
-          onChange={toggleAutoSave}
-          size="small"
-          name="autoSave"
-          disabled={!Pro}
-        />
-      </span>
-    </TsTooltip>
-  );
+  const autoSave = !hideProFeatures &&
+    isEditable(openedEntry) &&
+    revisionsEnabled && (
+      <TsTooltip
+        title={
+          t('core:autosave') +
+          (!Pro ? ' - ' + t('core:thisFunctionalityIsAvailableInPro') : '')
+        }
+      >
+        <span>
+          <TsSwitch
+            data-tid="autoSaveTID"
+            checked={openedEntry.meta && openedEntry.meta.autoSave}
+            onChange={toggleAutoSave}
+            size="small"
+            name="autoSave"
+            disabled={!Pro}
+          />
+        </span>
+      </TsTooltip>
+    );
 
   const startSavingFile = () => {
     if (isEditMode) {

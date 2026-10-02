@@ -16,11 +16,8 @@
  *
  */
 import AppConfig from '-/AppConfig';
-import TsButton from '-/components/TsButton';
 import TsTextField from '-/components/TsTextField';
-import { SettingsTab } from '-/components/dialogs/SettingsDialog';
 import TemplatesDropDown from '-/components/dialogs/components/TemplatesDropDown';
-import { useSettingsDialogContext } from '-/components/dialogs/hooks/useSettingsDialogContext';
 import { useTargetPathContext } from '-/components/dialogs/hooks/useTargetPathContext';
 import { Pro } from '-/pro';
 import { fileNameValidation } from '-/services/utils-io';
@@ -54,7 +51,6 @@ interface Props {
   haveError: (error: boolean) => void;
   tidPrefix?: string;
   fileType?: TS.FileType;
-  onClose: (event?: Object, reason?: string) => void;
   /**
    * Called when a template tile is clicked. The parent loads the template's
    * name + content into the editable form instead of creating the file
@@ -73,12 +69,10 @@ function CreateFile(props: Props) {
     handleFileNameChange,
     handleFileContentChange,
     haveError,
-    onClose,
     onSelectTemplate,
   } = props;
   const { t } = useTranslation();
   const { targetDirectoryPath } = useTargetPathContext();
-  const { openSettingsDialog } = useSettingsDialogContext();
   const [inputError, setInputError] = useState<boolean>(false);
   const fileContentRef = useRef<HTMLInputElement | null>(null);
   const fileNameRef = useRef<HTMLInputElement | null>(null);
@@ -245,18 +239,6 @@ function CreateFile(props: Props) {
               </Grid>
             ))}
           </Grid>
-          <TsButton
-            size="small"
-            variant="text"
-            sx={{ marginTop: '10px' }}
-            onClick={() => {
-              onClose();
-              openSettingsDialog(SettingsTab.Templates);
-            }}
-            disabled={!Pro}
-          >
-            {t('manageTemplates')}
-          </TsButton>
         </Box>
       )}
     </Grid>

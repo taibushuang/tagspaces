@@ -16,16 +16,9 @@
  *
  */
 
-import {
-  CreateFileIcon,
-  ExportIcon,
-  HelpIcon,
-  ImportIcon,
-} from '-/components/CommonIcons';
-import { ProLabel } from '-/components/HelperComponents';
+import { CreateFileIcon, HelpIcon } from '-/components/CommonIcons';
 import TsMenuList from '-/components/TsMenuList';
 import { useSearchQueryContext } from '-/hooks/useSearchQueryContext';
-import { Pro } from '-/pro';
 import { openURLExternally } from '-/services/utils-io';
 import { Box } from '@mui/material';
 import ListItemIcon from '@mui/material/ListItemIcon';
@@ -61,52 +54,6 @@ function SearchMenu(props: Props) {
         <CreateFileIcon />
       </ListItemIcon>
       <ListItemText primary={t('core:createNewSavedSearchTitle')} />
-    </MenuItem>,
-  );
-  menuItems.push(
-    <MenuItem
-      disabled={!Pro}
-      key="exportSavedSearchTID"
-      data-tid="exportSavedSearchTID"
-      onClick={() => {
-        props.onClose();
-        props.exportSearches();
-      }}
-    >
-      <ListItemIcon>
-        <ExportIcon />
-      </ListItemIcon>
-      <ListItemText
-        primary={
-          <>
-            {t('core:exportSavedSearch')}
-            <ProLabel />
-          </>
-        }
-      />
-    </MenuItem>,
-  );
-  menuItems.push(
-    <MenuItem
-      disabled={!Pro}
-      key="importSavedSearchTID"
-      data-tid="importSavedSearchTID"
-      onClick={() => {
-        props.onClose();
-        props.importSearches();
-      }}
-    >
-      <ListItemIcon>
-        <ImportIcon />
-      </ListItemIcon>
-      <ListItemText
-        primary={
-          <>
-            {t('core:importSavedSearch')}
-            <ProLabel />
-          </>
-        }
-      />
     </MenuItem>,
   );
   menuItems.push(

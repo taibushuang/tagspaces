@@ -106,6 +106,7 @@ import {
 } from 'react-leaflet';
 import { useSelector } from 'react-redux';
 import { Pro } from '../pro';
+import { isHideProFeatures } from '-/reducers/settings';
 
 const ThumbnailTextField = styled(TsTextField)(({ theme }) => ({
   [`& .${inputBaseClasses.root}`]: {
@@ -148,6 +149,7 @@ function EntryProperties({ tileServer }: Props) {
       )
     : undefined;
   const tagDelimiter: string = useSelector(getTagDelimiter);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
 
   const dirProps = useRef<TS.DirProp>();
   const fileNameRef = useRef<HTMLInputElement>(null);
@@ -884,7 +886,7 @@ function EntryProperties({ tileServer }: Props) {
             />
           </Grid>
         )}
-        {!openedEntry.isFile && (
+        {!hideProFeatures && !openedEntry.isFile && (
           <Grid size={12} sx={{ marginTop: '5px' }}>
             <TsTextField
               name="path"
@@ -1024,7 +1026,8 @@ function EntryProperties({ tileServer }: Props) {
                         spacing={0}
                         sx={{ alignItems: 'center' }}
                       >
-                        {!location.isReadOnly &&
+                        {!hideProFeatures &&
+                          !location.isReadOnly &&
                           !isEditMode &&
                           editName === undefined && (
                             <ProTooltip tooltip={t('changeThumbnail')}>
@@ -1051,7 +1054,9 @@ function EntryProperties({ tileServer }: Props) {
                             minWidth: 150,
                             marginBottom: '5px',
                           }}
-                          onClick={openThumbFilesDialog}
+                          onClick={
+                            hideProFeatures ? undefined : openThumbFilesDialog
+                          }
                         />
                       </Stack>
                     </InputAdornment>
@@ -1080,7 +1085,8 @@ function EntryProperties({ tileServer }: Props) {
                           spacing={0}
                           sx={{ alignItems: 'center' }}
                         >
-                          {!location.isReadOnly &&
+                          {!hideProFeatures &&
+                            !location.isReadOnly &&
                             !isEditMode &&
                             editName === undefined && (
                               <ProTooltip tooltip={t('changeBackgroundImage')}>
@@ -1108,7 +1114,9 @@ function EntryProperties({ tileServer }: Props) {
                               minWidth: 150,
                               marginBottom: '5px',
                             }}
-                            onClick={openBgndImgDialog}
+                            onClick={
+                              hideProFeatures ? undefined : openBgndImgDialog
+                            }
                           />
                         </Stack>
                       </InputAdornment>
@@ -1170,7 +1178,7 @@ function EntryProperties({ tileServer }: Props) {
           onClose={() => setShowSharingLinkDialog(false)}
         />
       )}
-      {CustomBackgroundDialog && (
+      {CustomBackgroundDialog && !hideProFeatures && (
         <CustomBackgroundDialog
           color={openedEntry.meta?.color}
           open={displayColorPicker}

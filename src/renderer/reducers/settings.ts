@@ -1135,10 +1135,12 @@ export const getDesktopMode = (state: any) => {
 };
 export const isDevMode = (state: any) =>
   AppConfig.ExtDevMode ? AppConfig.ExtDevMode : state.settings.devMode;
-export const isHideProFeatures = (state: any) =>
+export const isHideProFeatures = () =>
+  // Pro features are not available in this build — always hide Pro-related UI
+  // (built-in switch). Only an explicit ext config can override this.
   AppConfig.ExtHideProFeatures !== undefined
     ? AppConfig.ExtHideProFeatures
-    : state.settings.hideProFeatures;
+    : true;
 export const isAutoSaveDescription = (state: any) =>
   state.settings.autoSaveDescription;
 export const isRevisionsEnabled = (state: any) =>

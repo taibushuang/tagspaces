@@ -59,6 +59,7 @@ function AiGenDescButton(props: Props) {
   const defaultAiProvider: AIProvider = useSelector(getDefaultAIProvider);
   const disabled = isLoading || !Pro || !defaultAiProvider; //!getEntryModel(openedEntry?.name, defaultAiProvider);
   if (
+    !Pro ||
     !openedEntry ||
     !openedEntry.isFile ||
     findLocation(openedEntry.locationID)?.isReadOnly

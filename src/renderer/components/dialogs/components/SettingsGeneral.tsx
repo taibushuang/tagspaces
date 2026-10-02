@@ -25,7 +25,7 @@ import {
   EditIcon,
   ReloadIcon,
 } from '-/components/CommonIcons';
-import { BetaLabel, ProLabel } from '-/components/HelperComponents';
+import { BetaLabel } from '-/components/HelperComponents';
 import InfoIcon from '-/components/InfoIcon';
 import PerspectiveSelector from '-/components/PerspectiveSelector';
 import TsTooltip from '-/components/TsTooltip';
@@ -42,7 +42,6 @@ import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useHistoryContext } from '-/hooks/useHistoryContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { PerspectiveIDs } from '-/perspectives';
-import { Pro } from '-/pro';
 import { AppDispatch } from '-/reducers/app';
 import {
   actions as SettingsActions,
@@ -53,7 +52,6 @@ import {
   getPersistTagsInSidecarFile,
   getSettings,
   isDevMode,
-  isHideProFeatures,
 } from '-/reducers/settings';
 import { actions as LocationActions } from '-/reducers/locations';
 import {
@@ -86,7 +84,6 @@ import Typography from '@mui/material/Typography';
 import {
   Suspense,
   lazy,
-  useContext,
   useEffect,
   useMemo,
   useReducer,
@@ -121,7 +118,6 @@ function SettingsGeneral() {
   const { openConfirmDialog, showNotification } = useNotificationContext();
   const { delAllHistory } = useHistoryContext();
   const devMode = useSelector(isDevMode);
-  const hideProFeatures = useSelector(isHideProFeatures);
   const encryptAtRest = useSelector(getEncryptCredentialsAtRest);
   const [credKeyStatus, setCredKeyStatus] = useState<{
     available: boolean;
@@ -134,12 +130,6 @@ function SettingsGeneral() {
   const tileServers: Array<TS.MapTileServer> = useSelector(getMapTileServers);
   const [tileServerDialog, setTileServerDialog] = useState<any>(undefined);
   const wsAlive = useRef<boolean>(null);
-  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
-    ? useContext<TS.WorkSpacesContextData>(
-        Pro.contextProviders.WorkSpacesContext,
-      )
-    : undefined;
-  const workSpaces = workSpacesContext?.getWorkSpaces() ?? [];
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
 
   useEffect(() => {
@@ -426,12 +416,6 @@ function SettingsGeneral() {
       ),
     );
 
-  const setSaveTagInLocation = (saveTagInLocation) =>
-    dispatch(SettingsActions.setSaveTagInLocation(saveTagInLocation));
-
-  const setRevisionsEnabled = (enabled) =>
-    dispatch(SettingsActions.setRevisionsEnabled(enabled));
-
   const setPrefixTagContainer = (prefix) =>
     dispatch(SettingsActions.setPrefixTagContainer(prefix));
 
@@ -459,12 +443,6 @@ function SettingsGeneral() {
     event.preventDefault();
     event.stopPropagation();
     setTileServerDialog({ ...tileServer, isDefault });
-  };
-
-  const editWorkSpacesClick = (event, workSpace?: TS.WorkSpace) => {
-    event.preventDefault();
-    event.stopPropagation();
-    workSpacesContext.openNewWorkspaceDialog(workSpace);
   };
 
   const geoTaggingFormatDisabled = AppConfig.ExtGeoTaggingFormat !== undefined;
@@ -944,33 +922,6 @@ function SettingsGeneral() {
           ),
         },
         {
-          label: t('core:autoSaveDescription'),
-          jsx: (
-            <ListItem>
-              <ListItemText
-                primary={
-                  <>
-                    {t('core:autoSaveDescription')}
-                    <ProLabel />
-                  </>
-                }
-              />
-              <TsSwitch
-                data-tid="settingsAutoSaveDescriptionTID"
-                disabled={!Pro}
-                onClick={() =>
-                  dispatch(
-                    SettingsActions.setAutoSaveDescription(
-                      !settings.autoSaveDescription,
-                    ),
-                  )
-                }
-                checked={settings.autoSaveDescription}
-              />
-            </ListItem>
-          ),
-        },
-        {
           label: t('core:tagBackgroundColor'),
           jsx: (
             <ListItem>
@@ -1362,121 +1313,6 @@ function SettingsGeneral() {
           ),
         },
         {
-          label: t('core:setRevisionsEnabled'),
-          description: t('core:setRevisionsEnabledHelp'),
-          jsx: (
-            <ListItem>
-              <ListItemText
-                primary={
-                  <>
-                    {t('setRevisionsEnabled')}
-                    <InfoIcon tooltip={t('core:setRevisionsEnabledHelp')} />
-                    <ProLabel />
-                  </>
-                }
-              />
-              <TsSwitch
-                data-tid="setRevisionsEnabledTID"
-                disabled={!Pro}
-                onClick={() =>
-                  setRevisionsEnabled(!settings.isRevisionsEnabled)
-                }
-                checked={settings.isRevisionsEnabled}
-              />
-            </ListItem>
-          ),
-        },
-        {
-          label: t('enableTagsFromLocation'),
-          description: t('core:enableTagsFromLocationHelp'),
-          jsx: (
-            <ListItem
-              title={
-                AppConfig.ExtUseLocationTags !== undefined
-                  ? t('core:settingExternallyConfigured')
-                  : ''
-              }
-            >
-              <ListItemText
-                primary={
-                  <>
-                    {t('enableTagsFromLocation')}
-                    <InfoIcon tooltip={t('core:enableTagsFromLocationHelp')} />
-                    <ProLabel />
-                  </>
-                }
-              />
-              <TsSwitch
-                data-tid="saveTagInLocationTID"
-                disabled={!Pro || AppConfig.ExtUseLocationTags !== undefined}
-                onClick={() => {
-                  Pro && setSaveTagInLocation(!settings.saveTagInLocation);
-                }}
-                checked={
-                  AppConfig.ExtUseLocationTags !== undefined
-                    ? AppConfig.ExtUseLocationTags
-                    : settings.saveTagInLocation
-                }
-              />
-            </ListItem>
-          ),
-        },
-        {
-          label: t('core:workspaces'),
-          jsx: (
-            <>
-              <ListItem>
-                <ListItemText
-                  primary={
-                    <>
-                      {t('core:workspaces')}
-                      <ProLabel />
-                    </>
-                  }
-                />
-                <TsButton
-                  disabled={!Pro}
-                  onClick={(event) => editWorkSpacesClick(event)}
-                  startIcon={<CreateFileIcon />}
-                >
-                  {t('createWorkspace')}
-                </TsButton>
-              </ListItem>
-              {workSpaces && workSpaces.length > 0 && (
-                <List
-                  sx={{
-                    padding: '5px',
-                    paddingLeft: '10px',
-                    backgroundColor: '#d3d3d34a',
-                    borderRadius: AppConfig.defaultCSSRadius,
-                  }}
-                  dense
-                >
-                  {workSpaces.map((workSpace) => (
-                    <ListItem key={workSpace.uuid}>
-                      <ListItemText
-                        primary={`${workSpace.fullName} - ${workSpace.shortName}`}
-                      />
-                      <TsIconButton
-                        aria-label="Edit workspace"
-                        aria-haspopup="true"
-                        edge="end"
-                        disabled={!Pro}
-                        data-tid={`workSpaceEdit_${workSpace.shortName}`}
-                        onClick={(event) =>
-                          editWorkSpacesClick(event, workSpace)
-                        }
-                      >
-                        <EditIcon />
-                      </TsIconButton>
-                    </ListItem>
-                  ))}
-                </List>
-              )}
-            </>
-          ),
-        },
-        {
           label: t('core:fileOpenHistory'),
           jsx: (
             <ListItem>
@@ -1706,28 +1542,6 @@ function SettingsGeneral() {
             </>
           ),
         },
-        !Pro && {
-          label: t('core:hideProFeatures'),
-          jsx: (
-            <ListItem
-              title={
-                AppConfig.ExtHideProFeatures !== undefined
-                  ? t('core:settingExternallyConfigured')
-                  : ''
-              }
-            >
-              <ListItemText primary={t('core:hideProFeatures')} />
-              <TsSwitch
-                data-tid="settingsHideProFeatures"
-                disabled={AppConfig.ExtHideProFeatures !== undefined}
-                onClick={() =>
-                  dispatch(SettingsActions.setHideProFeatures(!hideProFeatures))
-                }
-                checked={hideProFeatures}
-              />
-            </ListItem>
-          ),
-        },
         {
           label: t('enableDevMode'),
           description: t('core:devModeTooltip'),
@@ -1845,9 +1659,7 @@ function SettingsGeneral() {
       t,
       settings,
       devMode,
-      hideProFeatures,
       tileServers,
-      workSpaces,
       wsAlive.current,
       maxCollectedTag,
       dispatch,

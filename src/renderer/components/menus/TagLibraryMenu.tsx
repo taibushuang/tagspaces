@@ -29,7 +29,7 @@ import { SettingsTab } from '-/components/dialogs/SettingsDialog';
 import { useSettingsDialogContext } from '-/components/dialogs/hooks/useSettingsDialogContext';
 import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
 import { Pro } from '-/pro';
-import { getSaveTagInLocation } from '-/reducers/settings';
+import { getSaveTagInLocation, isHideProFeatures } from '-/reducers/settings';
 import { openURLExternally } from '-/services/utils-io';
 import { Box } from '@mui/material';
 import ListItemIcon from '@mui/material/ListItemIcon';
@@ -55,6 +55,7 @@ function TagLibraryMenu(props: Props) {
   const { openSettingsDialog } = useSettingsDialogContext();
 
   const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const fileInput = useRef<HTMLInputElement>(null);
 
   function handleExportTagGroup() {
@@ -99,31 +100,33 @@ function TagLibraryMenu(props: Props) {
             </ListItemIcon>
             <ListItemText primary={t('core:createTagGroupTitle')} />
           </MenuItem>
-          <ProTooltip
-            placement="right"
-            tooltip={t('core:enableTagsFromLocationHelp')}
-          >
-            <MenuItem
-              disabled={!Pro || !saveTagInLocation}
-              data-tid="refreshTagGroups"
-              onClick={() => {
-                refreshTagLibrary(true);
-                props.onClose();
-              }}
+          {!hideProFeatures && (
+            <ProTooltip
+              placement="right"
+              tooltip={t('core:enableTagsFromLocationHelp')}
             >
-              <ListItemIcon>
-                <ReloadIcon />
-              </ListItemIcon>
-              <ListItemText
-                primary={
-                  <>
-                    {t('core:refreshTagGroups')}
-                    <ProLabel />
-                  </>
-                }
-              />
-            </MenuItem>
-          </ProTooltip>
+              <MenuItem
+                disabled={!Pro || !saveTagInLocation}
+                data-tid="refreshTagGroups"
+                onClick={() => {
+                  refreshTagLibrary(true);
+                  props.onClose();
+                }}
+              >
+                <ListItemIcon>
+                  <ReloadIcon />
+                </ListItemIcon>
+                <ListItemText
+                  primary={
+                    <>
+                      {t('core:refreshTagGroups')}
+                      <ProLabel />
+                    </>
+                  }
+                />
+              </MenuItem>
+            </ProTooltip>
+          )}
           <MenuItem data-tid="importTagGroup" onClick={handleImportTagGroup}>
             <ListItemIcon>
               <ImportIcon />

@@ -45,6 +45,7 @@ import {
 } from './util';
 import { readMacOSTags } from './macUserTags';
 import registerSecureStorageEvents from './secureStorage';
+import initTodoStore from './todoStoreIpc';
 
 // let watcher: FSWatcher;
 const progress: Record<string, any> = {};
@@ -89,6 +90,7 @@ function isSafePath(filePath) {
 
 export default function loadMainEvents() {
   registerSecureStorageEvents();
+  initTodoStore();
 
   ipcMain.on('reloadWindow', () => {
     const mainWindow = BrowserWindow.getAllWindows();

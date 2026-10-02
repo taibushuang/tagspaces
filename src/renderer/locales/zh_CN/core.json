@@ -1141,6 +1141,13 @@
   "aiCapFillRequired": "请填写名称、描述和端点 URL",
   "aiCapParamsSummary": "参数",
   "aiCapEmpty": "还没有内容。",
+  "aiKbTab": "知识库",
+  "aiKbNew": "新建条目",
+  "aiKbSearch": "搜索知识库…",
+  "aiKbBuiltIn": "内置",
+  "aiKbTitle": "标题",
+  "aiKbContent": "内容（Markdown）",
+  "aiKbEmpty": "选择左侧条目浏览。",
   "aiCapSkillOrganizeName": "整理归档",
   "aiCapSkillOrganizeDesc": "把文档按主题分拣到对应文件夹并打标签，从不覆盖已有文件。",
   "aiCapSkillSummarizeName": "分层汇总",
@@ -1323,5 +1330,6 @@
   "todoRecurrenceweekly": "每周",
   "todoRecurrencemonthly": "每月",
   "todoRecurrenceyearly": "每年",
-  "todoRecurrenceInterval": "间隔"
+  "todoRecurrenceInterval": "间隔",
+  "todoClose": "关闭"
 }

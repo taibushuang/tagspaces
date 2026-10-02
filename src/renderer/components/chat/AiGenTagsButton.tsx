@@ -75,6 +75,7 @@ function AiGenTagsButton(props: Props) {
   );
 
   if (
+    !Pro ||
     !generateEntries ||
     !defaultAiProvider ||
     !extensionSupported ||

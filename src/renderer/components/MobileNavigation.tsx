@@ -46,7 +46,6 @@ import HelpFeedbackPanel from '-/components/HelpFeedbackPanel';
 import { BetaLabel, ProLabel } from '-/components/HelperComponents';
 import InfoIcon from '-/components/InfoIcon';
 import LocationManager from '-/components/LocationManager';
-import ProTeaser from '-/components/ProTeaser';
 import StoredSearches from '-/components/StoredSearches';
 import TagLibrary from '-/components/TagLibrary';
 import TsButton from '-/components/TsButton';
@@ -122,9 +121,7 @@ function MobileNavigation(props: Props) {
   const keyBindings = useSelector(getKeyBindingObject);
   const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const { currentUser } = useUserContext();
-  const [showTeaserBanner, setShowTeaserBanner] = useState(true);
   const [anchorUser, setAnchorUser] = useState<HTMLButtonElement | null>(null);
-  const showProTeaser = !hideProFeatures && !Pro && showTeaserBanner;
   const { hideDrawer, width, widthVar } = props;
   const widthValue = widthVar
     ? `var(${widthVar}, ${width || 320}px)`
@@ -650,9 +647,6 @@ function MobileNavigation(props: Props) {
             'max(9px, var(--sab, env(safe-area-inset-bottom, 0px)))',
         }}
       >
-        {showProTeaser && (
-          <ProTeaser setShowTeaserBanner={setShowTeaserBanner} />
-        )}
         <Box
           sx={{
             display: 'flex',

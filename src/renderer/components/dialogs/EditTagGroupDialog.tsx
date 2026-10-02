@@ -32,7 +32,7 @@ import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useTagGroupsLocationContext } from '-/hooks/useTagGroupsLocationContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
 import { Pro } from '-/pro';
-import { getSaveTagInLocation } from '-/reducers/settings';
+import { getSaveTagInLocation, isHideProFeatures } from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
 import { Box, Paper, useMediaQuery, useTheme } from '@mui/material';
@@ -64,6 +64,7 @@ function EditTagGroupDialog(props: Props) {
   const { removeLocationTagGroup } = useTagGroupsLocationContext();
   const { t } = useTranslation();
   const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const [workSpaceId, setWorkSpaceId] = useState<string>(
     selectedTagGroupEntry ? selectedTagGroupEntry.workSpaceId || '' : '',
   );
@@ -209,7 +210,7 @@ function EditTagGroupDialog(props: Props) {
           <FormHelperText>{t('core:taggroupTitleHelper')}</FormHelperText>
         )}
       </FormControl>
-      {saveTagInLocation && (
+      {!hideProFeatures && saveTagInLocation && (
         <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
           <TsSelect
             fullWidth
@@ -242,22 +243,26 @@ function EditTagGroupDialog(props: Props) {
           </TsSelect>
         </ListItem>
       )}
-      <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
-        <WorkSpacesDropdown
-          disabled={!Pro}
-          dataTid="taggroupWorkspaceTID"
-          workSpaceId={workSpaceId}
-          setWorkSpaceId={setWorkSpaceId}
-          workSpaces={workSpaces}
-          label={
-            <>
-              {t('core:workspace')}
-              <ProLabel />
-            </>
-          }
-          onOpenNewWorkspace={() => workSpacesContext.openNewWorkspaceDialog()}
-        />
-      </ListItem>
+      {!hideProFeatures && (
+        <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
+          <WorkSpacesDropdown
+            disabled={!Pro}
+            dataTid="taggroupWorkspaceTID"
+            workSpaceId={workSpaceId}
+            setWorkSpaceId={setWorkSpaceId}
+            workSpaces={workSpaces}
+            label={
+              <>
+                {t('core:workspace')}
+                <ProLabel />
+              </>
+            }
+            onOpenNewWorkspace={() =>
+              workSpacesContext.openNewWorkspaceDialog()
+            }
+          />
+        </ListItem>
+      )}
       <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
         <ListItemText primary={t('tagBackgroundColor')} />
         <TransparentBackground>

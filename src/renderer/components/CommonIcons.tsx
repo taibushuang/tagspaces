@@ -393,6 +393,8 @@ export const MainMenuIcon = (props) => (
 
 export { default as VersionCleanupIcon } from '@mui/icons-material/CleaningServicesOutlined';
 
+export { default as TodoIcon } from '@mui/icons-material/Checklist';
+
 export const OllamaIcon = (props) => (
   <SvgIcon {...props}>
     <svg

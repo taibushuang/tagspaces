@@ -27,16 +27,13 @@ import { Badge, Box, Typography } from '@mui/material';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
-import { Pro } from '../pro';
 import versionMeta from '../version.json';
 
 function CustomLogo() {
   const { t } = useTranslation();
   const { openAboutDialog } = useAboutDialogContext();
   const updateAvailable = useSelector(isUpdateAvailable);
-  const tsType = Pro ? 'PRO' : 'LITE';
-  const tsAboutTitle =
-    versionMeta.name + ' ' + tsType + ' ' + versionMeta.version;
+  const tsAboutTitle = versionMeta.name + ' ' + versionMeta.version;
 
   const logo = useMemo(() => {
     let customLogo =
@@ -111,35 +108,18 @@ function CustomLogo() {
             />
           </TsIconButton>
           {AppConfig.showTSVersion && (
-            <>
-              <sup>
-                <Typography
-                  sx={{
-                    display: 'inline',
-                    fontSize: '10px',
-                    marginLeft: '3px',
-                    lineHeight: '16px',
-                  }}
-                >
-                  {'v' + versionMeta.version}
-                </Typography>
-              </sup>
-              <sub>
-                <Typography
-                  sx={
-                    {
-                      display: 'inline',
-                      fontSize: '10px',
-                      marginLeft: '-25px',
-                      lineHeight: '40px',
-                      WebkitAppRegion: 'no-drag',
-                    } as React.CSSProperties & { WebkitAppRegion?: string }
-                  }
-                >
-                  {tsType}
-                </Typography>
-              </sub>
-            </>
+            <sup>
+              <Typography
+                sx={{
+                  display: 'inline',
+                  fontSize: '10px',
+                  marginLeft: '3px',
+                  lineHeight: '16px',
+                }}
+              >
+                {'v' + versionMeta.version}
+              </Typography>
+            </sup>
           )}
         </Badge>
       </TsTooltip>

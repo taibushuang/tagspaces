@@ -17,9 +17,10 @@
  */
 
 /**
- * AI capabilities center: browse/search every tool and skill the agent can
- * use, toggle built-in tools on/off, and add custom HTTP tools and custom
- * prompt skills by hand.
+ * AI capabilities center ("挤占式" inline panel): browse/search every tool
+ * and skill the agent can use, toggle built-in tools on/off, and add custom
+ * HTTP tools and custom prompt skills by hand. Replaces the file-content area
+ * while open (rendered by RenderPerspective), same pattern as TodoListPanel.
  */
 import { createAgentTools } from '-/components/chat/AgentTools';
 import {
@@ -38,10 +39,6 @@ import {
 } from '-/components/chat/agentCapabilities';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import Button from '@mui/material/Button';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import MuiDialogTitle from '@mui/material/DialogTitle';
 import IconButton from '@mui/material/IconButton';
 import Switch from '@mui/material/Switch';
 import Tab from '@mui/material/Tab';
@@ -52,7 +49,7 @@ import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/CloseOutlined';
 import DeleteIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import EditIcon from '@mui/icons-material/EditOutlined';
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 /** One-shot tool metadata for the catalog (execute is never invoked). */
@@ -103,18 +100,17 @@ const BUILTIN_SKILLS: Array<{ id: string; nameKey: string; descKey: string }> =
   ];
 
 interface Props {
-  open: boolean;
   onClose: () => void;
 }
 
-function AiCapabilitiesDialog(props: Props) {
+function AiCapabilitiesPanel(props: Props) {
   const { t } = useTranslation();
-  const { open, onClose } = props;
+  const { onClose } = props;
   const { showNotification } = useNotificationContext();
   const [tab, setTab] = useState<'tools' | 'skills'>('tools');
   const [search, setSearch] = useState('');
   // re-render trigger after storage mutations
-  const [version, setVersion] = useState(0);
+  const [, setVersion] = useState(0);
   const bump = () => setVersion((v) => v + 1);
 
   // tool editor state
@@ -126,36 +122,24 @@ function AiCapabilitiesDialog(props: Props) {
   // skill editor state
   const [skillEditor, setSkillEditor] = useState<CustomSkillDef | null>(null);
 
-  const builtinTools = useMemo(
-    () => (open ? getBuiltinToolMetas() : []),
-    [open, version],
-  );
-  const customTools = useMemo(
-    () => (open ? getCustomTools() : []),
-    [open, version],
-  );
-  const customSkills = useMemo(
-    () => (open ? getCustomSkills() : []),
-    [open, version],
-  );
-  const disabledTools = useMemo(
-    () => new Set(open ? getDisabledTools() : []),
-    [open, version],
-  );
-
-  if (!open) {
-    return null;
-  }
+  // Cheap catalog data — recomputed on every render (version bump forces it).
+  const builtinTools = getBuiltinToolMetas();
+  const customTools = getCustomTools();
+  const customSkills = getCustomSkills();
+  const disabledTools = new Set(getDisabledTools());
 
   const query = search.trim().toLowerCase();
   const matches = (text: string) =>
     !query || text.toLowerCase().includes(query);
 
   const builtinFiltered = builtinTools.filter(
-    (t) => matches(t.name) || matches(t.description),
+    (tool) => matches(tool.name) || matches(tool.description),
   );
   const customToolsFiltered = customTools.filter(
-    (t) => matches(t.displayName) || matches(t.description) || matches(t.name),
+    (tool) =>
+      matches(tool.displayName) ||
+      matches(tool.description) ||
+      matches(tool.name),
   );
   const customSkillsFiltered = customSkills.filter(
     (s) => matches(s.name) || matches(s.instruction),
@@ -331,29 +315,37 @@ function AiCapabilitiesDialog(props: Props) {
   }
 
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      fullWidth
-      maxWidth="md"
-      data-tid="aiCapabilitiesDialogTID"
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+        overflow: 'hidden',
+        px: 2,
+        pt: 1,
+      }}
     >
-      <MuiDialogTitle
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingY: 1,
-        }}
-      >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
         <Typography variant="h6">{t('core:aiCapabilitiesTitle')}</Typography>
-        <IconButton aria-label={t('core:close')} onClick={onClose} size="small">
+        <Box sx={{ flexGrow: 1 }} />
+        <IconButton
+          aria-label={t('core:close')}
+          onClick={onClose}
+          size="small"
+          data-tid="aiCapabilitiesCloseTID"
+        >
           <CloseIcon />
         </IconButton>
-      </MuiDialogTitle>
-      <DialogContent
-        dividers
-        sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}
+      </Box>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1,
+          flexGrow: 1,
+          overflowY: 'auto',
+          minHeight: 0,
+        }}
       >
         <TextField
           size="small"
@@ -372,7 +364,7 @@ function AiCapabilitiesDialog(props: Props) {
         </Tabs>
 
         {tab === 'tools' && (
-          <Box sx={{ overflowY: 'auto' }}>
+          <Box>
             <Button
               data-tid="aiCapabilitiesAddToolTID"
               variant="outlined"
@@ -441,7 +433,7 @@ function AiCapabilitiesDialog(props: Props) {
         )}
 
         {tab === 'skills' && (
-          <Box sx={{ overflowY: 'auto' }}>
+          <Box>
             <Button
               data-tid="aiCapabilitiesAddSkillTID"
               variant="outlined"
@@ -568,7 +560,7 @@ function AiCapabilitiesDialog(props: Props) {
               value={headersText}
               onChange={(e) => setHeadersText(e.target.value)}
             />
-            <DialogActions>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
               <Button size="small" onClick={testTool}>
                 {t('core:aiCapTest')}
               </Button>
@@ -583,7 +575,7 @@ function AiCapabilitiesDialog(props: Props) {
               >
                 {t('core:aiCapSave')}
               </Button>
-            </DialogActions>
+            </Box>
           </Box>
         )}
 
@@ -618,7 +610,7 @@ function AiCapabilitiesDialog(props: Props) {
                 setSkillEditor({ ...skillEditor, instruction: e.target.value })
               }
             />
-            <DialogActions>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
               <Button size="small" onClick={() => setSkillEditor(null)}>
                 {t('core:aiCapCancel')}
               </Button>
@@ -630,12 +622,12 @@ function AiCapabilitiesDialog(props: Props) {
               >
                 {t('core:aiCapSave')}
               </Button>
-            </DialogActions>
+            </Box>
           </Box>
         )}
-      </DialogContent>
-    </Dialog>
+      </Box>
+    </Box>
   );
 }
 
-export default AiCapabilitiesDialog;
+export default AiCapabilitiesPanel;

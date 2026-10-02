@@ -26,7 +26,8 @@
  */
 import { CloseIcon } from '-/components/CommonIcons';
 import AgentPanel from '-/components/chat/AgentPanel';
-import AiCapabilitiesDialog from '-/components/chat/AiCapabilitiesDialog';
+import KnowledgeBasePanel from '-/components/chat/KnowledgeBasePanel';
+import { useAiCapabilitiesContext } from '-/components/chat/AiCapabilitiesContextProvider';
 import { useTranslation } from 'react-i18next';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
@@ -60,8 +61,8 @@ interface Props {
 function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
   const { open, onClose, width, onWidthChange } = props;
-  const [view, setView] = useState<'chat' | 'agent'>('chat');
-  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
+  const { toggleAiCapabilities } = useAiCapabilitiesContext();
+  const [view, setView] = useState<'chat' | 'agent' | 'kb'>('chat');
   const resizing = useRef(false);
 
   useEffect(() => {
@@ -132,7 +133,11 @@ function AiAgentDialog(props: Props) {
           <IconButton
             aria-label={t('core:aiCapabilitiesTitle')}
             data-tid="aiCapabilitiesOpenTID"
-            onClick={() => setCapabilitiesOpen(true)}
+            onClick={() => {
+              // 挤占式：关闭 AI 弹窗，内容区切换为技能与工具面板
+              onClose();
+              toggleAiCapabilities();
+            }}
             size="small"
           >
             <ExtensionOutlinedIcon />
@@ -146,10 +151,6 @@ function AiAgentDialog(props: Props) {
           </IconButton>
         </Box>
       </Box>
-      <AiCapabilitiesDialog
-        open={capabilitiesOpen}
-        onClose={() => setCapabilitiesOpen(false)}
-      />
       <Tabs
         value={view}
         onChange={(event, nextView) => setView(nextView)}
@@ -161,6 +162,7 @@ function AiAgentDialog(props: Props) {
           label={t('core:aiAgentMode')}
           data-tid="aiAgentTabTID"
         />
+        <Tab value="kb" label={t('core:aiKbTab')} data-tid="aiKbTabTID" />
       </Tabs>
       <Box
         sx={{
@@ -172,6 +174,8 @@ function AiAgentDialog(props: Props) {
       >
         {view === 'agent' ? (
           <AgentPanel />
+        ) : view === 'kb' ? (
+          <KnowledgeBasePanel />
         ) : (
           <Suspense
             fallback={<CircularProgress size={24} sx={{ margin: 'auto' }} />}

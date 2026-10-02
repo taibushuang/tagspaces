@@ -295,14 +295,13 @@ function LinksTab(props: Props) {
           }}
           data-tid="linksViewToggleTID"
         >
-          <TsToggleButton value="graph" data-tid="linksViewGraphTID">
-            <ProTooltip tooltip={t('core:linksGraphView')}>
-              <AccountTreeIcon
-                fontSize="small"
-                sx={!LinksGraph ? { opacity: 0.4 } : undefined}
-              />
-            </ProTooltip>
-          </TsToggleButton>
+          {LinksGraph && (
+            <TsToggleButton value="graph" data-tid="linksViewGraphTID">
+              <ProTooltip tooltip={t('core:linksGraphView')}>
+                <AccountTreeIcon fontSize="small" />
+              </ProTooltip>
+            </TsToggleButton>
+          )}
           <TsToggleButton
             value="list"
             data-tid="linksViewListTID"

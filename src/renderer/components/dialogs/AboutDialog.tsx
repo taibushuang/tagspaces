@@ -24,10 +24,8 @@ import TsButton from '-/components/TsButton';
 import TranslucentDialog from '-/components/dialogs/components/TranslucentDialog';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
-import { BuyProDialogContext } from '-/components/dialogs/hooks/BuyProDialogContextProvider';
 import { useLicenseDialogContext } from '-/components/dialogs/hooks/useLicenseDialogContext';
 import { useThirdPartyLibsDialogContext } from '-/components/dialogs/hooks/useThirdPartyLibsDialogContext';
-import { Pro } from '-/pro';
 import { getLastVersionPromise, openURLExternally } from '-/services/utils-io';
 import versionMeta from '-/version.json';
 import { Box } from '@mui/material';
@@ -37,7 +35,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import Links from 'assets/links';
-import { useContext, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import semver from 'semver';
 
@@ -51,25 +49,16 @@ if (buildID && buildID.length >= 11) {
   buildID = buildID.slice(0, 11);
 }
 
-const productName = versionMeta.name + (Pro ? ' Pro' : '');
+const productName = versionMeta.name;
 document.title = productName + ' ' + versionMeta.version;
 
 function AboutDialog(props: Props) {
   const { t } = useTranslation();
   const { openLicenseDialog } = useLicenseDialogContext();
   const { openThirdPartyLibsDialog } = useThirdPartyLibsDialogContext();
-  const { openBuyProDialog } = useContext(BuyProDialogContext);
-
-  // On Capacitor mobile the upgrade CTA opens the in-app StoreKit / Play
-  // Billing sheet (both stores forbid linking out from the purchase flow).
-  // Desktop and web keep the external products page. Mirrors ProTeaserDialog.
-  const onUpgradeClick = AppConfig.isCapacitor
-    ? () => openBuyProDialog?.()
-    : () => openURLExternally(Links.links.productsOverview, true);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [newVersion, setNewVersion] = useState('');
   const { open, onClose } = props;
-  const tsType = Pro ? 'PRO' : 'LITE';
 
   function checkForUpdates() {
     if (updateAvailable) {
@@ -179,7 +168,7 @@ function AboutDialog(props: Props) {
           variant="subtitle1"
         >
           {t('core:versionLabel')}&nbsp;
-          {tsType}&nbsp;{versionMeta.version}
+          {versionMeta.version}
           &nbsp;{t('core:buildIdLabel')}&nbsp;
           {buildID}
         </Typography>
@@ -199,13 +188,9 @@ function AboutDialog(props: Props) {
             {t('core:softwareAcknowledgements')}
           </TsButton>
           <br />
-          {!Pro && (
-            <span>
-              This program is free software: you can redistribute it and/or
-              modify it under the terms of the GNU Affero General Public License
-              (version 3) as published by the Free Software Foundation.
-            </span>
-          )}
+          This program is free software: you can redistribute it and/or modify
+          it under the terms of the GNU Affero General Public License (version
+          3) as published by the Free Software Foundation.
           <br />
           This program is distributed in the hope that it will be useful, but
           WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -287,21 +272,6 @@ function AboutDialog(props: Props) {
             width: smallScreen ? '100%' : 'auto',
           }}
         >
-          {!Pro && (
-            <TsButton
-              data-tid="upgradeToProButton"
-              title={t('core:upgradeToProButton')}
-              fullWidth={smallScreen}
-              onClick={onUpgradeClick}
-              sx={{
-                marginRight: smallScreen
-                  ? 0
-                  : AppConfig.defaultSpaceBetweenButtons,
-              }}
-            >
-              {t('core:upgradeToProButton')}
-            </TsButton>
-          )}
           <TsButton
             data-tid="checkForUpdates"
             title={t('core:checkForNewVersion')}

@@ -4,6 +4,12 @@
 
 - **思考过程和讨论交流一律使用中文**（包括内部分析、计划、解释和总结）。代码、注释、commit message、i18n 英文文案仍用英文。
 
+- **主功能界面一律"挤占式"（2026-10-02 定）**：凡需要"展示一个完整功能面板"的页面（待办列表、AI 技能与工具等），**不用弹窗/对话框承载主内容**，而是在内容区组件 `src/renderer/components/RenderPerspective.tsx` 用 inline 面板**替换原文件夹内容区域**展示。统一模式：
+  1. 全局 Context 持有 `isXxxOpen` + `toggleXxx()`（如 `TodoListContextProvider`、`AiCapabilitiesContextProvider`），入口（工具栏按钮/其他弹窗内按钮）调 `toggleXxx`；
+  2. 面板组件（`XxxPanel.tsx`）为纯 props 组件（数据/回调由内容区展开传入），**不自己 useContext**，保持 import 图无环；
+  3. `RenderPerspective` 里按 `isXxxOpen` 条件渲染面板替代 perspective 内容，再次点击入口或面板右上角关闭按钮即隐藏、恢复文件夹内容；
+  4. 仅新建/编辑表单、删除确认这类轻量交互保留弹窗（如 `TodoEditDialog`、`ConfirmDialog`）。
+
 ## Version Management
 
 ### 打包前版本号检查
@@ -162,6 +168,8 @@
 
 **使用**：两个入口 —— ① 主工具栏右侧的 **AI Agent 按钮**（🤖 图标，弹窗内含完整聊天）；② 打开文件夹后 EntryContainer 的 AI Tab。两处都有 **Agent** 开关（localStorage `tsAiAgentMode`）。开启后消息走工具循环，工具步骤以 `🔧 name(args) → 结果` 流入聊天 markdown。Provider 需为 OpenAI 兼容引擎（Kimi/DeepSeek/火山方舟/内网网关均已加入 `aiPresets.ts` 预设），API Key 在设置 → AI 的每个引擎卡片内填写。
 
+**AI 技能与工具页面（2026-10-02 起"挤占式"）**：`AiCapabilitiesPanel.tsx`（浏览/搜索工具与技能、开关内置工具、自定义 HTTP 工具与 prompt 技能）不再是从 AI 弹窗里弹出的嵌套 Dialog，而是遵循通用"挤占式"原则——`AiCapabilitiesContextProvider`（isAiCapabilitiesOpen + toggleAiCapabilities）由 `RenderPerspective` 在内容区渲染面板替代文件夹内容。入口：AI Agent 弹窗右上角扩展按钮（Extension 图标，点击后关闭 AI 弹窗并打开内容区面板）、面板右上角 ✕ 关闭。旧 `AiCapabilitiesDialog.tsx` 已删除。
+
 **核心文件**：
 - `src/renderer/components/chat/AgentService.ts` — `runAgent()` 工具循环（maxSteps=8、流式 delta、tool_calls 增量拼装、abort、错误转 tool 结果）
 - `src/renderer/components/chat/AgentTools.ts` — `createAgentTools(deps)` 工厂：search_files / list_folder / get_entry_tags / add_tags / remove_tags / read_file_text（结果有截断护栏）
@@ -187,17 +195,20 @@ description 只放精华。单测 `tests/unit/agentDescription.test.js`。
 
 ### 待办（Todo）
 
-个人轻量待办清单，展示"还有哪些代办要做"。**入口**：主工具栏 Checklist 按钮（带未完成数 Badge）→ 弹窗（状态 tabs / 搜索 / 排序 / 勾选完成 / 标记进行中 / 编辑 / 删除 / 导出 Markdown）。
+个人轻量待办清单，展示"还有哪些代办要做"。**入口（2026-10-02 起为"挤占式"）**：主工具栏 Checklist 按钮（带未完成数 Badge，打开时图标高亮）→ 点击后**中间原显示文件夹内容的区域切换为待办面板**（`RenderPerspective` 里 `isTodoOpen` 时渲染 `TodoListPanel` 替代内容），**再次点击按钮隐藏、恢复文件夹内容**。面板内：状态 tabs / 搜索 / 排序 / 勾选完成 / 标记进行中 / 编辑 / 删除 / 导出 Markdown；新建/编辑表单（`TodoEditDialog`）和删除确认仍用弹窗。
 
 **存储（2026-10-01 落地）**：无数据库引擎、无新依赖——与 `.ts/tsi.json` 同款哲学，主进程 `TodoDatabase`（内存主副本 + 校验 + 原子写 tmp→rename + 10 份轮转备份 + 损坏自动回滚到 `.bak.*`）。数据文件 `app.getPath('userData')/todo/todos.json`（不污染 git 仓库）。
 
 **核心文件**：
 - `src/main/todoStore.ts` — `TodoDatabase` 纯逻辑（无 electron 依赖，可单测）：校验 / list 筛选排序 / 生命周期（done 写 completedAt、恢复清空）/ `renderTodosMarkdown`（`[ ]`/`[~]`/`[x]` 语法，与仓库 TODO-*.md 一致）
 - `src/main/todoStoreIpc.ts` — `initTodoStore()`：组装 userData 路径 + 注册 `todo:list/create/update/remove/exportMarkdown/getPath` 六个 `ipcMain.handle`
-- `src/renderer/components/todo/` — `TodoListDialog`（数据经 props 从 ContextProvider 传入，照 FileVersionCleanup 模式保持 import 图无环）/ `TodoEditDialog`（标题/说明/状态/优先级/标签/项目/截止日期+时间/循环）/ `TodoItem` / `todoService.ts`（类型化 invoke 封装）/ `todoUtils.ts`（筛选排序纯函数）
+- `src/renderer/components/todo/` — `TodoListPanel`（挤占式 inline 面板，数据经 props 从 ContextProvider 传入，保持 import 图无环；由 `RenderPerspective.tsx` 在 `isTodoOpen` 时渲染）/ `TodoEditDialog`（标题/说明/状态/优先级/标签/项目/截止日期+时间/循环）/ `TodoItem` / `todoService.ts`（类型化 invoke 封装）/ `todoUtils.ts`（筛选排序纯函数）
+- `src/renderer/components/RenderPerspective.tsx` — 内容区组件，`isTodoOpen` 时返回 `TodoListPanel` 替代 perspective 内容
 - `tests/unit/todoStore.test.js` — 20 例（校验/排序/原子写/备份/损坏恢复/md 渲染）
 
 **挂载链**：`main.ts:34` 已 import `mainEvents`，`loadMainEvents()` 开头调 `initTodoStore()`——**不碰 main.ts**。IPC 通道名加在 `preload.ts` 的 `Channels` 联合类型。
+
+**AI Agent 工具（2026-10-02 落地）**：`src/renderer/components/chat/AgentTools.ts` 新增 4 个待办工具（走 `todoApi` IPC，web 端无 electronIO 时返回不可用提示）：`todo_list`（列表 + stats，≤50 条护栏）、`todo_create`（title 必填，可选 priority/tags/project/dueDate/description）、`todo_complete`（按 id 标记 done）、`todo_update_status`（open/doing/done）。异常一律 `{ error }` 回传模型。
 
 **数据模型预留**：`parentId` / `estimateMinutes` 字段已入 schema（v1 不暴露 UI），将来上子任务/估时免迁移。二期方向：TODO-*.md 导入（勾选回写）、`reminderAt` 到期系统通知。
 
