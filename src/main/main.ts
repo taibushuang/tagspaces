@@ -33,6 +33,7 @@ import buildTrayMenu from './electron-tray-menu';
 import { getExtensions } from './extension-utils';
 import loadMainEvents from './mainEvents';
 import { initDeepseekWebObserver } from './deepseekWebObserver';
+import { initDeepseekPowSolver } from './deepseekPowSolver';
 import protocol from './protocol';
 import settings from './settings';
 import { Extensions } from './types';
@@ -751,6 +752,7 @@ app
 
       loadMainEvents();
       initDeepseekWebObserver();
+      initDeepseekPowSolver();
 
       ipcMain.on('load-extensions', () => {
         getExtensions(

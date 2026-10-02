@@ -107,7 +107,8 @@ export type Channels =
   | 'get-deepseek-web-request-ref'
   | 'get-deepseek-session'
   | 'get-deepseek-pow-history'
-  | 'deepseek-web-drive';
+  | 'deepseek-web-drive'
+  | 'deepseek-pow-solve';
 
 const electronHandler = {
   ipcRenderer: {

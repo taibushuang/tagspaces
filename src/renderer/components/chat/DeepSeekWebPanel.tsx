@@ -81,7 +81,7 @@ function DeepSeekWebPanel() {
   const [inject, setInject] = useState('');
   const [requestRef, setRequestRef] = useState<RefShape | null>(null);
   const [cookieCount, setCookieCount] = useState<number>(0);
-  const parentId = useRef<number>(1);
+  const parentId = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [acc, setAcc] = useState<StreamAccumulator>({
@@ -150,7 +150,9 @@ function DeepSeekWebPanel() {
       return;
     }
     const sessionId: string = created.id;
-    parentId.current = 1;
+    // First message of a fresh session uses a null parent; the ready event
+    // of each response supplies the next parent_message_id.
+    parentId.current = null;
 
     const payload = {
       chat_session_id: sessionId,
