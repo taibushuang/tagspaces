@@ -27,7 +27,7 @@
 import { CloseIcon } from '-/components/CommonIcons';
 import AgentPanel from '-/components/chat/AgentPanel';
 import KnowledgeBasePanel from '-/components/chat/KnowledgeBasePanel';
-import { useAiCapabilitiesContext } from '-/components/chat/AiCapabilitiesContextProvider';
+import AiCapabilitiesPanel from '-/components/chat/AiCapabilitiesPanel';
 import { useTranslation } from 'react-i18next';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
@@ -61,8 +61,7 @@ interface Props {
 function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
   const { open, onClose, width, onWidthChange } = props;
-  const { toggleAiCapabilities } = useAiCapabilitiesContext();
-  const [view, setView] = useState<'chat' | 'agent' | 'kb'>('chat');
+  const [view, setView] = useState<'chat' | 'agent' | 'kb' | 'cap'>('chat');
   const resizing = useRef(false);
 
   useEffect(() => {
@@ -133,11 +132,7 @@ function AiAgentDialog(props: Props) {
           <IconButton
             aria-label={t('core:aiCapabilitiesTitle')}
             data-tid="aiCapabilitiesOpenTID"
-            onClick={() => {
-              // 挤占式：关闭 AI 弹窗，内容区切换为技能与工具面板
-              onClose();
-              toggleAiCapabilities();
-            }}
+            onClick={() => setView('cap')}
             size="small"
           >
             <ExtensionOutlinedIcon />
@@ -163,6 +158,7 @@ function AiAgentDialog(props: Props) {
           data-tid="aiAgentTabTID"
         />
         <Tab value="kb" label={t('core:aiKbTab')} data-tid="aiKbTabTID" />
+        <Tab value="cap" label={t('core:aiCapTab')} data-tid="aiCapTabTID" />
       </Tabs>
       <Box
         sx={{
@@ -176,6 +172,8 @@ function AiAgentDialog(props: Props) {
           <AgentPanel />
         ) : view === 'kb' ? (
           <KnowledgeBasePanel />
+        ) : view === 'cap' ? (
+          <AiCapabilitiesPanel onClose={() => setView('agent')} />
         ) : (
           <Suspense
             fallback={<CircularProgress size={24} sx={{ margin: 'auto' }} />}

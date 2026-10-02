@@ -30,7 +30,6 @@ import { FilePickerDialogContextProvider } from '-/components/dialogs/hooks/File
 import { LinkDialogContextProvider } from '-/components/dialogs/hooks/LinkDialogContextProvider';
 import { FileVersionCleanupDialogContextProvider } from '-/components/dialogs/hooks/FileVersionCleanupDialogContextProvider';
 import { TodoListContextProvider } from '-/components/todo/TodoListContextProvider';
-import { AiCapabilitiesContextProvider } from '-/components/chat/AiCapabilitiesContextProvider';
 import { MenuContextProvider } from '-/components/dialogs/hooks/MenuContextProvider';
 import { NewAudioDialogContextProvider } from '-/components/dialogs/hooks/NewAudioDialogContextProvider';
 import { NewFileDialogContextProvider } from '-/components/dialogs/hooks/NewFileDialogContextProvider';
@@ -61,10 +60,8 @@ const providers = [
   // openPerspectiveOnboarding(). React Context respects the React tree (not
   // the DOM), and the Settings dialog's children are descendants of whichever
   // providers wrap it from the outside.
-  // AiCapabilitiesContextProvider must be an ANCESTOR of
-  // AiAgentDialogContextProvider: the AI work area's 🧩 button calls
-  // toggleAiCapabilities() to hand over to the squeeze-layout panel.
-  AiCapabilitiesContextProvider,
+  // NOTE: the AI capabilities center now lives as a tab inside the AI work
+  // area (AiAgentDialog) — no cross-provider toggle needed anymore.
   PerspectiveOnboardingContextProvider,
   AiAgentDialogContextProvider,
   SettingsDialogContextProvider,

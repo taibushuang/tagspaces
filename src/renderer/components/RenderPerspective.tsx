@@ -34,8 +34,6 @@ import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { useTodoListContext } from '-/components/todo/TodoListContextProvider';
 import TodoListPanel from '-/components/todo/TodoListPanel';
-import { useAiCapabilitiesContext } from '-/components/chat/AiCapabilitiesContextProvider';
-import AiCapabilitiesPanel from '-/components/chat/AiCapabilitiesPanel';
 import {
   AvailablePerspectives,
   hasExternalPerspectiveComponent,
@@ -284,8 +282,6 @@ function RenderPerspective(props: Props) {
     exportMarkdown,
     toggleTodoList,
   } = useTodoListContext();
-  const { isAiCapabilitiesOpen, toggleAiCapabilities } =
-    useAiCapabilitiesContext();
 
   // Auto-open the perspective's onboarding dialog the first time the user
   // switches into it. Only runs for perspectives that ship an
@@ -369,11 +365,6 @@ function RenderPerspective(props: Props) {
         onClose={toggleTodoList}
       />
     );
-  }
-
-  // AI 技能与工具"挤占式"展示：同样替换内容区（通用设计思路，见 AGENTS.md）。
-  if (isAiCapabilitiesOpen) {
-    return <AiCapabilitiesPanel onClose={toggleAiCapabilities} />;
   }
 
   if (showWelcomePanel) {
