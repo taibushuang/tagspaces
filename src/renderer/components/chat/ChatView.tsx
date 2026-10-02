@@ -450,23 +450,13 @@ function ChatView() {
           overflow: 'hidden',
         }}
       >
-        {/* Model selection and menu */}
-        <Grid container spacing={0} direction="row" sx={{ flexFlow: 'nowrap' }}>
-          <Grid sx={{ alignContent: 'center' }}>
-            <FormControlLabel
-              sx={{ margin: 0 }}
-              control={
-                <TsSwitch
-                  size="small"
-                  checked={agentMode}
-                  onChange={(event) => setAgentMode(event.target.checked)}
-                />
-              }
-              label={t('core:aiAgentMode')}
-              labelPlacement="start"
-              slotProps={{ typography: { variant: 'caption' } }}
-            />
-          </Grid>
+        {/* Chat actions */}
+        <Grid
+          container
+          spacing={0}
+          direction="row"
+          sx={{ flexFlow: 'nowrap', justifyContent: 'flex-end' }}
+        >
           <Grid>
             <TsIconButton
               tooltip={t('core:moreActions')}

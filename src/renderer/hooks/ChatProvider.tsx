@@ -260,7 +260,8 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       localStorage.setItem('tsAiAgentMode', enabled ? 'true' : 'false');
       return enabled;
     },
-    localStorage.getItem('tsAiAgentMode') === 'true',
+    // The chat tab IS the agent now — there is no UI toggle anymore.
+    true,
   );
   const dispatch: AppDispatch = useDispatch();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);

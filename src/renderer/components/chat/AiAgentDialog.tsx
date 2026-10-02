@@ -28,11 +28,14 @@ import { CloseIcon } from '-/components/CommonIcons';
 import AgentPanel from '-/components/chat/AgentPanel';
 import KnowledgeBasePanel from '-/components/chat/KnowledgeBasePanel';
 import AiCapabilitiesPanel from '-/components/chat/AiCapabilitiesPanel';
-import SelectChatModel from '-/components/chat/SelectChatModel';
 import { useChatContext } from '-/hooks/useChatContext';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import { getDefaultAIProvider } from '-/reducers/settings';
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDownOutlined';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import Button from '@mui/material/Button';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import Tab from '@mui/material/Tab';
@@ -63,11 +66,19 @@ interface Props {
 function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
   const { open, onClose, width, onWidthChange } = props;
-  const { changeCurrentModel, setModel, currentModel } = useChatContext();
+  const {
+    changeCurrentModel,
+    setModel,
+    currentModel,
+    models,
+  } = useChatContext();
   const aiDefaultProvider = useSelector(getDefaultAIProvider);
   const [view, setView] = useState<
     'chat' | 'agent' | 'kb' | 'tools' | 'skills'
   >('chat');
+  const [modelMenuAnchor, setModelMenuAnchor] = useState<null | HTMLElement>(
+    null,
+  );
   const resizing = useRef(false);
 
   const handleChangeModel = (newModelName: string) => {
@@ -173,14 +184,44 @@ function AiAgentDialog(props: Props) {
             data-tid="aiSkillsTabTID"
           />
         </Tabs>
-        <SelectChatModel
-          id="workAreaModelId"
-          handleChangeModel={handleChangeModel}
-          aiProvider={aiDefaultProvider}
-          chosenModel={currentModel?.name}
-          // Select-only here: new model names are entered in Settings → AI
-          allowManualModelInput={false}
-        />
+        <Button
+          size="small"
+          data-tid="modelPickerTID"
+          onClick={(e) => setModelMenuAnchor(e.currentTarget)}
+          endIcon={<ArrowDropDownIcon />}
+          sx={{
+            minWidth: 0,
+            textTransform: 'none',
+            maxWidth: 150,
+            overflow: 'hidden',
+          }}
+        >
+          {currentModel?.name || t('core:chooseModel')}
+        </Button>
+        <Menu
+          anchorEl={modelMenuAnchor}
+          open={Boolean(modelMenuAnchor)}
+          onClose={() => setModelMenuAnchor(null)}
+        >
+          {(Array.from(
+            new Set<string>([
+              ...(currentModel?.name ? [currentModel.name] : []),
+              ...(aiDefaultProvider.customModels || []),
+              ...(models || []).map((m) => m.name).filter(Boolean),
+            ]),
+          ).map((name) => (
+            <MenuItem
+              key={name}
+              selected={name === currentModel?.name}
+              onClick={() => {
+                handleChangeModel(name);
+                setModelMenuAnchor(null);
+              }}
+            >
+              {name}
+            </MenuItem>
+          )))}
+        </Menu>
         <IconButton aria-label={t('core:close')} onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
