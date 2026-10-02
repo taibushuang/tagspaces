@@ -51,7 +51,7 @@ import React, { useRef, useState } from 'react';
 
 const WebviewTag = 'webview' as any;
 const DEEPSEEK_URL = 'https://chat.deepseek.com/';
-const FALLBACK_CHAT_URL = 'https://chat.deepseek.com/api/v0/chat/completions';
+const FALLBACK_CHAT_URL = 'https://chat.deepseek.com/api/v0/chat/completion';
 
 type RefShape = {
   url: string;
@@ -77,6 +77,8 @@ function DeepSeekWebPanel() {
   const [inject, setInject] = useState('');
   const [requestRef, setRequestRef] = useState<RefShape | null>(null);
   const [cookieCount, setCookieCount] = useState<number>(0);
+  const parentId = useRef<number>(1);
+  const sessionIdRef = useRef<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [acc, setAcc] = useState<StreamAccumulator>({
     content: '',
@@ -98,6 +100,14 @@ function DeepSeekWebPanel() {
         'get-deepseek-web-request-ref',
       );
       setRequestRef(ref);
+      try {
+        const ses = await window.electronIO.ipcRenderer.invoke(
+          'get-deepseek-session',
+        );
+        sessionIdRef.current = ses?.sessionId || null;
+      } catch (e) {
+        /* session id optional */
+      }
       if (cookies.length === 0) {
         showNotification(t('core:deepseekSessionEmpty'), 'warning');
       } else if (!ref) {
@@ -126,7 +136,7 @@ function DeepSeekWebPanel() {
     const question = input.trim();
     if (!question || streaming) return;
     if (cookieCount === 0) {
-      const ok = await readSession();
+      await readSession();
       if (cookieCount === 0) {
         showNotification(t('core:deepseekSessionEmpty'), 'warning');
         return;
@@ -137,41 +147,40 @@ function DeepSeekWebPanel() {
       showNotification(t('core:deepseekSessionEmpty'), 'warning');
       return;
     }
+    const injected =
+      inject.trim() !== '' ? `${inject.trim()}\n\n${question}` : question;
 
-    // Rebuild the payload. Prefer the observed request body shape; otherwise
-    // fall back to a minimal chat/completions body.
+    // Prefer the observed request body shape (chat_session_id, parent_message_id,
+    // prompt, …). Otherwise fall back to that same shape with a fresh session.
     let payload: any;
     const refBody = requestRef?.body;
     if (refBody) {
       try {
         const parsed = JSON.parse(refBody);
         payload = parsed;
-        const messages = Array.isArray(parsed.messages)
-          ? [...parsed.messages]
-          : [];
-        const injected =
-          inject.trim() !== '' ? `${inject.trim()}\n\n${question}` : question;
-        if (
-          messages.length > 0 &&
-          messages[messages.length - 1].role === 'user'
-        ) {
-          messages[messages.length - 1].content = injected;
-        } else {
-          messages.push({ role: 'user', content: injected });
-        }
-        payload.messages = messages;
-        payload.stream = true;
+        payload.prompt = injected;
+        delete payload.stream;
+        // Track the parent message id locally when a reference body exists.
+        parentId.current = Math.max(
+          parentId.current,
+          (parsed.parent_message_id || 0) + 1,
+        );
+        payload.parent_message_id = parentId.current;
       } catch (e) {
         payload = null;
       }
     }
     if (!payload) {
-      const injected =
-        inject.trim() !== '' ? `${inject.trim()}\n\n${question}` : question;
       payload = {
-        model: 'deepseek-chat',
-        messages: [{ role: 'user', content: injected }],
-        stream: true,
+        chat_session_id: sessionIdRef.current,
+        parent_message_id: parentId.current,
+        model_type: null,
+        prompt: injected,
+        ref_file_ids: [],
+        thinking_enabled: false,
+        search_enabled: true,
+        action: null,
+        preempt: false,
       };
     }
 
@@ -225,11 +234,20 @@ function DeepSeekWebPanel() {
           try {
             const json = JSON.parse(data);
             const delta = json?.choices?.[0]?.delta || {};
+            const chunk = {
+              content:
+                delta.content || json?.content || json?.message?.content || '',
+              thinking:
+                delta.reasoning_content ||
+                json?.reasoning_content ||
+                json?.message?.reasoning_content ||
+                '',
+              citations: delta.citations || json?.citations || undefined,
+            };
             setAcc((prev) => ({
-              ...prev,
-              content: prev.content + (delta.content || ''),
-              thinking: prev.thinking + (delta.reasoning_content || ''),
-              citations: delta.citations || prev.citations,
+              content: prev.content + chunk.content,
+              thinking: prev.thinking + chunk.thinking,
+              citations: chunk.citations || prev.citations,
             }));
           } catch (e) {
             /* keep-alive / non-JSON chunk */

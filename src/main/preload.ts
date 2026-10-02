@@ -104,7 +104,8 @@ export type Channels =
   | 'todo:remove'
   | 'todo:exportMarkdown'
   | 'todo:getPath'
-  | 'get-deepseek-web-request-ref';
+  | 'get-deepseek-web-request-ref'
+  | 'get-deepseek-session';
 
 const electronHandler = {
   ipcRenderer: {

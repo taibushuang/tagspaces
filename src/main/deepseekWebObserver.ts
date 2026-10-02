@@ -29,7 +29,7 @@
  * the renderer over IPC.
  */
 
-import { ipcMain, session } from 'electron';
+import { ipcMain, session, webContents } from 'electron';
 
 export const DEEPSEEK_PARTITION = 'persist:deepseekweb';
 const CHAT_ENDPOINT_PATTERN = 'https://chat.deepseek.com/api/*';
@@ -50,23 +50,50 @@ export function initDeepseekWebObserver(): void {
     return;
   }
   try {
-    ses.webRequest.onBeforeSendHeaders(
+    // Body capture: only available at the before-request stage.
+    ses.webRequest.onBeforeRequest(
       { urls: [CHAT_ENDPOINT_PATTERN] },
       (details, callback) => {
         try {
           const requestBody = (details as any).requestBody;
           let body: string | null = null;
           if (requestBody?.raw) {
-            const raw = requestBody.raw.find((r) => r.bytes);
+            const raw = requestBody.raw.find((r: any) => r.bytes);
             if (raw?.bytes) {
               body = Buffer.from(raw.bytes).toString('utf8');
             }
+          } else if (requestBody?.formData) {
+            body = JSON.stringify(requestBody.formData);
           }
+          if (body) {
+            lastRequestRef = {
+              ...(lastRequestRef || {
+                url: details.url,
+                method: details.method,
+                headers: {},
+                capturedAt: Date.now(),
+              }),
+              url: details.url,
+              method: details.method,
+              body,
+            };
+          }
+        } catch (e) {
+          /* observation must never break the web app */
+        }
+        callback({});
+      },
+    );
+    // Headers capture (includes the anti-bot / auth headers needed to replay).
+    ses.webRequest.onBeforeSendHeaders(
+      { urls: [CHAT_ENDPOINT_PATTERN] },
+      (details, callback) => {
+        try {
           lastRequestRef = {
             url: details.url,
             method: details.method,
             headers: { ...details.requestHeaders } as Record<string, string>,
-            body,
+            body: lastRequestRef?.body ?? null,
             capturedAt: Date.now(),
           };
         } catch (e) {
@@ -80,6 +107,29 @@ export function initDeepseekWebObserver(): void {
   }
 
   ipcMain.handle('get-deepseek-web-request-ref', () => lastRequestRef);
+
+  ipcMain.handle('get-deepseek-session', async () => {
+    // Find the embedded webview (a WebContents whose URL is on chat.deepseek.com)
+    // and return its cookies + current chat session id (from the URL path).
+    const wc = webContents
+      .getAllWebContents()
+      .find((c) => c.getURL().startsWith('https://chat.deepseek.com/'));
+    if (!wc) {
+      return { cookies: [], sessionId: null };
+    }
+    let cookies: Array<{ name: string; value: string }> = [];
+    try {
+      const got = await wc.session.cookies.get({
+        url: 'https://chat.deepseek.com',
+      });
+      cookies = got.map((c) => ({ name: c.name, value: c.value }));
+    } catch (e) {
+      /* ignore */
+    }
+    const url = wc.getURL();
+    const m = url.match(/\/a\/chat\/s\/([0-9a-f-]+)/);
+    return { cookies, sessionId: m ? m[1] : null };
+  });
 }
 
 /** Convenience for tests/CLI: the latest observed request, if any. */
