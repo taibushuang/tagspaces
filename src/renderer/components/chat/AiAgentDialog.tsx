@@ -28,7 +28,11 @@ import { CloseIcon } from '-/components/CommonIcons';
 import AgentPanel from '-/components/chat/AgentPanel';
 import KnowledgeBasePanel from '-/components/chat/KnowledgeBasePanel';
 import AiCapabilitiesPanel from '-/components/chat/AiCapabilitiesPanel';
+import SelectChatModel from '-/components/chat/SelectChatModel';
+import { useChatContext } from '-/hooks/useChatContext';
 import { useTranslation } from 'react-i18next';
+import { useSelector } from 'react-redux';
+import { getDefaultAIProvider } from '-/reducers/settings';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import Tab from '@mui/material/Tab';
@@ -59,10 +63,20 @@ interface Props {
 function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
   const { open, onClose, width, onWidthChange } = props;
+  const { changeCurrentModel, setModel, currentModel } = useChatContext();
+  const aiDefaultProvider = useSelector(getDefaultAIProvider);
   const [view, setView] = useState<
     'chat' | 'agent' | 'kb' | 'tools' | 'skills'
   >('chat');
   const resizing = useRef(false);
+
+  const handleChangeModel = (newModelName: string) => {
+    changeCurrentModel(newModelName).then((success) => {
+      if (success) {
+        setModel(newModelName);
+      }
+    });
+  };
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -159,6 +173,14 @@ function AiAgentDialog(props: Props) {
             data-tid="aiSkillsTabTID"
           />
         </Tabs>
+        <SelectChatModel
+          id="workAreaModelId"
+          handleChangeModel={handleChangeModel}
+          aiProvider={aiDefaultProvider}
+          chosenModel={currentModel?.name}
+          // Select-only here: new model names are entered in Settings → AI
+          allowManualModelInput={false}
+        />
         <IconButton aria-label={t('core:close')} onClick={onClose} size="small">
           <CloseIcon />
         </IconButton>
