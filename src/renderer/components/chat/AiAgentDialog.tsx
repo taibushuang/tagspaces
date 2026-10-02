@@ -122,44 +122,46 @@ function AiAgentDialog(props: Props) {
         sx={{
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingY: 1,
-          paddingX: 2,
+          paddingY: 0.5,
+          paddingX: 1,
+          borderBottom: '1px solid',
+          borderColor: 'divider',
         }}
       >
-        <Typography variant="h6">{t('core:aiAgentTitle')}</Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <IconButton
-            aria-label={t('core:aiCapabilitiesTitle')}
-            data-tid="aiCapabilitiesOpenTID"
-            onClick={() => setView('cap')}
-            size="small"
-          >
-            <ExtensionOutlinedIcon />
-          </IconButton>
-          <IconButton
-            aria-label={t('core:close')}
-            onClick={onClose}
-            size="small"
-          >
-            <CloseIcon />
-          </IconButton>
-        </Box>
+        <Tabs
+          value={view}
+          onChange={(event, nextView) => setView(nextView)}
+          sx={{
+            minHeight: 'auto',
+            flexGrow: 1,
+            '& .MuiTab-root': {
+              minHeight: 'auto',
+              paddingY: 1,
+              paddingX: 1.5,
+            },
+          }}
+        >
+          <Tab value="chat" label={t('core:aiChatTab')} />
+          <Tab
+            value="agent"
+            label={t('core:aiAgentMode')}
+            data-tid="aiAgentTabTID"
+          />
+          <Tab value="kb" label={t('core:aiKbTab')} data-tid="aiKbTabTID" />
+          <Tab value="cap" label={t('core:aiCapTab')} data-tid="aiCapTabTID" />
+        </Tabs>
+        <IconButton
+          aria-label={t('core:aiCapabilitiesTitle')}
+          data-tid="aiCapabilitiesOpenTID"
+          onClick={() => setView('cap')}
+          size="small"
+        >
+          <ExtensionOutlinedIcon />
+        </IconButton>
+        <IconButton aria-label={t('core:close')} onClick={onClose} size="small">
+          <CloseIcon />
+        </IconButton>
       </Box>
-      <Tabs
-        value={view}
-        onChange={(event, nextView) => setView(nextView)}
-        sx={{ marginBottom: 1, minHeight: 'auto', paddingX: 2 }}
-      >
-        <Tab value="chat" label={t('core:aiChatTab')} />
-        <Tab
-          value="agent"
-          label={t('core:aiAgentMode')}
-          data-tid="aiAgentTabTID"
-        />
-        <Tab value="kb" label={t('core:aiKbTab')} data-tid="aiKbTabTID" />
-        <Tab value="cap" label={t('core:aiCapTab')} data-tid="aiCapTabTID" />
-      </Tabs>
       <Box
         sx={{
           flexGrow: 1,
