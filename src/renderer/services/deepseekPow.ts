@@ -132,3 +132,50 @@ export async function buildDeepseekPowResponse(challenge: {
     }),
   );
 }
+
+/**
+ * Parse a DeepSeek web chat/completion SSE response into its parts.
+ * The stream is `data:` JSON lines: plain text chunks arrive as {"v":"…"}
+ * (also inside {"p":…,"o":"APPEND","v":"…"} patch ops); the ready event
+ * carries response_message_id = the next parent_message_id; references come
+ * on fragment objects.
+ */
+export function parseDeepseekStream(raw: string): {
+  content: string;
+  thinking: string;
+  citations: string[];
+  nextParent: number | null;
+} {
+  let content = '';
+  let thinking = '';
+  const citations: string[] = [];
+  let nextParent: number | null = null;
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const data = trimmed.replace(/^data:\s*/, '');
+    if (data === '[DONE]') continue;
+    try {
+      const json = JSON.parse(data);
+      if (typeof json.v === 'string' && json.v) {
+        content += json.v;
+      }
+      if (Number.isInteger(json.response_message_id)) {
+        nextParent = json.response_message_id;
+      }
+      if (typeof json.reasoning_content === 'string') {
+        thinking += json.reasoning_content;
+      }
+      const frag = json.v?.response;
+      if (Array.isArray(frag?.references) && frag.references.length) {
+        citations.push(...frag.references);
+      }
+      if (Array.isArray(json.references) && json.references.length) {
+        citations.push(...json.references);
+      }
+    } catch (e) {
+      /* keep-alive / non-JSON line */
+    }
+  }
+  return { content, thinking, citations, nextParent };
+}

@@ -37,7 +37,10 @@ import { marked } from 'marked';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { writeLocationKb } from '-/services/knowledgeBase';
-import { buildDeepseekPowResponse } from '-/services/deepseekPow';
+import {
+  buildDeepseekPowResponse,
+  parseDeepseekStream,
+} from '-/services/deepseekPow';
 import { useTranslation } from 'react-i18next';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -124,171 +127,96 @@ function DeepSeekWebPanel() {
     }
   }
 
-  async function getCookies(): Promise<string> {
-    const webContents = webviewRef.current?.getWebContents();
-    if (!webContents?.session?.cookies) return '';
-    const cookies = await webContents.session.cookies.get({
-      url: DEEPSEEK_URL,
-    });
-    return cookies.map((c: any) => `${c.name}=${c.value}`).join('; ');
-  }
-
   async function sendApi() {
     const question = input.trim();
     if (!question || streaming) return;
-    if (cookieCount === 0) {
-      await readSession();
-      if (cookieCount === 0) {
-        showNotification(t('core:deepseekSessionEmpty'), 'warning');
-        return;
-      }
-    }
-    const cookie = await getCookies();
-    if (!cookie) {
-      showNotification(t('core:deepseekSessionEmpty'), 'warning');
-      return;
-    }
     const injected =
       inject.trim() !== '' ? `${inject.trim()}\n\n${question}` : question;
 
-    // Prefer the observed request body shape (chat_session_id, parent_message_id,
-    // prompt, …). Otherwise fall back to that same shape with a fresh session.
-    let payload: any;
-    const refBody = requestRef?.body;
-    if (refBody) {
-      try {
-        const parsed = JSON.parse(refBody);
-        payload = parsed;
-        payload.prompt = injected;
-        delete payload.stream;
-        // Track the parent message id locally when a reference body exists.
-        parentId.current = Math.max(
-          parentId.current,
-          (parsed.parent_message_id || 0) + 1,
-        );
-        payload.parent_message_id = parentId.current;
-      } catch (e) {
-        payload = null;
-      }
-    }
-    if (!payload) {
-      payload = {
-        chat_session_id: sessionIdRef.current,
-        parent_message_id: parentId.current,
-        model_type: null,
-        prompt: injected,
-        ref_file_ids: [],
-        thinking_enabled: false,
-        search_enabled: true,
-        action: null,
-        preempt: false,
-      };
-    }
-
-    const url = requestRef?.url || FALLBACK_CHAT_URL;
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-      Cookie: cookie,
-      ...(requestRef?.headers || {}),
-    };
-    delete headers['content-length'];
-    delete headers['accept-encoding'];
-    delete headers['cookie'];
-    delete headers['authorization'];
-    if (requestRef?.headers?.authorization) {
-      headers.authorization = requestRef.headers.authorization;
-    }
-
-    // Every completion requires a fresh proof-of-work (DeepSeekHashV1).
-    // Ask for a challenge, solve it with the bundled worker, and attach the
-    // x-ds-pow-response header exactly like the web client does.
-    try {
-      const challengeResp = await fetch(
-        'https://chat.deepseek.com/api/v0/chat/create_pow_challenge',
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            target_path: url.replace('https://chat.deepseek.com', ''),
-          }),
-        },
+    // The programmatic chat runs on its own fresh session, created from
+    // inside the webview (origin-safe) — independent of what the webview is
+    // currently showing.
+    const created: any = await window.electronIO.ipcRenderer.invoke(
+      'deepseek-web-drive',
+      'create-session',
+    );
+    if (created?.error || !created?.id) {
+      showNotification(
+        t('core:deepseekErr', {
+          msg: created?.error || 'session create failed',
+        }),
+        'warning',
       );
-      if (challengeResp.ok) {
-        const chJson = await challengeResp.json();
-        const ch = chJson?.data?.biz_data?.challenge;
-        if (ch && ch.algorithm === 'DeepSeekHashV1') {
-          const powHeader = await buildDeepseekPowResponse({
-            ...ch,
-            target_path: url.replace('https://chat.deepseek.com', ''),
-          });
-          headers['x-ds-pow-response'] = powHeader;
-        }
-      }
-    } catch (e) {
-      /* PoW optional per request — proceed without and let the server judge */
+      return;
     }
+    const sessionId: string = created.id;
+    parentId.current = 1;
+
+    const payload = {
+      chat_session_id: sessionId,
+      parent_message_id: parentId.current,
+      model_type: null,
+      prompt: injected,
+      ref_file_ids: [],
+      thinking_enabled: false,
+      search_enabled: true,
+      action: null,
+      preempt: false,
+    };
 
     setStreaming(true);
     setAcc({ content: '', thinking: '', citations: [] });
-    let buffered = '';
     try {
-      const resp = await fetch(url, {
-        method: requestRef?.method || 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      });
-      if (!resp.ok || !resp.body) {
-        const text = await resp.text().catch(() => '');
+      // 1) Ask for a fresh PoW challenge from INSIDE the webview — DeepSeek's
+      //    WAF rejects cross-origin calls from the app page, so all
+      //    origin-sensitive requests run in the webview context.
+      const chal: any = await window.electronIO.ipcRenderer.invoke(
+        'deepseek-web-drive',
+        'challenge',
+      );
+      const ch = chal?.challenge;
+      if (chal?.error || !ch) {
         showNotification(
-          t('core:deepseekErr', {
-            msg: `HTTP ${resp.status} ${text.slice(0, 120)}`,
-          }),
+          t('core:deepseekErr', { msg: chal?.error || 'challenge failed' }),
           'warning',
         );
         return;
       }
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffered += decoder.decode(value, { stream: true });
-        const lines = buffered.split('\n');
-        buffered = lines.pop() || '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const data = trimmed.replace(/^data:\s*/, '');
-          if (data === '[DONE]') continue;
-          try {
-            const json = JSON.parse(data);
-            // DeepSeek streams plain text chunks as {"v":"..."} (also inside
-            // {"p":...,"o":"APPEND","v":"..."} patch ops); the ready event
-            // carries response_message_id = next parent_message_id.
-            if (typeof json.v === 'string' && json.v) {
-              setAcc((prev) => ({ ...prev, content: prev.content + json.v }));
-            }
-            if (Number.isInteger(json.response_message_id)) {
-              parentId.current = json.response_message_id;
-            }
-            if (Array.isArray(json.references) && json.references.length) {
-              setAcc((prev) => ({ ...prev, citations: json.references }));
-            }
-            const msgObj = json.v?.response;
-            if (msgObj?.references?.length) {
-              setAcc((prev) => ({ ...prev, citations: msgObj.references }));
-            }
-            if (typeof json.reasoning_content === 'string') {
-              setAcc((prev) => ({
-                ...prev,
-                thinking: prev.thinking + json.reasoning_content,
-              }));
-            }
-          } catch (e) {
-            /* keep-alive / non-JSON chunk */
-          }
-        }
+      const powHeader = await buildDeepseekPowResponse({
+        ...ch,
+        target_path: '/api/v0/chat/completion',
+      });
+      // 2) Run the completion inside the webview (its own auth token + cookie).
+      const res: any = await window.electronIO.ipcRenderer.invoke(
+        'deepseek-web-drive',
+        'completion',
+        { body: payload, powHeader },
+      );
+      if (res?.error) {
+        showNotification(t('core:deepseekErr', { msg: res.error }), 'warning');
+        return;
+      }
+      if (!res?.ok) {
+        showNotification(
+          t('core:deepseekErr', { msg: res.text || 'completion failed' }),
+          'warning',
+        );
+        return;
+      }
+      const parsed = parseDeepseekStream(res.text);
+      if (parsed.nextParent) {
+        parentId.current = parsed.nextParent;
+      }
+      setAcc({
+        content: parsed.content,
+        thinking: parsed.thinking,
+        citations: parsed.citations,
+      });
+      if (!parsed.content) {
+        showNotification(
+          t('core:deepseekErr', { msg: 'empty answer' }),
+          'warning',
+        );
       }
     } catch (e: any) {
       showNotification(
@@ -341,28 +269,34 @@ function DeepSeekWebPanel() {
         <Tab value="api" label={t('core:deepseekApiMode')} />
       </Tabs>
 
-      {mode === 'web' ? (
-        <Box sx={{ flexGrow: 1, minHeight: 0, position: 'relative' }}>
-          <WebviewTag
-            ref={webviewRef}
-            src={DEEPSEEK_URL}
-            partition="persist:deepseekweb"
-            style={{ width: '100%', height: '100%' }}
-            allowpopups
-          />
-          <Typography
-            variant="caption"
-            sx={{
-              color: 'text.secondary',
-              position: 'absolute',
-              bottom: 4,
-              left: 8,
-            }}
-          >
-            {t('core:deepseekLoginHint')}
-          </Typography>
-        </Box>
-      ) : (
+      <Box
+        sx={{
+          flexGrow: 1,
+          minHeight: 0,
+          position: 'relative',
+          display: mode === 'web' ? 'block' : 'none',
+        }}
+      >
+        <WebviewTag
+          ref={webviewRef}
+          src={DEEPSEEK_URL}
+          partition="persist:deepseekweb"
+          style={{ width: '100%', height: '100%' }}
+          allowpopups
+        />
+        <Typography
+          variant="caption"
+          sx={{
+            color: 'text.secondary',
+            position: 'absolute',
+            bottom: 4,
+            left: 8,
+          }}
+        >
+          {t('core:deepseekLoginHint')}
+        </Typography>
+      </Box>
+      {mode !== 'web' && (
         <Box
           sx={{
             flexGrow: 1,

@@ -42,7 +42,37 @@ type RequestRef = {
   capturedAt: number;
 };
 
+type PowSample = {
+  algorithm: string;
+  challenge: string;
+  salt: string;
+  answer: number | null;
+  signature: string;
+  targetPath: string;
+  capturedAt: number;
+};
+
 let lastRequestRef: RequestRef | null = null;
+const powHistory: PowSample[] = [];
+
+function decodePowHeader(headerValue: string): PowSample | null {
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(headerValue, 'base64').toString('utf8'),
+    );
+    return {
+      algorithm: decoded.algorithm || '',
+      challenge: decoded.challenge || '',
+      salt: decoded.salt || '',
+      answer: typeof decoded.answer === 'number' ? decoded.answer : null,
+      signature: decoded.signature || '',
+      targetPath: decoded.target_path || '',
+      capturedAt: Date.now(),
+    };
+  } catch (e) {
+    return null;
+  }
+}
 
 export function initDeepseekWebObserver(): void {
   const ses = session.fromPartition(DEEPSEEK_PARTITION);
@@ -89,6 +119,16 @@ export function initDeepseekWebObserver(): void {
       { urls: [CHAT_ENDPOINT_PATTERN] },
       (details, callback) => {
         try {
+          const pow = (details.requestHeaders as Record<string, string>)[
+            'x-ds-pow-response'
+          ];
+          if (pow) {
+            const sample = decodePowHeader(pow);
+            if (sample) {
+              powHistory.push(sample);
+              if (powHistory.length > 8) powHistory.shift();
+            }
+          }
           lastRequestRef = {
             url: details.url,
             method: details.method,
@@ -107,6 +147,78 @@ export function initDeepseekWebObserver(): void {
   }
 
   ipcMain.handle('get-deepseek-web-request-ref', () => lastRequestRef);
+  ipcMain.handle('get-deepseek-pow-history', () => powHistory);
+
+  /**
+   * Drive API calls INSIDE the embedded webview. DeepSeek's WAF rejects
+   * cross-origin requests (Origin header cannot be overridden from the
+   * app page), so the origin-sensitive fetches run from the webview's own
+   * origin with its own auth token. The CPU-heavy PoW solve stays in the
+   * renderer (buildDeepseekPowResponse).
+   */
+  ipcMain.handle(
+    'deepseek-web-drive',
+    async (_e, action: string, args: any) => {
+      const wc = webContents
+        .getAllWebContents()
+        .find((c) => c.getURL().startsWith('https://chat.deepseek.com/'));
+      if (!wc) {
+        return {
+          error: 'deepseek webview not open — open the DeepSeek tab first',
+        };
+      }
+      try {
+        if (action === 'create-session') {
+          const res = await wc.executeJavaScript(
+            `(async()=>{
+              let token=null;
+              try{const u=JSON.parse(localStorage.getItem('userToken')||'{}');token=u&&u.value?u.value:null;}catch(e){}
+              const h={'Content-Type':'application/json'};
+              if(token)h.authorization='Bearer '+token;
+              const r=await fetch('/api/v0/chat_session/create',{method:'POST',headers:h,body:'{}'});
+              const j=await r.json();
+              return JSON.stringify({status:r.status,id:j&&j.data&&j.data.biz_data&&j.data.biz_data.id||null});
+            })()`,
+          );
+          return JSON.parse(res);
+        }
+        if (action === 'challenge') {
+          const res = await wc.executeJavaScript(
+            `(async()=>{
+              const keys=Object.keys(localStorage);
+              let token=null;
+              try{const u=JSON.parse(localStorage.getItem('userToken')||'{}');token=u&&u.value?u.value:null;}catch(e){}
+              const h={'Content-Type':'application/json'};
+              if(token)h.authorization='Bearer '+token;
+              const r=await fetch('/api/v0/chat/create_pow_challenge',{method:'POST',headers:h,body:JSON.stringify({target_path:'/api/v0/chat/completion'})});
+              const j=await r.json();
+              return JSON.stringify({status:r.status,challenge:j&&j.data&&j.data.biz_data&&j.data.biz_data.challenge||null});
+            })()`,
+          );
+          return JSON.parse(res);
+        }
+        if (action === 'completion') {
+          const body = args?.body;
+          const powHeader = args?.powHeader;
+          const res = await wc.executeJavaScript(
+            `(async()=>{
+              let token=null;
+              try{const u=JSON.parse(localStorage.getItem('userToken')||'{}');token=u&&u.value?u.value:null;}catch(e){}
+              const h={'Content-Type':'application/json','Accept':'text/event-stream','x-ds-pow-response':${JSON.stringify(powHeader)}};
+              if(token)h.authorization='Bearer '+token;
+              const r=await fetch('/api/v0/chat/completion',{method:'POST',headers:h,body:${JSON.stringify(JSON.stringify(body))}});
+              if(!r.ok)return JSON.stringify({error:'HTTP '+r.status,text:(await r.text()).slice(0,200)});
+              return JSON.stringify({ok:true,text:await r.text()});
+            })()`,
+          );
+          return JSON.parse(res);
+        }
+        return { error: 'unknown action: ' + action };
+      } catch (e: any) {
+        return { error: e?.message || String(e) };
+      }
+    },
+  );
 
   ipcMain.handle('get-deepseek-session', async () => {
     // Find the embedded webview (a WebContents whose URL is on chat.deepseek.com)
