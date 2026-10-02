@@ -61,6 +61,10 @@ const providers = [
   // openPerspectiveOnboarding(). React Context respects the React tree (not
   // the DOM), and the Settings dialog's children are descendants of whichever
   // providers wrap it from the outside.
+  // AiCapabilitiesContextProvider must be an ANCESTOR of
+  // AiAgentDialogContextProvider: the AI work area's 🧩 button calls
+  // toggleAiCapabilities() to hand over to the squeeze-layout panel.
+  AiCapabilitiesContextProvider,
   PerspectiveOnboardingContextProvider,
   AiAgentDialogContextProvider,
   SettingsDialogContextProvider,
@@ -96,7 +100,6 @@ const providers = [
   ImportMacTagDialogContextProvider,
   FileVersionCleanupDialogContextProvider,
   TodoListContextProvider,
-  AiCapabilitiesContextProvider,
   MenuContextProvider,
 ];
 
