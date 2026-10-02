@@ -17,84 +17,143 @@
  */
 
 /**
- * AI knowledge base panel: browse/search articles about the agent's tools
- * and skills (built-in, live content), read and author user entries.
- * Markdown is rendered with `marked`; editing uses a plain textarea.
+ * AI knowledge base panel: built-in reference articles plus the per-folder
+ * knowledge base stored in `<location>/.ts/ai/kb/*.md` (the same files the
+ * agent reads and writes via its knowledge base tools). Markdown is rendered
+ * with `marked`; user entries are edited as plain markdown text.
  */
 import { marked } from 'marked';
 import {
-  deleteKnowledgeEntry,
+  deleteLocationKbFile,
   getKnowledgeEntries,
   isBuiltInEntry,
-  saveKnowledgeEntry,
+  listLocationKb,
+  writeLocationKb,
   type KBEntry,
 } from '-/services/knowledgeBase';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemText from '@mui/material/ListItemText';
+import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import Box from '@mui/material/Box';
 import DeleteIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import EditIcon from '@mui/icons-material/EditOutlined';
 import AddIcon from '@mui/icons-material/AddOutlined';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-type EditorState = { id?: string; title: string; content: string } | null;
+type EditorState = {
+  existingId?: string;
+  title: string;
+  content: string;
+} | null;
 
 function KnowledgeBasePanel() {
   const { t } = useTranslation();
   const { showNotification } = useNotificationContext();
+  const { locations, findLocation, findLocationByPath } =
+    useCurrentLocationContext();
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string | undefined>(
-    'builtin-tools-vs-skills',
-  );
+  const [selectedId, setSelectedId] = useState<string | undefined>();
   const [editor, setEditor] = useState<EditorState>(null);
   const [version, setVersion] = useState(0);
 
-  const entries = useMemo(() => getKnowledgeEntries(), [version]);
+  const currentLocation = findLocation();
+  const [locationUuid, setLocationUuid] = useState<string | undefined>(
+    currentLocation?.uuid,
+  );
+
+  const kbLocation = useMemo(
+    () =>
+      locations.find((l) => l.uuid === locationUuid) ||
+      currentLocation ||
+      locations[0] ||
+      undefined,
+    [locations, locationUuid, currentLocation],
+  );
+
+  const [locationEntries, setLocationEntries] = useState<KBEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!kbLocation) {
+      setLocationEntries([]);
+      return () => {};
+    }
+    setLoading(true);
+    listLocationKb(kbLocation)
+      .then((entries) => {
+        if (!cancelled) setLocationEntries(entries);
+      })
+      .catch(() => {
+        if (!cancelled) setLocationEntries([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kbLocation, version]);
+
+  const builtinEntries = useMemo(
+    () => (kbLocation ? getKnowledgeEntries() : getKnowledgeEntries()),
+    [version],
+  );
+  const allEntries: KBEntry[] = [...builtinEntries, ...locationEntries];
+
   const query = search.trim().toLowerCase();
-  const filtered = entries.filter(
+  const filtered = allEntries.filter(
     (e) =>
       !query ||
       e.title.toLowerCase().includes(query) ||
       e.content.toLowerCase().includes(query),
   );
-  const selected = entries.find((e) => e.id === selectedId) || filtered[0];
+  const selected = allEntries.find((e) => e.id === selectedId) || filtered[0];
+
+  const html = selected
+    ? (marked.parse(selected.content, { async: false }) as string)
+    : '';
 
   function handleSave() {
-    if (!editor) return;
+    if (!editor || !kbLocation) return;
     const title = editor.title.trim();
     const content = editor.content.trim();
     if (!title || !content) {
       showNotification(t('core:aiCapFillRequired'), 'warning');
       return;
     }
-    const saved = saveKnowledgeEntry({ id: editor.id, title, content });
-    setSelectedId(saved.id);
-    setEditor(null);
-    setVersion((v) => v + 1);
+    writeLocationKb(kbLocation, title, content, editor.existingId)
+      .then((saved) => {
+        setSelectedId(saved.id);
+        setEditor(null);
+        setVersion((v) => v + 1);
+      })
+      .catch((e) => showNotification(String(e), 'warning'));
   }
 
   function handleDelete(id: string) {
-    deleteKnowledgeEntry(id);
-    if (selectedId === id) setSelectedId(undefined);
-    setVersion((v) => v + 1);
+    if (!kbLocation) return;
+    deleteLocationKbFile(kbLocation, id)
+      .then(() => {
+        if (selectedId === id) setSelectedId(undefined);
+        setVersion((v) => v + 1);
+      })
+      .catch((e) => showNotification(String(e), 'warning'));
   }
-
-  const html = selected
-    ? (marked.parse(selected.content, { async: false }) as string)
-    : '';
 
   return (
     <Box sx={{ display: 'flex', height: '100%', minHeight: 0, gap: 1 }}>
       <Box
         sx={{
-          width: 200,
+          width: 220,
           flexShrink: 0,
           display: 'flex',
           flexDirection: 'column',
@@ -104,14 +163,27 @@ function KnowledgeBasePanel() {
           paddingRight: 1,
         }}
       >
+        <TextField
+          select
+          size="small"
+          label={t('core:aiKbLocation')}
+          value={kbLocation?.uuid || ''}
+          onChange={(e) => setLocationUuid(e.target.value)}
+          data-tid="aiKbLocationTID"
+        >
+          {locations.map((l) => (
+            <MenuItem key={l.uuid} value={l.uuid}>
+              {l.name}
+            </MenuItem>
+          ))}
+        </TextField>
         <Button
           variant="outlined"
           size="small"
           startIcon={<AddIcon />}
           data-tid="aiKbAddTID"
-          onClick={() => {
-            setEditor({ title: '', content: '' });
-          }}
+          disabled={!kbLocation}
+          onClick={() => setEditor({ title: '', content: '' })}
         >
           {t('core:aiKbNew')}
         </Button>
@@ -135,7 +207,9 @@ function KnowledgeBasePanel() {
             >
               <ListItemText
                 primary={entry.title}
-                secondary={entry.builtIn ? t('core:aiKbBuiltIn') : undefined}
+                secondary={
+                  isBuiltInEntry(entry.id) ? t('core:aiKbBuiltIn') : undefined
+                }
                 slotProps={{
                   primary: { variant: 'body2', noWrap: true } as any,
                 }}
@@ -218,7 +292,7 @@ function KnowledgeBasePanel() {
                     aria-label={t('core:aiCapEdit')}
                     onClick={() =>
                       setEditor({
-                        id: selected.id,
+                        existingId: selected.id,
                         title: selected.title,
                         content: selected.content,
                       })
@@ -237,7 +311,9 @@ function KnowledgeBasePanel() {
               )}
             </Box>
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-              {new Date(selected.updatedAt).toLocaleString()}
+              {selected.updatedAt
+                ? new Date(selected.updatedAt).toLocaleString()
+                : ''}
             </Typography>
             <div
               className="ai-kb-markdown"
@@ -248,7 +324,7 @@ function KnowledgeBasePanel() {
           </Box>
         ) : (
           <Typography sx={{ margin: 'auto', color: 'text.secondary' }}>
-            {t('core:aiKbEmpty')}
+            {loading ? '…' : t('core:aiKbEmpty')}
           </Typography>
         )}
       </Box>

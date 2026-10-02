@@ -31,6 +31,7 @@ import {
 import { AgentEvent, runAgent } from '-/components/chat/AgentService';
 import { createAgentTools } from '-/components/chat/AgentTools';
 import { buildAgentSystemPrompt } from '-/components/chat/agentPrompt';
+import { makeKbToolDeps } from '-/services/knowledgeBase';
 import { getEnabledCustomSkills } from '-/components/chat/agentCapabilities';
 import TsIconButton from '-/components/TsIconButton';
 import TsSelect from '-/components/TsSelect';
@@ -205,6 +206,7 @@ function AgentPanel() {
       listChildren,
       listLocations: () =>
         locations.map((l) => ({ name: l.name, path: l.path })),
+      ...makeKbToolDeps(findLocationByPath, findLocation),
       currentLocationName: location ? location.name : '',
       currentLocationPath: location ? location.path : '',
       currentDirectoryPath: currentDirectoryPath || '',

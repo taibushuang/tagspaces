@@ -1142,6 +1142,7 @@
   "aiCapParamsSummary": "参数",
   "aiCapEmpty": "还没有内容。",
   "aiKbTab": "知识库",
+  "aiKbLocation": "文件夹",
   "aiKbNew": "新建条目",
   "aiKbSearch": "搜索知识库…",
   "aiKbBuiltIn": "内置",

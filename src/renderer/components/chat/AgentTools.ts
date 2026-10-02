@@ -65,6 +65,18 @@ export type AgentToolDeps = {
   ) => Promise<TS.FileSystemEntry[]>;
   /** Connected locations (name + path) — lets the agent work globally. */
   listLocations: () => Array<{ name: string; path: string }>;
+  /** Per-folder knowledge base in `<location>/.ts/ai/kb/`. */
+  kbList: (
+    locationPath?: string,
+  ) => Promise<
+    Array<{ id: string; title: string; excerpt: string; updatedAt: number }>
+  >;
+  kbRead: (id: string, locationPath?: string) => Promise<string>;
+  kbWrite: (
+    title: string,
+    content: string,
+    locationPath?: string,
+  ) => Promise<{ id: string; path: string }>;
   currentLocationName: string;
   currentDirectoryPath: string;
   selectedEntries: TS.FileSystemEntry[];
@@ -203,6 +215,109 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           locations: locations.map((l) => ({ name: l.name, path: l.path })),
           note: 'organize within each location; moving across locations is not supported',
         };
+      },
+    },
+    {
+      name: 'search_knowledge_base',
+      description:
+        'Search the per-folder knowledge base stored in `<location>/.ts/ai/kb/`. ' +
+        'Returns matching entries (id, title, excerpt). Omit query to list all ' +
+        'entries. Use read_knowledge_entry for full content and ' +
+        'write_knowledge_entry to record results (e.g. after organizing a ' +
+        'folder, write an organizing record).',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'keyword to filter entries by title or content',
+          },
+          locationPath: {
+            type: 'string',
+            description:
+              'absolute location path; defaults to the current location',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        const entries = await deps.kbList(args?.locationPath);
+        const query = String(args?.query || '')
+          .trim()
+          .toLowerCase();
+        const filtered = query
+          ? entries.filter(
+              (e) =>
+                e.title.toLowerCase().includes(query) ||
+                e.excerpt.toLowerCase().includes(query),
+            )
+          : entries;
+        return { count: filtered.length, entries: filtered };
+      },
+    },
+    {
+      name: 'read_knowledge_entry',
+      description:
+        'Read the full content of one knowledge base entry (markdown). ' +
+        'Get ids from search_knowledge_base.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'entry id (file name)' },
+          locationPath: {
+            type: 'string',
+            description:
+              'absolute location path; defaults to the current location',
+          },
+        },
+        required: ['id'],
+      },
+      execute: async (args) => {
+        const id = requireString(args, 'id');
+        try {
+          const content = await deps.kbRead(id, args?.locationPath);
+          return { id, content, truncated: content.length >= 8000 };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'write_knowledge_entry',
+      description:
+        'Write a markdown entry into the folder knowledge base ' +
+        '(<location>/.ts/ai/kb/). Use it to persist organizing records, ' +
+        'summaries of folder structure, or reusable rules discovered while ' +
+        'working. An existing file is never overwritten — a numbered variant ' +
+        'is created instead. Built-in articles cannot be written this way.',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'entry title (becomes the # heading and file name)',
+          },
+          content: {
+            type: 'string',
+            description: 'markdown body (below the title heading)',
+          },
+          locationPath: {
+            type: 'string',
+            description:
+              'absolute location path; defaults to the current location',
+          },
+        },
+        required: ['title', 'content'],
+      },
+      execute: async (args) => {
+        const title = requireString(args, 'title');
+        const content = requireString(args, 'content');
+        try {
+          const saved = await deps.kbWrite(title, content, args?.locationPath);
+          return { ok: true, ...saved };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
       },
     },
     {

@@ -23,6 +23,7 @@
  * localStorage. Content is markdown, rendered with `marked` in the UI.
  */
 
+import { CommonLocation } from '-/utils/CommonLocation';
 import {
   getCustomSkills,
   getCustomTools,
@@ -282,4 +283,173 @@ export function deleteKnowledgeEntry(id: string): void {
 
 export function isBuiltInEntry(id: string): boolean {
   return id.startsWith('builtin-');
+}
+
+// ---------- per-location knowledge base (.ts/ai/kb/*.md) ----------
+
+/** Directory of a location's folder knowledge base. */
+export function kbDirForLocationPath(locationPath: string): string {
+  return `${locationPath.replace(/[\\/]+$/, '')}/.ts/ai/kb`;
+}
+
+function kbSlug(title: string): string {
+  const slug = title
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '')
+    .replace(/\s+/g, '-')
+    .slice(0, 40);
+  return slug || 'entry';
+}
+
+/**
+ * List the knowledge base entries of one location. Each .md file in
+ * `.ts/ai/kb/` is an entry; the title is its first `# ` heading.
+ */
+export async function listLocationKb(
+  location: CommonLocation,
+): Promise<KBEntry[]> {
+  const locationPath = location.path;
+  if (!locationPath) return [];
+  const dir = kbDirForLocationPath(locationPath);
+  let files: Array<any> = [];
+  try {
+    files = (await location.listDirectoryPromise(dir)) || [];
+  } catch (e) {
+    return []; // directory does not exist yet — empty knowledge base
+  }
+  const mdFiles = files.filter(
+    (f) => f.isFile && f.name.toLowerCase().endsWith('.md'),
+  );
+  const entries: KBEntry[] = [];
+  for (const file of mdFiles) {
+    try {
+      const content = await location.loadTextFilePromise(file.path);
+      const titleMatch = content.match(/^#\s+(.+)$/m);
+      entries.push({
+        id: file.name,
+        title: titleMatch
+          ? titleMatch[1].trim()
+          : file.name.replace(/\.md$/i, ''),
+        content,
+        updatedAt: file.lmdt || 0,
+        builtIn: false,
+      });
+    } catch (e) {
+      /* skip unreadable file */
+    }
+  }
+  return entries.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Read one location KB entry (id = file name) with a char guard. */
+export async function readLocationKbFile(
+  location: CommonLocation,
+  id: string,
+): Promise<string> {
+  const dir = kbDirForLocationPath(location.path);
+  const content = await location.loadTextFilePromise(`${dir}/${id}`);
+  return content.slice(0, 8000);
+}
+
+/** Write (or update) a location KB entry as markdown. */
+export async function writeLocationKb(
+  location: CommonLocation,
+  title: string,
+  content: string,
+  existingId?: string,
+): Promise<{ id: string; path: string; updated: boolean }> {
+  const dir = kbDirForLocationPath(location.path);
+  const body = content.startsWith(`# ${title}`)
+    ? content
+    : `# ${title}\n\n${content}`;
+  if (existingId) {
+    const path = `${dir}/${existingId}`;
+    await location.saveTextFilePromise({ path }, body, true);
+    return { id: existingId, path, updated: true };
+  }
+  let id = `${kbSlug(title)}.md`;
+  let path = `${dir}/${id}`;
+  // Never overwrite silently: bump the file name until free.
+  let attempt = 1;
+  while (await location.checkFileExist(path)) {
+    if ((await location.loadTextFilePromise(path).catch(() => '')) === body) {
+      break; // identical content — same entry, just update in place
+    }
+    id = `${kbSlug(title)}-${attempt}.md`;
+    path = `${dir}/${id}`;
+    attempt += 1;
+    if (attempt > 50) break;
+  }
+  await location.saveTextFilePromise({ path }, body, false);
+  return { id, path, updated: false };
+}
+
+/** Delete a location KB entry (id = file name). */
+export async function deleteLocationKbFile(
+  location: CommonLocation,
+  id: string,
+): Promise<void> {
+  const dir = kbDirForLocationPath(location.path);
+  await location.deleteFilePromise(`${dir}/${id}`, false);
+}
+
+/**
+ * Build the agent-tool deps for the per-location knowledge base. Locations
+ * are resolved by path prefix first (the agent may work on a folder other
+ * than the open one), falling back to the current location.
+ */
+export function makeKbToolDeps(
+  findLocationByPath: (path: string) => CommonLocation | undefined,
+  findCurrentLocation: () => CommonLocation | undefined,
+): {
+  kbList: (
+    locationPath?: string,
+  ) => Promise<
+    Array<{ id: string; title: string; excerpt: string; updatedAt: number }>
+  >;
+  kbRead: (id: string, locationPath?: string) => Promise<string>;
+  kbWrite: (
+    title: string,
+    content: string,
+    locationPath?: string,
+  ) => Promise<{ id: string; path: string }>;
+} {
+  const resolve = (locationPath?: string) =>
+    (locationPath && findLocationByPath(locationPath)) || findCurrentLocation();
+  return {
+    kbList: async (locationPath) => {
+      const loc = resolve(locationPath);
+      if (!loc) {
+        throw new Error(
+          'no connected location — open one or pass locationPath',
+        );
+      }
+      const entries = await listLocationKb(loc);
+      return entries.map((e) => ({
+        id: e.id,
+        title: e.title,
+        excerpt: e.content
+          .replace(/^#\s+.+\n?/, '')
+          .replace(/\s+/g, ' ')
+          .slice(0, 200),
+        updatedAt: e.updatedAt,
+      }));
+    },
+    kbRead: async (id, locationPath) => {
+      const loc = resolve(locationPath);
+      if (!loc) {
+        throw new Error('no connected location');
+      }
+      return readLocationKbFile(loc, id);
+    },
+    kbWrite: async (title, content, locationPath) => {
+      const loc = resolve(locationPath);
+      if (!loc) {
+        throw new Error(
+          'no connected location — open one or pass locationPath',
+        );
+      }
+      return writeLocationKb(loc, title, content);
+    },
+  };
 }

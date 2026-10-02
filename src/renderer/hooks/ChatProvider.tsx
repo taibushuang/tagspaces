@@ -20,6 +20,7 @@ import AppConfig from '-/AppConfig';
 import { AgentEvent, runAgent } from '-/components/chat/AgentService';
 import { createAgentTools } from '-/components/chat/AgentTools';
 import { getEnabledCustomSkills } from '-/components/chat/agentCapabilities';
+import { makeKbToolDeps } from '-/services/knowledgeBase';
 import { loadLocationConventions } from '-/components/chat/locationConventions';
 import {
   AIProvider,
@@ -1194,6 +1195,10 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       '  but first check get_description — skip documents that already have an AI summary block,',
       '- finally update the folder description with a hierarchical summary (per sub-folder sections),',
       '  basing it on the child descriptions you just wrote, not on re-reading every document.',
+      'Every folder has its own knowledge base in `.ts/ai/kb/`: search_knowledge_base /',
+      'read_knowledge_entry to consult it; write_knowledge_entry to persist outcomes — after',
+      'organizing a folder, write a record (title like "整理记录 <folder> <date>") listing what',
+      'was moved where, the tags applied and pending items.',
       '',
       `Connected location: ${currentLocation ? currentLocation.name : 'none'}`,
       `Current folder: ${currentDirectoryPath || 'unknown'}`,
@@ -1237,6 +1242,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       listChildren,
       listLocations: () =>
         locations.map((l) => ({ name: l.name, path: l.path })),
+      ...makeKbToolDeps(findLocationByPath, findLocation),
       currentLocationName: currentLocation ? currentLocation.name : '',
       currentLocationPath: currentLocation ? currentLocation.path : '',
       currentDirectoryPath: currentDirectoryPath || '',
