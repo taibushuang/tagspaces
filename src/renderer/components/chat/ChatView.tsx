@@ -34,7 +34,6 @@ import ChatMenu from '-/components/chat/ChatMenu';
 import { AIProvider, ChatMode } from '-/components/chat/ChatTypes';
 import PromptEditDialog from '-/components/chat/PromptEditDialog';
 import SelectChatModel from '-/components/chat/SelectChatModel';
-import TsSwitch from '-/components/TsSwitch';
 import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 import ChatMdEditor from '-/components/md/ChatMdEditor';
 import { CrepeRef } from '-/components/md/useCrepeHandler';
