@@ -46,44 +46,34 @@ const ChatView = React.lazy(
   () => import(/* webpackChunkName: "ChatView" */ '-/components/chat/ChatView'),
 );
 
-const PANEL_WIDTH_KEY = 'tsAiAgentPanelWidth';
 const MIN_WIDTH = 360;
 const DEFAULT_WIDTH = 480;
-
-function readStoredWidth(): number {
-  const stored = Number(localStorage.getItem(PANEL_WIDTH_KEY));
-  return Number.isFinite(stored) && stored >= MIN_WIDTH
-    ? stored
-    : DEFAULT_WIDTH;
-}
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Controlled panel width (persisted by the parent context provider). */
+  width: number;
+  onWidthChange: (width: number) => void;
 }
 
 function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
-  const { open, onClose } = props;
+  const { open, onClose, width, onWidthChange } = props;
   const [view, setView] = useState<'chat' | 'agent'>('chat');
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
-  const [width, setWidth] = useState<number>(readStoredWidth);
   const resizing = useRef(false);
-  const widthRef = useRef(width);
-  widthRef.current = width;
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!resizing.current) return;
       const max = Math.min(window.innerWidth * 0.7, window.innerWidth - 40);
-      setWidth(
+      onWidthChange(
         Math.max(MIN_WIDTH, Math.min(window.innerWidth - e.clientX, max)),
       );
     };
     const onUp = () => {
-      if (!resizing.current) return;
       resizing.current = false;
-      localStorage.setItem(PANEL_WIDTH_KEY, String(widthRef.current));
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -91,7 +81,7 @@ function AiAgentDialog(props: Props) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
-  }, []);
+  }, [onWidthChange]);
 
   return (
     <Drawer

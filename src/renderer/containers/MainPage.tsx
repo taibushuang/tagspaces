@@ -21,6 +21,7 @@ import PageNotification from '-/containers/PageNotification';
 import { FilePropertiesContextProvider } from '-/hooks/FilePropertiesContextProvider';
 import { FullScreenContextProvider } from '-/hooks/FullScreenContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useAiAgentDialogContext } from '-/components/dialogs/hooks/AiAgentDialogContextProvider';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { usePanelsContext } from '-/hooks/usePanelsContext';
@@ -83,6 +84,7 @@ function MainPage() {
   const { openLink, openedEntry, isEntryInFullWidth, setEntryInFullWidth } =
     useOpenedEntryContext();
   const { currentLocationId } = useCurrentLocationContext();
+  const { aiPanelOpen, aiPanelWidth } = useAiAgentDialogContext();
 
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
@@ -418,6 +420,12 @@ function MainPage() {
                 className={clsx(classes.content, {
                   [classes.contentShift]: !drawerOpened,
                 })}
+                style={{
+                  // Make room for the AI work area so the main toolbar and
+                  // folder view stay fully visible while the panel is open.
+                  paddingRight: aiPanelOpen ? aiPanelWidth : 0,
+                  transition: 'padding-right 225ms cubic-bezier(0, 0, 0.2, 1)',
+                }}
               >
                 {renderContainers()}
               </main>
