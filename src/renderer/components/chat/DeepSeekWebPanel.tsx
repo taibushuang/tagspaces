@@ -37,6 +37,7 @@ import { marked } from 'marked';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { writeLocationKb } from '-/services/knowledgeBase';
+import { buildDeepseekPowResponse } from '-/services/deepseekPow';
 import { useTranslation } from 'react-i18next';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -199,6 +200,35 @@ function DeepSeekWebPanel() {
       headers.authorization = requestRef.headers.authorization;
     }
 
+    // Every completion requires a fresh proof-of-work (DeepSeekHashV1).
+    // Ask for a challenge, solve it with the bundled worker, and attach the
+    // x-ds-pow-response header exactly like the web client does.
+    try {
+      const challengeResp = await fetch(
+        'https://chat.deepseek.com/api/v0/chat/create_pow_challenge',
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            target_path: url.replace('https://chat.deepseek.com', ''),
+          }),
+        },
+      );
+      if (challengeResp.ok) {
+        const chJson = await challengeResp.json();
+        const ch = chJson?.data?.biz_data?.challenge;
+        if (ch && ch.algorithm === 'DeepSeekHashV1') {
+          const powHeader = await buildDeepseekPowResponse({
+            ...ch,
+            target_path: url.replace('https://chat.deepseek.com', ''),
+          });
+          headers['x-ds-pow-response'] = powHeader;
+        }
+      }
+    } catch (e) {
+      /* PoW optional per request — proceed without and let the server judge */
+    }
+
     setStreaming(true);
     setAcc({ content: '', thinking: '', citations: [] });
     let buffered = '';
@@ -233,22 +263,28 @@ function DeepSeekWebPanel() {
           if (data === '[DONE]') continue;
           try {
             const json = JSON.parse(data);
-            const delta = json?.choices?.[0]?.delta || {};
-            const chunk = {
-              content:
-                delta.content || json?.content || json?.message?.content || '',
-              thinking:
-                delta.reasoning_content ||
-                json?.reasoning_content ||
-                json?.message?.reasoning_content ||
-                '',
-              citations: delta.citations || json?.citations || undefined,
-            };
-            setAcc((prev) => ({
-              content: prev.content + chunk.content,
-              thinking: prev.thinking + chunk.thinking,
-              citations: chunk.citations || prev.citations,
-            }));
+            // DeepSeek streams plain text chunks as {"v":"..."} (also inside
+            // {"p":...,"o":"APPEND","v":"..."} patch ops); the ready event
+            // carries response_message_id = next parent_message_id.
+            if (typeof json.v === 'string' && json.v) {
+              setAcc((prev) => ({ ...prev, content: prev.content + json.v }));
+            }
+            if (Number.isInteger(json.response_message_id)) {
+              parentId.current = json.response_message_id;
+            }
+            if (Array.isArray(json.references) && json.references.length) {
+              setAcc((prev) => ({ ...prev, citations: json.references }));
+            }
+            const msgObj = json.v?.response;
+            if (msgObj?.references?.length) {
+              setAcc((prev) => ({ ...prev, citations: msgObj.references }));
+            }
+            if (typeof json.reasoning_content === 'string') {
+              setAcc((prev) => ({
+                ...prev,
+                thinking: prev.thinking + json.reasoning_content,
+              }));
+            }
           } catch (e) {
             /* keep-alive / non-JSON chunk */
           }
