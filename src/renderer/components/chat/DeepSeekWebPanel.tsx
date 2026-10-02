@@ -285,7 +285,15 @@ function DeepSeekWebPanel() {
     : '';
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Box
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        paddingX: 1.5,
+        paddingTop: 0.5,
+      }}
+    >
       <Tabs
         value={mode}
         onChange={(e, v) => setMode(v)}
@@ -330,6 +338,7 @@ function DeepSeekWebPanel() {
             display: 'flex',
             flexDirection: 'column',
             gap: 1,
+            paddingBottom: 1.5,
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
