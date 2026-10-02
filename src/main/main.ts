@@ -32,6 +32,7 @@ import buildDesktopMenu from './electron-menus';
 import buildTrayMenu from './electron-tray-menu';
 import { getExtensions } from './extension-utils';
 import loadMainEvents from './mainEvents';
+import { initDeepseekWebObserver } from './deepseekWebObserver';
 import protocol from './protocol';
 import settings from './settings';
 import { Extensions } from './types';
@@ -129,6 +130,8 @@ const browserWindowOptions: BrowserWindowConstructorOptions = {
     contextIsolation: true,
     sandbox: true,
     nodeIntegration: false,
+    // Embedded webview for the DeepSeek web (free account) integration.
+    webviewTag: true,
     // AI gateways are called directly from the renderer (chat, agent tool
     // loop, model checks). Chromium's CORS would silently kill every request
     // to gateways whose preflight does not allow `Authorization` (e.g. Ark),
@@ -665,8 +668,9 @@ app.on('web-contents-created', (event, contents) => {
     // Disable Node.js integration
     webPreferences.nodeIntegration = false;
 
-    // Verify URL being loaded
-    if (!params.src.startsWith('file://')) {
+    // Only the DeepSeek web app is allowed as an embedded webview; anything
+    // else is blocked (the renderer stays our trusted code).
+    if (!params.src.startsWith('https://chat.deepseek.com/')) {
       event.preventDefault();
     }
   });
@@ -746,6 +750,7 @@ app
       });
 
       loadMainEvents();
+      initDeepseekWebObserver();
 
       ipcMain.on('load-extensions', () => {
         getExtensions(

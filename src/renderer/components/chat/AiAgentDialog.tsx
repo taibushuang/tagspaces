@@ -28,6 +28,7 @@ import { CloseIcon } from '-/components/CommonIcons';
 import AgentPanel from '-/components/chat/AgentPanel';
 import KnowledgeBasePanel from '-/components/chat/KnowledgeBasePanel';
 import AiCapabilitiesPanel from '-/components/chat/AiCapabilitiesPanel';
+import DeepSeekWebPanel from '-/components/chat/DeepSeekWebPanel';
 import { useTranslation } from 'react-i18next';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
@@ -60,7 +61,7 @@ function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
   const { open, onClose, width, onWidthChange } = props;
   const [view, setView] = useState<
-    'chat' | 'agent' | 'kb' | 'tools' | 'skills'
+    'chat' | 'agent' | 'kb' | 'tools' | 'skills' | 'deepseek'
   >('chat');
   const resizing = useRef(false);
 
@@ -158,6 +159,11 @@ function AiAgentDialog(props: Props) {
             label={t('core:aiCapSkillsTab')}
             data-tid="aiSkillsTabTID"
           />
+          <Tab
+            value="deepseek"
+            label={t('core:deepseekTab')}
+            data-tid="aiDeepseekTabTID"
+          />
         </Tabs>
         <IconButton aria-label={t('core:close')} onClick={onClose} size="small">
           <CloseIcon />
@@ -181,6 +187,8 @@ function AiAgentDialog(props: Props) {
             hideTabs
             onClose={() => setView('agent')}
           />
+        ) : view === 'deepseek' ? (
+          <DeepSeekWebPanel />
         ) : (
           <Suspense
             fallback={<CircularProgress size={24} sx={{ margin: 'auto' }} />}
