@@ -1142,6 +1142,7 @@
   "aiCapParamsSummary": "Parameters",
   "aiCapEmpty": "Nothing here yet.",
   "aiKbTab": "Knowledge base",
+  "deepseekThinking": "Thinking",
   "deepseekTab": "DeepSeek 网页",
   "deepseekWebMode": "Web (login)",
   "deepseekApiMode": "Programmatic chat",

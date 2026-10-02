@@ -1142,6 +1142,7 @@
   "aiCapParamsSummary": "参数",
   "aiCapEmpty": "还没有内容。",
   "aiKbTab": "知识库",
+  "deepseekThinking": "思考过程",
   "deepseekTab": "DeepSeek 网页",
   "deepseekWebMode": "网页版（登录）",
   "deepseekApiMode": "程序化对话",

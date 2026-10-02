@@ -208,7 +208,24 @@ export function initDeepseekWebObserver(): void {
               if(token)h.authorization='Bearer '+token;
               const r=await fetch('/api/v0/chat/completion',{method:'POST',headers:h,body:${JSON.stringify(JSON.stringify(body))}});
               if(!r.ok)return JSON.stringify({error:'HTTP '+r.status,text:(await r.text()).slice(0,200)});
-              return JSON.stringify({ok:true,text:await r.text()});
+              const reader=r.body.getReader();
+              const dec=new TextDecoder();
+              let text='';let buf='';
+              for(;;){
+                const {done,value}=await reader.read();
+                if(done)break;
+                buf+=dec.decode(value,{stream:true});
+                const lines=buf.split('\\n');
+                buf=lines.pop()||'';
+                for(const ln of lines){
+                  if(ln.trim().startsWith('data:')){
+                    text+=ln+'\\n';
+                    // forward each SSE chunk to the host via console-message
+                    console.log('[ds-stream]'+ln.trim());
+                  }
+                }
+              }
+              return JSON.stringify({ok:true,text});
             })()`,
           );
           return JSON.parse(res);

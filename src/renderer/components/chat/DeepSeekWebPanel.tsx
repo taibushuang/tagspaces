@@ -168,6 +168,34 @@ function DeepSeekWebPanel() {
 
     setStreaming(true);
     setAcc({ content: '', thinking: '', citations: [] });
+    // Streaming: the webview drive script forwards each SSE chunk via
+    // console.log('[ds-stream]...'), which the host receives as the webview's
+    // 'console-message' event — render incrementally as chunks arrive.
+    let streamBuf = '';
+    let streamTimer: number | undefined;
+    const flushStream = () => {
+      const parsed = parseDeepseekStream(streamBuf);
+      if (parsed.nextParent) {
+        parentId.current = parsed.nextParent;
+      }
+      setAcc({
+        content: parsed.content,
+        thinking: parsed.thinking,
+        citations: parsed.citations,
+      });
+    };
+    const onWebviewConsole = (ev: any) => {
+      const msg: string = ev?.message || '';
+      if (!msg.startsWith('[ds-stream]')) return;
+      streamBuf += msg.replace('[ds-stream]', '') + '\n';
+      if (streamTimer) return;
+      streamTimer = window.setTimeout(() => {
+        streamTimer = undefined;
+        flushStream();
+      }, 50);
+    };
+    const wvEl = webviewRef.current as any;
+    wvEl?.addEventListener?.('console-message', onWebviewConsole);
     try {
       // 1) Ask for a fresh PoW challenge from INSIDE the webview — DeepSeek's
       //    WAF rejects cross-origin calls from the app page, so all
@@ -205,16 +233,10 @@ function DeepSeekWebPanel() {
         );
         return;
       }
-      const parsed = parseDeepseekStream(res.text);
-      if (parsed.nextParent) {
-        parentId.current = parsed.nextParent;
-      }
-      setAcc({
-        content: parsed.content,
-        thinking: parsed.thinking,
-        citations: parsed.citations,
-      });
-      if (!parsed.content) {
+      // Final flush with the complete text (catches any trailing chunks).
+      streamBuf = res.text;
+      flushStream();
+      if (!streamBuf.replace(/^data:[^\n]*\n/g, '').trim()) {
         showNotification(
           t('core:deepseekErr', { msg: 'empty answer' }),
           'warning',
@@ -226,6 +248,8 @@ function DeepSeekWebPanel() {
         'warning',
       );
     } finally {
+      if (streamTimer) window.clearTimeout(streamTimer);
+      wvEl?.removeEventListener?.('console-message', onWebviewConsole);
       setStreaming(false);
     }
   }
@@ -362,7 +386,16 @@ function DeepSeekWebPanel() {
           </Box>
           {(acc.content || acc.thinking) && (
             <Box
-              sx={{ overflowY: 'auto', flexGrow: 1, minHeight: 0 }}
+              sx={{
+                overflowY: 'auto',
+                flexGrow: 1,
+                minHeight: 0,
+                border: '1px solid',
+                borderColor: 'divider',
+                borderRadius: 1,
+                padding: 1.5,
+                backgroundColor: 'background.paper',
+              }}
               data-tid="deepseekAnswerTID"
             >
               {acc.thinking && (
@@ -372,16 +405,38 @@ function DeepSeekWebPanel() {
                     borderBottom: '1px solid',
                     borderColor: 'divider',
                     marginBottom: 1,
+                    paddingBottom: 1,
+                    fontSize: 12,
+                    whiteSpace: 'pre-wrap',
                   }}
-                  dangerouslySetInnerHTML={{ __html: thinkingHtml }}
-                />
+                >
+                  <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                    {t('core:deepseekThinking')}
+                  </Typography>
+                  <div dangerouslySetInnerHTML={{ __html: thinkingHtml }} />
+                </Box>
               )}
-              <div dangerouslySetInnerHTML={{ __html: html }} />
+              <div
+                className="ai-kb-markdown"
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+              {streaming && (
+                <Typography
+                  component="span"
+                  sx={{
+                    color: 'text.secondary',
+                    animation: 'dsblink 1s step-end infinite',
+                    '@keyframes dsblink': { '50%': { opacity: 0 } },
+                  }}
+                >
+                  ▍
+                </Typography>
+              )}
               {acc.citations?.length > 0 && (
                 <Typography
                   variant="caption"
                   component="div"
-                  sx={{ color: 'text.secondary' }}
+                  sx={{ color: 'text.secondary', marginTop: 1 }}
                 >
                   {t('core:deepseekCitations')}: {acc.citations.join(' | ')}
                 </Typography>
