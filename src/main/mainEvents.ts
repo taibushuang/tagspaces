@@ -46,6 +46,7 @@ import {
 import { readMacOSTags } from './macUserTags';
 import registerSecureStorageEvents from './secureStorage';
 import initTodoStore from './todoStoreIpc';
+import { searchWeb, fetchWeb } from './openWebSearch';
 
 // let watcher: FSWatcher;
 const progress: Record<string, any> = {};
@@ -902,4 +903,63 @@ export default function loadMainEvents() {
       output: 'Everything search is only available on Windows',
     }));
   }
+
+  // Opens the OS privacy settings page where the user grants this app access
+  // to protected folders (macOS TCC: Desktop/Downloads/Documents).
+  ipcMain.handle('openPrivacySettings', async () => {
+    try {
+      if (process.platform === 'darwin') {
+        await shell.openExternal(
+          'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles',
+        );
+        return { ok: true, platform: 'darwin' };
+      }
+      if (process.platform === 'win32') {
+        await shell.openExternal('ms-settings:privacy-broadfilesystemaccess');
+        return { ok: true, platform: 'win32' };
+      }
+      return {
+        ok: false,
+        error:
+          'no privacy settings page on this platform — grant folder access manually',
+      };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  // Disk initialization scan. Works on macOS/Linux (fs traversal) and returns
+  // an explicit error on Windows until the Everything integration lands.
+  ipcMain.handle('initScan', async (_event, options) => {
+    try {
+      const { scanDisks } = require('./diskScanner');
+      return await scanDisks(options || {});
+    } catch (err: any) {
+      return {
+        dirs: [],
+        extHistogram: [],
+        largestDirs: [],
+        truncated: false,
+        scannedRoots: [],
+        platform: process.platform,
+        error: `Disk scan error: ${err.message}`,
+      };
+    }
+  });
+
+  // Web tools for the AI agent, backed by the local open-websearch MCP daemon.
+  ipcMain.handle('webSearch', async (_event, args) => {
+    try {
+      return await searchWeb(args || {});
+    } catch (err: any) {
+      return { error: err?.message || String(err) };
+    }
+  });
+  ipcMain.handle('fetchWeb', async (_event, args) => {
+    try {
+      return await fetchWeb(args || {});
+    } catch (err: any) {
+      return { error: err?.message || String(err) };
+    }
+  });
 }

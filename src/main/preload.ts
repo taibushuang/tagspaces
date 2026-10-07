@@ -9,10 +9,14 @@ import {
 
 export type Channels =
   | 'searchEverything'
+  | 'openPrivacySettings'
   | 'getEverythingDebugInfo'
   | 'everythingEnsureRunning'
   | 'installEverything'
+  | 'initScan'
   | 'isWorkerAvailable'
+  | 'webSearch'
+  | 'fetchWeb'
   | 'fetchUrl'
   | 'fetchUrlBuffer'
   | 'probeContentType'
@@ -67,6 +71,7 @@ export type Channels =
   | 'getDirProperties'
   | 'folderChanged'
   | 'set_extensions'
+  | 'open-cmd-file'
   | 'play-pause'
   | 'cmd'
   | 'toggle-about-dialog'

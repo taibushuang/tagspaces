@@ -23,11 +23,27 @@ import {
 } from '@tagspaces/tagspaces-common/paths';
 import JSZip from 'jszip';
 import * as mm from 'music-metadata';
-import { getDocument } from 'pdfjs-dist/build/pdf.min.mjs';
+import { loadFileContentPromise } from './utils-io';
+
 import TgaLoader from 'tga-js';
 import UTIF from 'utif.ts';
-import { loadFileContentPromise } from './utils-io';
-import('pdfjs-dist/build/pdf.worker.min.mjs');
+
+// pdfjs-dist (~426KB minified) must stay out of the main startup bundle: it
+// is only needed for PDF thumbnail/text extraction, never on the
+// file-association preview path. Load both the library and its worker side
+// effect on first use and cache the promise.
+let pdfjsPromise:
+  | Promise<typeof import('pdfjs-dist/build/pdf.min.mjs')>
+  | undefined;
+function loadPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = Promise.all([
+      import('pdfjs-dist/build/pdf.min.mjs'),
+      import('pdfjs-dist/build/pdf.worker.min.mjs'),
+    ]).then(([pdfjs]) => pdfjs);
+  }
+  return pdfjsPromise;
+}
 
 let maxSize = AppConfig.maxThumbSize;
 const pdfMaxSize = 1000;
@@ -189,6 +205,7 @@ export async function extractPDFcontent(
   let extractedText = '';
   if (arrayBuffer) {
     try {
+      const { getDocument } = await loadPdfjs();
       const pdfDocument = await getDocument(arrayBuffer).promise;
       for (let i = 1; i <= pdfDocument.numPages; i++) {
         const page = await pdfDocument.getPage(i);
@@ -213,6 +230,7 @@ export async function generatePDFThumbnail(
 
   try {
     // Load the PDF document
+    const { getDocument } = await loadPdfjs();
     loadingTask = getDocument({ data: arrayBuffer });
     const pdf = await loadingTask.promise;
 

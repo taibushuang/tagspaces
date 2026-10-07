@@ -25,6 +25,7 @@ import { getAuthor } from '-/reducers/settings';
 import { EditorStatus } from '@milkdown/core';
 import { Crepe } from '@milkdown/crepe';
 import { Milkdown, useEditor } from '@milkdown/react';
+import { replaceAll } from '@milkdown/kit/utils';
 import { format } from 'date-fns';
 import React, { useEffect, useRef } from 'react';
 import { useSelector } from 'react-redux';
@@ -49,7 +50,12 @@ const ChatMdEditor = React.forwardRef<CrepeRef, ChatMdEditorProps>(
       [chatHistoryItems, showCurrent],
     );
 
-    // Use Milkdown's useEditor, but only recreate the editor when currentFolder changes
+    // Use Milkdown's useEditor, but only recreate the editor when the opened
+    // file changes. Streaming tokens mutate chatHistoryItems on every delta,
+    // which would destroy and recreate the editor mid-flight and race the
+    // list-item-block plugin's pending dispatch calls (crash: "Context
+    // editorState not found"). Content updates are pushed incrementally via
+    // the effect below instead.
     const { get, loading } = useEditor(
       (root) => {
         // Destroy previous instance if exists
@@ -79,10 +85,28 @@ const ChatMdEditor = React.forwardRef<CrepeRef, ChatMdEditorProps>(
         });
         return crepe;
       },
-      [openedEntry?.path, chatHistoryItems],
+      [openedEntry?.path],
     );
 
     useCrepeHandler(ref, () => crepeInstanceRef.current, get, loading);
+
+    // Keep stable accessors so the content effect below does not re-run on
+    // every render (get/loading are new identities each render).
+    const editorAccessRef = useRef({ get, loading });
+    editorAccessRef.current = { get, loading };
+
+    // Push streaming/chat content updates into the live editor without
+    // recreating it. The initial value is set by the factory above, so this
+    // only needs to handle subsequent changes (update is a no-op while the
+    // editor is not yet created).
+    useEffect(() => {
+      const { get: getEditor, loading: editorLoading } =
+        editorAccessRef.current;
+      const editor = getEditor();
+      if (editorLoading || !editor || editor.status !== EditorStatus.Created)
+        return;
+      editor.action(replaceAll(formattedChatContent));
+    }, [formattedChatContent]);
 
     // Scroll to bottom when markdown content changes
     useEffect(() => {

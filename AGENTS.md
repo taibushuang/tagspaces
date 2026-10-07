@@ -58,6 +58,11 @@
   第二个进程会立即自行退出并把焦点还给已有实例（锁按 userData 目录隔离，
   `-p` 便携目录不同的实例仍可并存）。这意味着手动 `electron .`、dev watcher
   重启、误双击都不可能再产生并行实例——看到进程数 >1 才是异常。
+  2026-10-05 起，second-instance / macOS `open-file` 携带受支持文件
+  （`.md` 等）时走 `openPathInRunningWindow`：复用现有窗口、经
+  `open-cmd-file` IPC 让渲染层直接打开预览（不再新开整窗），这是
+  文件关联秒开预览优化的关键路径；主进程 `createWindow` 也不再 await
+  i18nInit（菜单/dock 等语言包就绪后再绑定）。
 - 双实例的历史危害：共用 userData 的两个实例存储引擎互相覆盖，曾把用户配置
   的 AI provider 清空过。
 - 启动机制要清楚：`npm run start` → `start:renderer` 里的 **concurrently 会同时
@@ -186,7 +191,9 @@
 
 **设计文档**：[`DESIGN-ai-agent.md`](DESIGN-ai-agent.md)。基于现有 AI 基础设施（`ChatProvider` / `AiClient` / `OpenAIClient`，全部在渲染层）扩展的轻量 tool-calling agent，**零新依赖**。
 
-**使用**：两个入口 —— ① 主工具栏右侧的 **AI Agent 按钮**（🤖 图标，弹窗内含完整聊天）；② 打开文件夹后 EntryContainer 的 AI Tab。两处都有 **Agent** 开关（localStorage `tsAiAgentMode`）。开启后消息走工具循环，工具步骤以 `🔧 name(args) → 结果` 流入聊天 markdown。Provider 需为 OpenAI 兼容引擎（Kimi/DeepSeek/火山方舟/内网网关均已加入 `aiPresets.ts` 预设），API Key 在设置 → AI 的每个引擎卡片内填写。
+**使用**：两个入口 —— ① 主工具栏右侧的 **AI Agent 按钮**（🤖 图标，右侧 Drawer，内含唯一对话面板 `AgentPanel`：会话列表、工具调用卡片、模型选择、导出 md/html、prompt 历史）；② 打开文件夹后 EntryContainer 的 AI Tab（`ChatView`，仅供文件侧栏使用）。所有对话都走工具循环，工具步骤以可折叠卡片（🔧 name(args) → 结果）展示。Provider 需为 OpenAI 兼容引擎（Kimi/DeepSeek/火山方舟/内网网关均已加入 `aiPresets.ts` 预设），API Key 在设置 → AI 的每个引擎卡片内填写。
+
+**单对话入口（2026-10-04 合并）**：AI 弹窗原 `chat`/`agent` 两个 tab 已合并 —— `AiAgentDialog` 默认且仅渲染 `AgentPanel`；系统提示词统一走 `agentPrompt.ts` 的共享 `buildAgentSystemPrompt`（ChatProvider 内的重复版本已删除）；`ChatProvider.agentMode`/`setAgentMode`（localStorage `tsAiAgentMode`）为死代码已删除，`ChatView` 直接调 `newAgentMessage`。
 
 **AI 技能与工具页面（2026-10-02 起"挤占式"）**：`AiCapabilitiesPanel.tsx`（浏览/搜索工具与技能、开关内置工具、自定义 HTTP 工具与 prompt 技能）不再是从 AI 弹窗里弹出的嵌套 Dialog，而是遵循通用"挤占式"原则——`AiCapabilitiesContextProvider`（isAiCapabilitiesOpen + toggleAiCapabilities）由 `RenderPerspective` 在内容区渲染面板替代文件夹内容。入口：AI Agent 弹窗右上角扩展按钮（Extension 图标，点击后关闭 AI 弹窗并打开内容区面板）、面板右上角 ✕ 关闭。旧 `AiCapabilitiesDialog.tsx` 已删除。
 
@@ -211,7 +218,26 @@ description 只放精华。单测 `tests/unit/agentDescription.test.js`。
 
 **后续新增（均已落地，详见 `TODO-ai-capabilities.md` 与 `DESIGN-ai-agent.md` §7）**：`set_description`（人工内容保护）、`move_file`（分拣归档）、`write_deliverable`（.md/.txt 文档产出，含文本回复/文件两种目标模式，不覆盖人写文件）；`search_files` 支持 tscmd 风格操作符（`+tag`/`-tag`/`|tag`/`--type`）；约定文件注入 `locationConventions.ts`（location 根 `CLAUDE.md`/`AGENTS.md` → system prompt）；`list_folder` recursive + 携带描述、`get_description`（分层汇总前置）。设置页「保存并验证」含 tool-calling 能力探测（`checkAgentSupport`，不支持时 warning 提示）。
 
+**联网搜索三工具（2026-10-06 移植自 novelist-app）**：`web_search`（搜网页返标题/URL/摘要，快）、`fetch_web`（抓单页正文，默认 ≤6000 字）、`deepseek_search`（DeepSeek 网页自带联网的深度搜索，综合多来源出结论+引用，慢 10-45s）。
+- `web_search`/`fetch_web` 走**本机 open-websearch 服务**（MCP，`http://127.0.0.1:3000/mcp`）：主进程 `src/main/openWebSearch.ts` 是 MCP 客户端（novelist `webSearch.cjs` 的 TS 翻译：SSE + mcp-session-id 会话、引擎白名单 `KNOWN_ENGINES`（默认 `[bing,baidu,juejin]`）、连接错误自动拉起 daemon（`OPEN_WEBSEARCH_SCRIPT` env 可覆盖，默认 `~/Claude/openWebSearch/scripts/start-daemon.sh`）、fetch 先 request 后浏览器兜底 + 反爬页断言）。IPC：`webSearch`/`fetchWeb`（mainEvents 注册，preload Channels 已加），渲染层 `AgentTools.ts` 工具调 IPC。单测 `tests/unit/openWebSearch.test.js`。
+- `deepseek_search` 走 DeepSeek 网页会话（**需 AI 弹窗 DeepSeek 标签打开且已登录**）：渲染层 AgentTools 内实现，复用 `deepseek-web-drive` IPC（create-session/challenge/completion with `search_enabled:true`）+ `deepseekPow.ts`（`buildDeepseekPowResponse` + `parseDeepseekStream`）；模块级串行队列 + 会话状态（parent_message_id 链式，必须串行）+ 45s 超时；webview 未打开时返回友好错误。
+- 护栏：fetch 内容截断 ≤6000 字；引擎白名单过滤；工具错误回传模型不中断；system prompt 引导联网工具并禁止编造 URL。
+
+**文件夹整理四工具（2026-10-06 移植自开源 [moli-xia/desktop-cleaner](https://github.com/moli-xia/desktop-cleaner)（MIT）的 cleaner_core 逻辑）**：`organize_preview`（只读分类预览：按扩展名把目录直接子项分到目标子文件夹，报告跳过项及原因）、`organize_apply`（执行移动：自动建分类文件夹、绝不覆盖、写历史记录）、`organize_undo`（按记录恢复：指纹校验文件未变才恢复、原路径被占用时改 "name (1).ext" 保留两份）、`organize_history`（列记录）。
+- 规则引擎：`src/renderer/utils/fileOrganizer.ts`（纯函数、无 electron 依赖、可单测）。默认分类 Documents/Images/Videos/Audio/Archives/Apps/Other + `__FOLDER__` 文件夹分类；扩展名小写化/复合（`.tar.gz`）/最长后缀优先；`excludedExtensions`（默认 `.lnk`/`.url`）、`maxFileSizeMb`（默认 100MB）、`includeFolders`；跳过系统/隐藏项（`.` 开头、desktop.ini、thumbs.db）、符号链接、已有分类文件夹、默认保留普通文件夹；`validateMovePlan` 拒绝路径逃逸/非直接子项/目标层级错误。`config` 参数可完全自定义（空扩展名分类为兜底、必须有 `__FOLDER__` 分类，校验对齐原项目）。
+- 历史记录：`src/renderer/utils/organizeHistory.ts`（localStorage `tsOrganizeHistory`，最多 20 条），每条含 root/config/日期/逐项 {original, moved, category, fingerprint, state}。
+- 移动实现：`AgentToolDeps.moveToPath(sourcePath, targetPath)`（ChatProvider 用 `moveFilesPromise` 精确目标移动：自动创建目标父目录、目标已存在即拒绝），比 `moveFile`（只能按原文件名移入文件夹）多出"改名保留两份"能力，供 undo 使用。
+- 流程护栏（system prompt 引导）：先 `organize_preview` 展示分类去向并**征得用户同意**再 `organize_apply`；可只整理部分；误整理用 `organize_undo`。与 disk-organize 的下一轮"收件箱自动归类"衔接（`list_folder` Downloads → 依规则 `organize_apply`）。单测 `tests/unit/fileOrganizer.test.js`。
+
 **已知限制**：自签名证书的内网网关会被渲染层 Chromium 网络栈拒绝（需装企业 CA 或后续加主进程代理）；`/v1/models` 列表不可用的端点（如方舟套餐）需在设置里手动添加模型。CORS 已解决：主进程窗口 `webSecurity: false`（main.ts），因为方舟等网关的 CORS 预检不放行 `Authorization` 且 Electron webRequest 拦不到预检，聊天/Agent/验证直连才能通（2026-09-27，已在真实应用内实测 200）。
+
+**内置技能 `disk-organize`（2026-10-03 落地）**：面向新用户的全局初始化——先一次性访谈（≤3 轮问完职业画像/频繁任务/领域隔离/现有目录习惯/同步需求）→ `init_scan` 定向扫描磁盘 → `write_deliverable` 出《归类方案》+ `write_knowledge_entry` 存收件箱归类映射规则 → 用户批准后 `create_location` 实施。收件箱默认建议复用系统 Downloads，**必须在方案阶段交给用户确认**。幂等：localStorage `tsDiskInitState`（`finish_disk_init` 工具写标记），未执行过时 AgentPanel 持续展示引导卡片与 CTA。隐私：只读、不上传、跳过敏感目录（.ssh/钥匙串/浏览器数据/聊天记录等）。
+- `src/main/diskScanner.ts` — 跨平台定向扫描纯逻辑（无 electron 依赖，可单测）：macOS 走 fs 递归（限深度、跳过系统/敏感目录、容忍 EPERM/EACCES）；**Windows 分支留空占位**（返回 error，Everything 集成待补）。护栏：目录 ≤50、扩展名 Top 20、超时截断
+- `src/renderer/components/chat/AgentTools.ts` — `init_scan`（调 `initScan` IPC）/ `create_location`（复用 `useCurrentLocationContext.addLocation`，路径已存在拒绝）/ `finish_disk_init`
+- `src/main/mainEvents.ts` — `ipcMain.handle('initScan', ...)`；`preload.ts` 的 `Channels` 加 `'initScan'`
+- `agentPrompt.ts` — `DISK_ORGANIZE_SKILL` 指令块（一次性访谈清单 + 流水线 + 收件箱需确认 + 隐私声明 + 幂等声明）
+- `tests/unit/diskScanner.test.js` — 聚合/黑名单跳过/截断护栏/profile→扩展名映射
+- **收件箱每日自动归类闭环（2026-10-06 已实现）**：`mark_inbox_organized` 工具（确定性完成钩子，`src/renderer/utils/inboxOrganize.ts` 存每收件箱"上次整理时间"标记，localStorage `tsInboxLastOrganized`）+ AgentPanel 每日提醒卡片（disk-init 完成后，列出每个收件箱里 `lmdt` 晚于上次标记的新文件数与「整理收件箱」按钮，按钮用 `handleSend` 播种每日 pass 指令）+ 提示词把 inbox 引导收紧为「每日 inbox pass」流程（read_disk_init → list_folder → 依规则 move_file（copy 模式 keepSource）→ 无规则命中用 organize_preview/apply 类型归档兜底 → 打标签 → write_knowledge_entry 写整理记录 → mark_inbox_organized）。单测 `tests/unit/inboxOrganize.test.js` + organizeTools 集成用例。
 
 ### 待办（Todo）
 

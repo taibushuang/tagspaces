@@ -1779,6 +1779,7 @@ export const DirectoryContentContextProvider = ({
     currentDirectoryDirs.current,
     isSearchMode.current,
     searchQuery.current,
+    currentPerspective,
   ]);
 
   return (

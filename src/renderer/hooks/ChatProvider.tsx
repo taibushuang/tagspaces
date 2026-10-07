@@ -18,8 +18,12 @@
 
 import AppConfig from '-/AppConfig';
 import { AgentEvent, runAgent } from '-/components/chat/AgentService';
-import { createAgentTools } from '-/components/chat/AgentTools';
+import {
+  createAgentTools,
+  readDiskInitState,
+} from '-/components/chat/AgentTools';
 import { getEnabledCustomSkills } from '-/components/chat/agentCapabilities';
+import { buildAgentSystemPrompt } from '-/components/chat/agentPrompt';
 import { makeKbToolDeps } from '-/services/knowledgeBase';
 import { loadLocationConventions } from '-/components/chat/locationConventions';
 import {
@@ -70,6 +74,7 @@ import {
 } from '-/services/zodObjects';
 import { TS } from '-/tagspaces.namespace';
 import useFirstRender from '-/utils/useFirstRender';
+import { CommonLocation } from '-/utils/CommonLocation';
 import { formatDateTime } from '@tagspaces/tagspaces-common/misc';
 import {
   extractFileExtension,
@@ -152,9 +157,6 @@ type ChatData = {
   generationSettings: GenerationSettings;
   setGenerationSettings: (genSettings: any) => void;
   resetGenerationSettings: (option: generateOptionType) => void;
-  /** Agent mode: chat requests run the tool-calling loop. */
-  agentMode: boolean;
-  setAgentMode: (enabled: boolean) => void;
   newAgentMessage: (msg: string) => Promise<any>;
 };
 
@@ -191,8 +193,6 @@ export const ChatContext = createContext<ChatData>({
   generationSettings: undefined,
   setGenerationSettings: undefined,
   resetGenerationSettings: undefined,
-  agentMode: false,
-  setAgentMode: undefined,
   newAgentMessage: undefined,
 });
 
@@ -220,6 +220,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     deleteDirectory,
     setDescriptionChange,
     moveFiles,
+    copyFiles,
     saveTextFilePromise,
   } = useIOActionsContext();
   const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
@@ -229,9 +230,10 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const { tagGroups } = useEditedTagLibraryContext();
   const { openFileUploadDialog } = useFileUploadDialogContext();
   const { selectedEntries } = useSelectedEntriesContext();
-  const { findLocation, findLocationByPath, locations } =
+  const { findLocation, findLocationByPath, locations, addLocation } =
     useCurrentLocationContext();
-  const { saveFilePromise, deleteEntriesPromise } = usePlatformFacadeContext();
+  const { saveFilePromise, deleteEntriesPromise, moveFilesPromise } =
+    usePlatformFacadeContext();
   const { openedEntry } = useOpenedEntryContext();
   const models = useRef<ModelResponse[]>([]);
   const defaultAiProvider: AIProvider = useSelector(getDefaultAIProvider);
@@ -255,14 +257,6 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const aiClient = useRef<AiClient>(undefined);
   const agentAbortController = useRef<AbortController>(undefined);
   const lastProviderId = useRef<string>(defaultAiProvider?.id);
-  const [agentMode, setAgentModeState] = useReducer(
-    (state: boolean, enabled: boolean) => {
-      localStorage.setItem('tsAiAgentMode', enabled ? 'true' : 'false');
-      return enabled;
-    },
-    // The chat tab IS the agent now — there is no UI toggle anymore.
-    true,
-  );
   const dispatch: AppDispatch = useDispatch();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const currentLocation = findLocation();
@@ -1173,66 +1167,6 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     }
   }
 
-  function buildAgentSystemPrompt(conventions: string): string {
-    const language = interfaceLanguage || 'en';
-    const selected = (selectedEntries || [])
-      .slice(0, 10)
-      .map(
-        (e) =>
-          `- ${e.path}${e.tags?.length ? ' [tags: ' + e.tags.map((t) => t.title).join(', ') + ']' : ''}`,
-      )
-      .join('\n');
-    return [
-      'You are the TagSpaces AI Agent, a file management assistant embedded in the TagSpaces application.',
-      'You can search files, inspect tags and text content, and add/remove tags through the provided tools.',
-      "Prefer calling tools over guessing about the user's files. Use concise, lowercase tag titles.",
-      'Never invent file paths — only use paths returned by tools or given by the user.',
-      'After tool calls, briefly summarize in text what you did or found.',
-      'For "summarize this document/folder" requests, write the result with the set_description tool for the relevant file or folder (concise), in addition to replying.',
-      'When asked to file or sort documents (e.g. an inbox), move each item into its destination folder with move_file first, then tag it with set_description/read_file_text as needed. Never overwrite existing files.',
-      'When asked to scan, review or summarize a folder, follow this default procedure:',
-      '- list_folder with recursive=true, then read each document with read_file_text,',
-      '- write a concise summary of every document into its description via set_description,',
-      '  but first check get_description — skip documents that already have an AI summary block,',
-      '- finally update the folder description with a hierarchical summary (per sub-folder sections),',
-      '  basing it on the child descriptions you just wrote, not on re-reading every document.',
-      'Every folder has its own knowledge base in `.ts/ai/kb/`: search_knowledge_base /',
-      'read_knowledge_entry to consult it; write_knowledge_entry to persist outcomes — after',
-      'organizing a folder, write a record (title like "整理记录 <folder> <date>") listing what',
-      'was moved where, the tags applied and pending items.',
-      '',
-      `Connected location: ${currentLocation ? currentLocation.name : 'none'}`,
-      `Current folder: ${currentDirectoryPath || 'unknown'}`,
-      ...(getEnabledCustomSkills().length > 0
-        ? [
-            'User-defined skills — when the request matches a skill, follow its instruction:',
-            ...getEnabledCustomSkills().flatMap((s) => [
-              `### Skill: ${s.name}`,
-              s.instruction,
-            ]),
-          ]
-        : []),
-      'For goal-driven requests (produce a report, plan or answer document):',
-      '- identify the relevant folders: list_folder (recursive) and search_files with tag/type operators, guided by folder and file descriptions;',
-      '- read the relevant documents with read_file_text, plus related knowledge notes;',
-      '- synthesize the requested content and write it as a markdown file with write_deliverable (choose a sensible location and filename; respect the location conventions about output folders);',
-      '- deliverable modes — follow what the goal asks for:',
-      '  * "Reply plan (text)" / 计划或答复类目标: reply the plan directly in chat as text — do NOT write a file;',
-      '  * "document/report" / 文档类目标: write the full content with write_deliverable and reply with the output path;',
-      '  * if the goal does not specify a mode, default to a text reply for plans and answers, and to a file for documents meant to be kept.',
-      `Always reply in the language the user writes in — a message written in Chinese MUST get a Chinese reply. UI language (${language}) is only a fallback when the user's language is unclear.`,
-      ...(conventions
-        ? [
-            `Location conventions written by the user (CLAUDE.md) — follow them closely:`,
-            conventions,
-          ]
-        : []),
-      selected ? `\nCurrently selected entries:\n${selected}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-  }
-
   function buildAgentTools() {
     const locationForPath = (path: string) =>
       findLocationByPath(path) || findLocation() || undefined;
@@ -1258,14 +1192,85 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
             new Error('source path is not inside any connected location'),
           );
         }
-        if (!tgtLoc || srcLoc.uuid !== tgtLoc.uuid) {
+        if (!tgtLoc) {
           return Promise.reject(
             new Error(
-              'cross-location move is not supported — organize within each folder',
+              'target path is not inside any connected location — create or connect the destination first',
             ),
           );
         }
-        return moveFiles([sourcePath], targetFolderPath, srcLoc.uuid);
+        const srcIsCloud = !!srcLoc.haveObjectStoreSupport?.();
+        const tgtIsCloud = !!tgtLoc.haveObjectStoreSupport?.();
+        if ((srcIsCloud || tgtIsCloud) && srcLoc.uuid !== tgtLoc.uuid) {
+          return Promise.reject(
+            new Error(
+              'cross-location move involving a cloud location is not supported',
+            ),
+          );
+        }
+        return moveFiles([sourcePath], targetFolderPath, tgtLoc.uuid);
+      },
+      moveToPath: (sourcePath: string, targetPath: string) => {
+        const srcLoc = locationForPath(sourcePath);
+        const tgtLoc = locationForPath(targetPath);
+        if (!srcLoc) {
+          return Promise.reject(
+            new Error('source path is not inside any connected location'),
+          );
+        }
+        if (!tgtLoc) {
+          return Promise.reject(
+            new Error(
+              'target path is not inside any connected location — create or connect the destination first',
+            ),
+          );
+        }
+        const srcIsCloud = !!srcLoc.haveObjectStoreSupport?.();
+        const tgtIsCloud = !!tgtLoc.haveObjectStoreSupport?.();
+        if ((srcIsCloud || tgtIsCloud) && srcLoc.uuid !== tgtLoc.uuid) {
+          return Promise.reject(
+            new Error(
+              'cross-location move involving a cloud location is not supported',
+            ),
+          );
+        }
+        return moveFilesPromise([[sourcePath, targetPath]], srcLoc.uuid).then(
+          (results: any[]) => {
+            const err = (results || []).find(
+              (r) => r instanceof Error || (r && r.message),
+            );
+            if (err) {
+              throw err instanceof Error ? err : new Error(String(err));
+            }
+            return true;
+          },
+        );
+      },
+      copyFile: (sourcePath: string, targetFolderPath: string) => {
+        const srcLoc = locationForPath(sourcePath);
+        const tgtLoc = locationForPath(targetFolderPath);
+        if (!srcLoc) {
+          return Promise.reject(
+            new Error('source path is not inside any connected location'),
+          );
+        }
+        if (!tgtLoc) {
+          return Promise.reject(
+            new Error(
+              'target path is not inside any connected location — create or connect the destination first',
+            ),
+          );
+        }
+        const srcIsCloud = !!srcLoc.haveObjectStoreSupport?.();
+        const tgtIsCloud = !!tgtLoc.haveObjectStoreSupport?.();
+        if ((srcIsCloud || tgtIsCloud) && srcLoc.uuid !== tgtLoc.uuid) {
+          return Promise.reject(
+            new Error(
+              'cross-location copy involving a cloud location is not supported',
+            ),
+          );
+        }
+        return copyFiles([sourcePath], targetFolderPath, tgtLoc.uuid);
       },
       loadTextFile: (path: string) => {
         const loc = locationForPath(path);
@@ -1303,6 +1308,30 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         Promise.resolve(
           currentLocation.saveTextFilePromise({ path }, content, overwrite),
         ).then(() => undefined),
+      createLocation: (
+        name: string,
+        locationPath: string,
+        options?: { isDefault?: boolean; isReadOnly?: boolean },
+      ) => {
+        if (locations.some((l) => l.path === locationPath)) {
+          return Promise.reject(
+            new Error('location already connected: ' + locationPath),
+          );
+        }
+        addLocation(
+          new CommonLocation({
+            uuid: getUuid(),
+            name,
+            type: '0',
+            path: locationPath,
+            paths: [locationPath],
+            isDefault: Boolean(options?.isDefault),
+            isReadOnly: Boolean(options?.isReadOnly),
+          }),
+          false,
+        );
+        return Promise.resolve({ ok: true, name, path: locationPath });
+      },
     });
   }
 
@@ -1357,7 +1386,21 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     addHistoryItem(msg, 'user');
     const conventions = await loadLocationConventions(currentLocation);
     const messages = [
-      { role: 'system', content: buildAgentSystemPrompt(conventions) },
+      {
+        role: 'system',
+        content: buildAgentSystemPrompt({
+          locationName: currentLocation ? currentLocation.name : '',
+          currentDirectoryPath: currentDirectoryPath || '',
+          selectedEntries,
+          language: interfaceLanguage || 'en',
+          conventions,
+          customSkills: getEnabledCustomSkills().map((s) => ({
+            name: s.name,
+            instruction: s.instruction,
+          })),
+          diskInitState: readDiskInitState() ?? undefined,
+        }),
+      },
       ...history,
       { role: 'user', content: msg },
     ];
@@ -1663,8 +1706,6 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       currentModel: currentModel.current,
       chatHistoryItems: chatHistoryItems.current,
       generationSettings: generationSettings.current,
-      agentMode,
-      setAgentMode: (enabled: boolean) => setAgentModeState(enabled),
       newAgentMessage,
       checkOllamaModels,
       refreshOllamaModels,
@@ -1693,7 +1734,6 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       resetGenerationSettings,
     };
   }, [
-    agentMode,
     defaultAiProvider,
     isTyping.current,
     models.current,

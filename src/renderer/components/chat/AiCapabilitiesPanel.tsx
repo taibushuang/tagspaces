@@ -32,6 +32,8 @@ import {
   getCustomSkills,
   getCustomTools,
   getDisabledTools,
+  getSkillUseCounts,
+  getToolCallCounts,
   sanitizeToolFunctionName,
   saveCustomSkill,
   saveCustomTool,
@@ -131,6 +133,8 @@ function AiCapabilitiesPanel(props: Props) {
   const customTools = getCustomTools();
   const customSkills = getCustomSkills();
   const disabledTools = new Set(getDisabledTools());
+  const toolCounts = getToolCallCounts();
+  const skillCounts = getSkillUseCounts();
 
   const query = search.trim().toLowerCase();
   const matches = (text: string) =>
@@ -262,6 +266,7 @@ function AiCapabilitiesPanel(props: Props) {
     onToggle: (enabled: boolean) => void,
     onEdit?: () => void,
     onDelete?: () => void,
+    count?: number,
   ) {
     return (
       <Box
@@ -276,9 +281,27 @@ function AiCapabilitiesPanel(props: Props) {
         }}
       >
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-            {name}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+              {name}
+            </Typography>
+            {count ? (
+              <Typography
+                variant="caption"
+                component="span"
+                sx={{
+                  color: 'text.secondary',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 999,
+                  paddingX: 0.5,
+                  lineHeight: 1.4,
+                }}
+              >
+                {t('core:aiCapCallCount', { count })}
+              </Typography>
+            ) : null}
+          </Box>
           <Typography
             variant="caption"
             sx={{ display: 'block', color: 'text.secondary' }}
@@ -416,6 +439,7 @@ function AiCapabilitiesPanel(props: Props) {
                   deleteCustomTool(def.id);
                   bump();
                 },
+                toolCounts[def.name],
               ),
             )}
             <Typography variant="subtitle2" sx={{ marginTop: 2 }}>
@@ -433,6 +457,9 @@ function AiCapabilitiesPanel(props: Props) {
                   setToolEnabled(t2.name, enabled);
                   bump();
                 },
+                undefined,
+                undefined,
+                toolCounts[t2.name],
               ),
             )}
           </Box>
@@ -475,6 +502,7 @@ function AiCapabilitiesPanel(props: Props) {
                   deleteCustomSkill(def.id);
                   bump();
                 },
+                skillCounts[def.id],
               ),
             )}
             <Typography variant="subtitle2" sx={{ marginTop: 2 }}>
@@ -489,7 +517,27 @@ function AiCapabilitiesPanel(props: Props) {
                   borderColor: 'divider',
                 }}
               >
-                <Typography variant="body2">{t(s.nameKey)}</Typography>
+                <Box
+                  sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}
+                >
+                  <Typography variant="body2">{t(s.nameKey)}</Typography>
+                  {skillCounts[s.id] ? (
+                    <Typography
+                      variant="caption"
+                      component="span"
+                      sx={{
+                        color: 'text.secondary',
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 999,
+                        paddingX: 0.5,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {t('core:aiCapCallCount', { count: skillCounts[s.id] })}
+                    </Typography>
+                  ) : null}
+                </Box>
                 <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                   {t(s.descKey)}
                 </Typography>

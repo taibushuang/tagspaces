@@ -182,7 +182,14 @@ export const actions = {
     dispatch(SettingsActions.upgradeSettings()); // TODO call this only on app version update
     const state = getState();
     if (getCheckForUpdateOnStartup(state)) {
-      dispatch(SettingsActions.checkForUpdate());
+      if (getURLParameter('cmdopen')) {
+        // File-association preview path: the update check is a remote XHR
+        // (10s timeout) that competes with startup for CPU/network. Defer it
+        // until the preview is well underway instead of skipping it entirely.
+        setTimeout(() => dispatch(SettingsActions.checkForUpdate()), 5000);
+      } else {
+        dispatch(SettingsActions.checkForUpdate());
+      }
     }
     setTimeout(() => {
       setGlobalShortcuts(isGlobalKeyBindingEnabled(state));

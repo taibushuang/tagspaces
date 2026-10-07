@@ -1,11 +1,31 @@
 # TODO：AI 能力建设路线（后续目标）
 
-> 创建：2026-09-27；重排：2026-09-28
+> 创建：2026-09-27；重排：2026-09-28；追加：2026-10-06
 > 场景目标态：`DESIGN-office-ai-workflow.md`（办公场景 AI 工作流）
 > 背景：AI Agent 基础集成已合入（commit `77b056732`）。本文档记录与官方
 > （tagspaces.org）AI 路线对比后的差距分析，以及后续建设目标。
 > 参考：`DESIGN-ai-agent.md`（Agent 基础设计）、官方 6.11 博客、tscmd 博客、
 > 官方 Claude Code second-brain 教程。
+
+## 当前状态与接下来（2026-10-06 续接点）
+
+**本次会话已落地**（详见文末"已完成"）：联网搜索三工具（web_search /
+fetch_web / deepseek_search）、desktop-cleaner 文件夹整理四工具
+（organize_preview / apply / undo / history）、收件箱每日自动归类闭环
+（mark_inbox_organized + AgentPanel 每日提醒卡片）。全部通过
+`tsc --noEmit` + 全量单测 551 例 + `build:renderer`。
+
+**剩余待办（按建议顺序续）**：
+1. **薄 MCP server**（Phase 6-③）——总路线收口，把 AgentTools 包成
+   MCP stdio server，外部 agent 复用同一套文件体系；
+2. **xlsx 任务表产出**（Phase 2 `create_spreadsheet`）——补齐"办公三动作"
+   最后一环（分拣✅ 任务表 汇总✅）；
+3. **Phase 1 验收①：方舟端到端工具链验证**（search_files→add_tags 实机）；
+4. **Phase 3 分层汇总实机验收**（3 层嵌套 + 50+ 文档首跑/增量跑、核对调用次数）；
+5. **Phase 6 会话持久化迁移**（tsAiAgentSessions → `.ts/ai/agent.json`）、
+   **tscmd CLI 评估**；
+6. **Phase 7 工作流学习与自动化技能**（P0 应用内最小闭环 → P1 外部网页
+   playwright sidecar → P2 自愈）。
 
 ## 已定决策（2026-09-28 讨论结论）
 
@@ -107,6 +127,73 @@
       验收：Claude Code 配置该 MCP 后，能用自然语言完成
       「给某文件夹 pdf 打标签」。
 
+## Phase 7 — 工作流学习与自动化技能（学习 → 沉淀 → 回放）
+
+> 2026-10-06 讨论定稿。目标：让内置 Agent 能"看会"用户带它做的操作流程，
+> 沉淀为可回放的自动化技能——对齐本文件开头的长期目标（蒸馏重复流程），
+> 并把 Agent 能力从"应用内文件操作"扩展到"外部网页/在线系统"。
+
+### 已定决策
+
+- **学习方式 = 演示式录制**，不做全量被动监听（隐私噪音大、无意义事件多）。
+  用户带 Agent 把流程做一遍（每步复述确认），Agent 记录结构化轨迹后
+  参数化（识别路径/标签/URL 等变量，向用户确认）。
+- **执行 = 确定性回放**：技能保存为步骤 DSL，回放时逐步直接执行、不逐步
+  问 LLM（快、省网关费用、结果可复现）；LLM 只在学习/保存时和回放失败
+  自愈时介入。
+- **操作分两层，语义层优先**：TagSpaces 内操作记语义级步骤（直接复用
+  `AgentTools` 现有工具：`add_tags`/`move_file`/`search_files`…，UI 改版
+  不受影响）；外部网页记 UI 级步骤（navigate/click/fill/snapshot/extract，
+  基于无障碍树 role+name 定位，不用脆弱 CSS 选择器）。
+- **外部网页驱动 = playwright-core sidecar**（纯 JS、无原生模块，符合
+  "打包无原生依赖"红线）；`channel: 'msedge'` 直连 Windows 自带 Edge，
+  不下载 Chromium；日常走 `--remote-debugging-port=9222` + `connectOverCDP`
+  接管已登录会话（免登录是外部网页自动化的命门）。主进程挂载照
+  `deepseek-web-drive` / `todoStoreIpc.ts` 惯例（mainEvents + preload Channels）。
+- **护栏**：回放前 dry-run 展示步骤清单；`confirm: true` 的步骤逐个确认；
+  全程写执行日志（供自愈与改进）；可逆操作优先、目标已存在不覆盖，
+  沿用 `AgentTools.ts` 现有护栏哲学。
+
+### 技能文件格式（存 `userData/skills/`，可选同步到 location `.ts/skills/` 跨机携带）
+
+```json
+{
+  "id": "weekly-invoice-sort",
+  "name": "每周发票归档",
+  "params": [{ "name": "inboxDir", "default": "C:/Users/x/Downloads" }],
+  "steps": [
+    { "tool": "list_folder", "args": { "path": "{{inboxDir}}", "recursive": true } },
+    { "tool": "browser_navigate", "args": { "url": "https://intraview.company/tax" } },
+    { "tool": "browser_fill", "args": { "role": "textbox", "name": "发票号", "value": "{{invoiceNo}}" } },
+    { "tool": "add_tags", "args": { "tag": "已报销" }, "confirm": true }
+  ]
+}
+```
+
+### 交付物
+
+- [ ] **P0 最小闭环（纯应用内，不依赖 Playwright，mac 可开发验证）**
+      `AgentTools.ts` 新增 `skill_record_start/stop`（捕获工具调用轨迹草稿）、
+      `skill_save`（LLM 归纳为参数化 DSL，用户确认后落盘）、
+      `skill_run`（dry-run + 逐步回放 + 执行日志）、`skill_list`；
+      技能 DSL 校验与回放执行器写成纯逻辑模块（可单测，照 `todoStore.ts` 惯例）；
+      `agentPrompt.ts` 增加 `LEARN-WORKFLOW` 元技能块（照
+      `DISK_ORGANIZE_SKILL` 写法：访谈 → 演示 → 参数化 → 确认保存）。
+      验收：带 Agent 演示一个应用内流程一遍 → 存为技能 → 一句话回放成功。
+- [ ] **P1 打通外部网页（Windows 目标场景）**
+      `src/main/webDrive.ts` sidecar（playwright-core + msedge channel +
+      CDP 接管模式）+ `browser_*` 工具组（走 IPC）；
+      i18n、AI 技能与工具页面（`AiCapabilitiesPanel`）列出技能。
+      验收：一个真实内网网页流程（查数据 → 存回 TagSpaces 打标签）端到端跑通。
+- [ ] **P2 自愈与优化**
+      回放失败时把无障碍快照 + 错误喂给 LLM 重新定位元素并修订技能（修订
+      需用户确认）；执行日志定期让 Agent 提出流程改进建议。
+
+### 明确不做（本 Phase 内）
+
+- 原生桌面客户端 UI 自动化（Playwright 管不了；PowerShell UIAutomation
+  方向另行评估，不混入本期）
+
 ## 不做清单（防跑偏）
 
 - Ollama 任何增强、离线 AI 场景（`OllamaClient.ts` 仅保留上游代码）
@@ -127,3 +214,27 @@
 - [x] write_text_file 工具（目标驱动的报告/文档产出；后更名为
       `write_deliverable`，并新增目标模式：文本回复 vs 文件产出，
       `9526dfaa0`..`095a2b5e7`）
+- [x] 联网搜索三工具（2026-10-06，移植自 novelist-app）：`web_search` /
+      `fetch_web` 走主进程 `src/main/openWebSearch.ts`（本机 open-websearch
+      MCP 客户端，引擎白名单、daemon 自动拉起、fetch 先 request 后浏览器兜底
+      + 反爬断言）；`deepseek_search` 渲染层复用 `deepseek-web-drive` IPC +
+      `deepseekPow.ts`（需 DeepSeek 网页版登录）。IPC `webSearch`/`fetchWeb`
+      （mainEvents + preload Channels）。单测 `tests/unit/openWebSearch.test.js`。
+- [x] 文件夹整理四工具（2026-10-06，移植自开源 moli-xia/desktop-cleaner
+      MIT）：`organize_preview` / `organize_apply` / `organize_undo` /
+      `organize_history`。规则引擎 `src/renderer/utils/fileOrganizer.ts`
+      （纯函数：扩展名分类/复合扩展名/最长后缀优先、跳过隐藏与系统项、
+      绝不覆盖、`validateMovePlan` 防逃逸）；历史记录
+      `src/renderer/utils/organizeHistory.ts`（localStorage）；移动走
+      `AgentToolDeps.moveToPath`（ChatProvider/AgentPanel 用 moveFilesPromise
+      精确目标移动，自动建目标目录、目标已存在即拒绝）。单测
+      `tests/unit/fileOrganizer.test.js` + organizeTools 集成用例。
+- [x] 收件箱每日自动归类闭环（2026-10-06，disk-organize 二期）：`mark_inbox_organized`
+      工具 + `src/renderer/utils/inboxOrganize.ts`（每收件箱"上次整理时间"
+      标记，localStorage `tsInboxLastOrganized`）+ AgentPanel 每日提醒卡片
+      （有 `lmdt` 晚于标记的新文件时显示路径+数量与「整理收件箱」按钮，
+      `handleSend` 播种每日 pass 指令）+ agentPrompt 收紧为「每日 inbox pass」
+      流程（read_disk_init → list_folder → 依规则 move_file（copy 模式
+      keepSource）→ 无规则命中用 organize_preview/apply 兜底 → 打标签 →
+      write_knowledge_entry 写整理记录 → mark_inbox_organized）。单测
+      `tests/unit/inboxOrganize.test.js` + organizeTools 集成用例。

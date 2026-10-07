@@ -16,6 +16,7 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  screen,
   session,
   shell,
   utilityProcess,
@@ -75,7 +76,17 @@ if (!gotSingleInstanceLock) {
   app.quit();
   process.exit(0);
 }
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
+  // Windows/Linux hand over the requested file via argv when the app is
+  // already running (file association). Reuse the running window instead of
+  // booting a second full app window.
+  const fileArg = argv.find((arg) =>
+    SUPPORTED_EXTS.has(path.extname(arg).toLowerCase()),
+  );
+  if (fileArg) {
+    openPathInRunningWindow(fileArg);
+    return;
+  }
   const win = BrowserWindow.getAllWindows()[0];
   if (win) {
     if (win.isMinimized()) win.restore();
@@ -147,10 +158,18 @@ const browserWindowOptions: BrowserWindowConstructorOptions = {
   },
 };
 
-const defaultAppSize = {
-  defaultWidth: 1280,
-  defaultHeight: 800,
-};
+// Launch size (2026-10-03: 1280x800 -> 1600x1000). Must be computed lazily
+// because `screen` is only usable after the app `ready` event.
+const preferredAppSize = { width: 1600, height: 1000 };
+function getDefaultAppSize() {
+  // Clamp to the primary display's work area (excludes menu bar and Dock) so
+  // the window never opens larger than the screen it is created on.
+  const { workArea } = screen.getPrimaryDisplay();
+  return {
+    defaultWidth: Math.min(preferredAppSize.width, workArea.width),
+    defaultHeight: Math.min(preferredAppSize.height, workArea.height),
+  };
+}
 
 // --- DevTools Extension Installer ---
 const installExtensions = async () => {
@@ -325,7 +344,7 @@ function createNewWindowInstance(url?: string) {
     createWindow(appI18N);
     return;
   }
-  const mainWindowState = windowStateKeeper(defaultAppSize);
+  const mainWindowState = windowStateKeeper(getDefaultAppSize());
   const newWindowInstance = new BrowserWindow({
     ...browserWindowOptions,
     width: mainWindowState.width,
@@ -344,6 +363,27 @@ function createNewWindowInstance(url?: string) {
   newWindowInstance.setMenuBarVisibility(false);
   if (url) newWindowInstance.loadURL(url);
   else newWindowInstance.loadURL(resolveHtmlPath('index.html'));
+}
+
+// Reuse an existing window when the OS hands over a file while the app is
+// already running (file-association double-click / CLI): focus the window and
+// let the renderer open the file via the 'open-cmd-file' channel instead of
+// booting a whole second app window. Falls back to a new window only when
+// none exists (e.g. macOS with all windows closed).
+function openPathInRunningWindow(filePath: string) {
+  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+  if (!win) {
+    createNewWindowInstance(
+      resolveHtmlPath('index.html') +
+        '?cmdopen=' +
+        encodeURIComponent(filePath),
+    );
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  win.webContents.send('open-cmd-file', filePath);
 }
 
 // --- Menu Binding ---
@@ -475,13 +515,38 @@ const createWindow = async (i18n: any) => {
     ]);
   }
 
-  const mainWindowState = windowStateKeeper(defaultAppSize);
+  const mainWindowState = windowStateKeeper(getDefaultAppSize());
+  // Restore the last user-chosen position; only center when there is no
+  // saved bounds yet (first launch), otherwise `center` would override them.
+  const hasSavedBounds =
+    Number.isInteger(mainWindowState.x) && Number.isInteger(mainWindowState.y);
 
   mainWindow = new BrowserWindow({
     ...browserWindowOptions,
     width: mainWindowState.width,
     height: mainWindowState.height,
+    x: mainWindowState.x,
+    y: mainWindowState.y,
+    center: !hasSavedBounds,
   });
+  // Persist size/position while the window lives and on close, so the next
+  // launch starts from the bounds the user last left (see getDefaultAppSize
+  // for the first-launch fallback).
+  mainWindowState.manage(mainWindow);
+  // electron-window-state only flushes to disk when the window closes; also
+  // flush (debounced, after the library's own in-memory debounce) while the
+  // user is dragging/resizing so a crash doesn't lose the last bounds.
+  let boundsSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  const flushBounds = () => {
+    clearTimeout(boundsSaveTimer);
+    boundsSaveTimer = setTimeout(
+      () => mainWindowState.saveState(mainWindow),
+      600,
+    );
+  };
+  mainWindow.on('resize', flushBounds);
+  mainWindow.on('move', flushBounds);
+  mainWindow.on('closed', () => clearTimeout(boundsSaveTimer));
   // @ts-ignore
   mainWindow.fileChanged = false;
   // @ts-ignore
@@ -554,14 +619,17 @@ const createWindow = async (i18n: any) => {
   mainWindow.on('close', (e) => {
     // @ts-ignore
     if (mainWindow.fileChanged || mainWindow.descriptionChanged) {
+      // Window creation no longer waits for i18n (startup speed); fall back
+      // to translation keys if the user closes before language packs resolve.
+      const t = (key: string) => (appI18N ? appI18N.t(key) : key);
       const choice = dialog.showMessageBoxSync(mainWindow, {
         type: 'question',
-        buttons: [i18n.t('cancel'), i18n.t('closeApp')],
+        buttons: [t('cancel'), t('closeApp')],
         defaultId: 1,
         cancelId: 0,
-        title: i18n.t('unsavedChanges'),
-        message: i18n.t('unsavedChangesMessage'),
-        detail: i18n.t('unsavedChangesDetails'),
+        title: t('unsavedChanges'),
+        message: t('unsavedChangesMessage'),
+        detail: t('unsavedChangesDetails'),
       });
       if (choice === 0) e.preventDefault();
       // No action needed for "Close Application", window will close
@@ -582,11 +650,16 @@ const createWindow = async (i18n: any) => {
     },
   );
 
-  try {
-    bindAppMenu(i18n);
-    bindTrayMenu(i18n);
-  } catch (ex) {
-    console.log('buildMenus', ex);
+  if (appI18N) {
+    // Bound here only when i18n is already ready; window creation no longer
+    // awaits i18nInit (startup speed), so on first launch the menus are bound
+    // once i18nInit resolves — see the whenReady handler below.
+    try {
+      bindAppMenu(appI18N);
+      bindTrayMenu(appI18N);
+    } catch (ex) {
+      console.log('buildMenus', ex);
+    }
   }
 
   // Open urls in the user's browser
@@ -604,10 +677,9 @@ app.on('open-file', (event, filePath) => {
   event.preventDefault(); // important — prevents default macOS behavior
   startupFilePath = filePath;
   if (app.isReady()) {
-    const startupParameter = '?cmdopen=' + encodeURIComponent(startupFilePath);
-    const url = resolveHtmlPath('index.html') + startupParameter;
-    createNewWindowInstance(url);
-  } else {
+    // App already running: reuse the existing window instead of booting a
+    // second full app window (openLink from 'open-cmd-file' in the renderer).
+    openPathInRunningWindow(filePath);
   }
 });
 
@@ -615,17 +687,9 @@ if (!isDebug) {
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
     app.quit();
-  } else {
-    // Windows and Linux solution for opening files
-    app.on('second-instance', (event, argv) => {
-      const fileArg = argv.find((arg) =>
-        SUPPORTED_EXTS.has(path.extname(arg).toLowerCase()),
-      );
-      const startupParameter = '?cmdopen=' + encodeURIComponent(fileArg);
-      const url = resolveHtmlPath('index.html') + startupParameter;
-      createNewWindowInstance(url);
-    });
   }
+  // 'second-instance' (including file handover) is handled by the unified
+  // top-level handler near the single-instance lock above.
 }
 
 app.on('window-all-closed', () => {
@@ -702,7 +766,147 @@ app
   .whenReady()
   .then(() => {
     startWS();
-    return i18nInit().then((i18n) => {
+    // Startup speed: boot the window immediately — i18n only feeds the
+    // menus/dock/tray and initializes in parallel (i18nInit below). The IPC
+    // handlers below must register right away: the renderer starts calling
+    // them (e.g. the cmdopen preview path) as soon as the page loads.
+    createWindow(appI18N);
+
+    protocol.initialize();
+
+    // --- IPC Main Handlers ---
+    ipcMain.on('show-main-window', showApp);
+    ipcMain.on('create-new-window', (e, url) => createNewWindowInstance(url));
+    ipcMain.on('file-changed', (e, isChanged) => {
+      // @ts-ignore
+      if (mainWindow) mainWindow.fileChanged = isChanged;
+    });
+    ipcMain.on('description-changed', (e, isChanged) => {
+      // @ts-ignore
+      if (mainWindow) mainWindow.descriptionChanged = isChanged;
+    });
+
+    loadMainEvents();
+    initDeepseekWebObserver();
+    initDeepseekPowSolver();
+
+    ipcMain.on('load-extensions', () => {
+      getExtensions(
+        path.join(app.getPath('userData'), 'tsplugins'),
+        ['@tagspaces/extensions', '@tagspacespro/extensions'],
+        true,
+      )
+        .then(({ extensions, supportedFileTypes }) => {
+          const setExtensions: Extensions = {
+            extensions,
+            supportedFileTypes,
+          };
+          mainWindow?.webContents.send('set_extensions', setExtensions);
+        })
+        .catch((err) => console.error('load-extensions', err));
+    });
+
+    ipcMain.on('focus-window', () => mainWindow?.focus());
+    ipcMain.on('get-user-home-path', (event) => {
+      event.returnValue = app.getPath('home');
+    });
+    ipcMain.on('worker-response', (event, arg) => {
+      mainWindow?.webContents.send(arg.id, arg);
+    });
+    ipcMain.on('app-data-path-request', (event) => {
+      event.returnValue = app.getPath('appData');
+    });
+    // Returns the raw contents of <userData>/extconfig.json so the renderer
+    // can apply a profile-folder override that survives reinstalls. Returns
+    // an empty string when the file is missing, unreadable, or exceeds the
+    // 5 MB ceiling enforced by the renderer's loader.
+    ipcMain.on('get-user-ext-config', (event) => {
+      try {
+        const filePath = path.join(app.getPath('userData'), 'extconfig.json');
+        if (fs.existsSync(filePath)) {
+          const stat = fs.statSync(filePath);
+          if (stat.size <= 5 * 1024 * 1024) {
+            event.returnValue = fs.readFileSync(filePath, 'utf8');
+            return;
+          }
+          console.warn(`extconfig.json in userData exceeded 5 MB — ignored.`);
+        }
+      } catch (e) {
+        console.warn('get-user-ext-config failed:', e);
+      }
+      event.returnValue = '';
+    });
+    ipcMain.on('app-version-request', (event) => {
+      event.returnValue = app.getVersion();
+    });
+    ipcMain.on('set-language', (e, language) => {
+      appI18N?.changeLanguage(language);
+    });
+    ipcMain.on('setZoomFactor', (event, zoomLevel) => {
+      BrowserWindow.getFocusedWindow()?.webContents.setZoomFactor(zoomLevel);
+    });
+    ipcMain.on('toggle-devtools', () => {
+      BrowserWindow.getFocusedWindow()?.webContents.toggleDevTools();
+    });
+
+    ipcMain.on('global-shortcuts-enabled', (e, globalShortcuts) => {
+      globalShortcutsEnabled = globalShortcuts;
+      try {
+        if (appI18N) bindTrayMenu(appI18N);
+      } catch (ex) {
+        console.log('buildMenus', ex);
+      }
+      if (globalShortcutsEnabled) {
+        globalShortcut.register('CommandOrControl+Shift+F', showSearch);
+        globalShortcut.register('CommandOrControl+Shift+P', resumePlayback);
+        globalShortcut.register('MediaPlayPause', resumePlayback);
+        globalShortcut.register('CommandOrControl+Shift+N', newTextFile);
+        globalShortcut.register('CommandOrControl+Shift+D', getNextFile);
+        globalShortcut.register('MediaNextTrack', getNextFile);
+        globalShortcut.register('CommandOrControl+Shift+A', getPreviousFile);
+        globalShortcut.register('MediaPreviousTrack', getPreviousFile);
+        globalShortcut.register('CommandOrControl+Shift+W', showApp);
+      } else {
+        globalShortcut.unregisterAll();
+      }
+    });
+
+    ipcMain.on('relaunch-app', reloadApp);
+
+    process.removeAllListeners('uncaughtException');
+    process.on('uncaughtException', (error) => {
+      console.error(
+        'UNCAUGHT EXCEPTION in main:',
+        error && error.stack ? error.stack : error,
+      );
+      const msg = error && error.message ? error.message : '';
+      //@ts-ignore
+      const code = error && error.code ? error.code : '';
+      const isAbort = error && error.name === 'AbortError';
+      const isSocketHangUp =
+        msg.includes('socket hang up') ||
+        code === 'ECONNRESET' ||
+        code === 'ECONNABORTED';
+
+      if (isAbort || isSocketHangUp) {
+        console.warn('Known non-fatal error (ignored):', msg || code || error);
+        return;
+      }
+      try {
+        reloadApp();
+      } catch (reloadErr) {
+        console.error(
+          'reloadApp() failed, exiting process:',
+          reloadErr && reloadErr.stack ? reloadErr.stack : reloadErr,
+        );
+        process.exit(1);
+      }
+    });
+
+    // i18n initializes in parallel with window creation (startup speed) —
+    // only the menus/dock/tray depend on it, so window creation no longer
+    // waits for the language packs.
+    i18nInit().then((i18n) => {
       appI18N = i18n;
       if (process.platform === 'darwin') {
         app.dock.setMenu(
@@ -720,10 +924,12 @@ app
           ),
         );
       }
-      createWindow(i18n);
-
-      protocol.initialize();
-
+      try {
+        bindAppMenu(i18n);
+        bindTrayMenu(i18n);
+      } catch (ex) {
+        console.log('buildMenus', ex);
+      }
       i18n.on('languageChanged', (lng) => {
         try {
           console.log('languageChanged:' + lng);
@@ -735,138 +941,6 @@ app
           ]);
         } catch (ex) {
           console.log('languageChanged', ex);
-        }
-      });
-
-      // --- IPC Main Handlers ---
-      ipcMain.on('show-main-window', showApp);
-      ipcMain.on('create-new-window', (e, url) => createNewWindowInstance(url));
-      ipcMain.on('file-changed', (e, isChanged) => {
-        // @ts-ignore
-        if (mainWindow) mainWindow.fileChanged = isChanged;
-      });
-      ipcMain.on('description-changed', (e, isChanged) => {
-        // @ts-ignore
-        if (mainWindow) mainWindow.descriptionChanged = isChanged;
-      });
-
-      loadMainEvents();
-      initDeepseekWebObserver();
-      initDeepseekPowSolver();
-
-      ipcMain.on('load-extensions', () => {
-        getExtensions(
-          path.join(app.getPath('userData'), 'tsplugins'),
-          ['@tagspaces/extensions', '@tagspacespro/extensions'],
-          true,
-        )
-          .then(({ extensions, supportedFileTypes }) => {
-            const setExtensions: Extensions = {
-              extensions,
-              supportedFileTypes,
-            };
-            mainWindow?.webContents.send('set_extensions', setExtensions);
-          })
-          .catch((err) => console.error('load-extensions', err));
-      });
-
-      ipcMain.on('focus-window', () => mainWindow?.focus());
-      ipcMain.on('get-user-home-path', (event) => {
-        event.returnValue = app.getPath('home');
-      });
-      ipcMain.on('worker-response', (event, arg) => {
-        mainWindow?.webContents.send(arg.id, arg);
-      });
-      ipcMain.on('app-data-path-request', (event) => {
-        event.returnValue = app.getPath('appData');
-      });
-      // Returns the raw contents of <userData>/extconfig.json so the renderer
-      // can apply a profile-folder override that survives reinstalls. Returns
-      // an empty string when the file is missing, unreadable, or exceeds the
-      // 5 MB ceiling enforced by the renderer's loader.
-      ipcMain.on('get-user-ext-config', (event) => {
-        try {
-          const filePath = path.join(app.getPath('userData'), 'extconfig.json');
-          if (fs.existsSync(filePath)) {
-            const stat = fs.statSync(filePath);
-            if (stat.size <= 5 * 1024 * 1024) {
-              event.returnValue = fs.readFileSync(filePath, 'utf8');
-              return;
-            }
-            console.warn(`extconfig.json in userData exceeded 5 MB — ignored.`);
-          }
-        } catch (e) {
-          console.warn('get-user-ext-config failed:', e);
-        }
-        event.returnValue = '';
-      });
-      ipcMain.on('app-version-request', (event) => {
-        event.returnValue = app.getVersion();
-      });
-      ipcMain.on('set-language', (e, language) => {
-        i18n.changeLanguage(language);
-      });
-      ipcMain.on('setZoomFactor', (event, zoomLevel) => {
-        BrowserWindow.getFocusedWindow()?.webContents.setZoomFactor(zoomLevel);
-      });
-      ipcMain.on('toggle-devtools', () => {
-        BrowserWindow.getFocusedWindow()?.webContents.toggleDevTools();
-      });
-
-      ipcMain.on('global-shortcuts-enabled', (e, globalShortcuts) => {
-        globalShortcutsEnabled = globalShortcuts;
-        try {
-          bindTrayMenu(i18n);
-        } catch (ex) {
-          console.log('buildMenus', ex);
-        }
-        if (globalShortcutsEnabled) {
-          globalShortcut.register('CommandOrControl+Shift+F', showSearch);
-          globalShortcut.register('CommandOrControl+Shift+P', resumePlayback);
-          globalShortcut.register('MediaPlayPause', resumePlayback);
-          globalShortcut.register('CommandOrControl+Shift+N', newTextFile);
-          globalShortcut.register('CommandOrControl+Shift+D', getNextFile);
-          globalShortcut.register('MediaNextTrack', getNextFile);
-          globalShortcut.register('CommandOrControl+Shift+A', getPreviousFile);
-          globalShortcut.register('MediaPreviousTrack', getPreviousFile);
-          globalShortcut.register('CommandOrControl+Shift+W', showApp);
-        } else {
-          globalShortcut.unregisterAll();
-        }
-      });
-
-      ipcMain.on('relaunch-app', reloadApp);
-
-      process.removeAllListeners('uncaughtException');
-      process.on('uncaughtException', (error) => {
-        console.error(
-          'UNCAUGHT EXCEPTION in main:',
-          error && error.stack ? error.stack : error,
-        );
-        const msg = error && error.message ? error.message : '';
-        //@ts-ignore
-        const code = error && error.code ? error.code : '';
-        const isAbort = error && error.name === 'AbortError';
-        const isSocketHangUp =
-          msg.includes('socket hang up') ||
-          code === 'ECONNRESET' ||
-          code === 'ECONNABORTED';
-
-        if (isAbort || isSocketHangUp) {
-          console.warn(
-            'Known non-fatal error (ignored):',
-            msg || code || error,
-          );
-          return;
-        }
-        try {
-          reloadApp();
-        } catch (reloadErr) {
-          console.error(
-            'reloadApp() failed, exiting process:',
-            reloadErr && reloadErr.stack ? reloadErr.stack : reloadErr,
-          );
-          process.exit(1);
         }
       });
     });

@@ -58,6 +58,8 @@ export type CustomSkillDef = {
 const CUSTOM_TOOLS_KEY = 'tsAiCustomTools';
 const CUSTOM_SKILLS_KEY = 'tsAiCustomSkills';
 const DISABLED_TOOLS_KEY = 'tsAiDisabledTools';
+const TOOL_COUNTS_KEY = 'tsAiToolCallCounts';
+const SKILL_COUNTS_KEY = 'tsAiSkillUseCounts';
 const TOOL_TIMEOUT_MS = 30000;
 
 function readJson<T>(key: string, fallback: T): T {
@@ -147,6 +149,36 @@ export function filterEnabledTools<T extends { name: string }>(
 ): Array<T> {
   const disabled = new Set(getDisabledTools());
   return tools.filter((t) => !disabled.has(t.name));
+}
+
+// ---------- usage counters (local only, never sent to the model) ----------
+
+/**
+ * How often each tool has been invoked / each skill has been active in a run.
+ * Purely informational for the capabilities panel — the counters stay in
+ * localStorage and are never injected into the system prompt or the API
+ * conversation, so they cost zero extra tokens.
+ */
+export function getToolCallCounts(): Record<string, number> {
+  return readJson<Record<string, number>>(TOOL_COUNTS_KEY, {});
+}
+
+export function incrementToolCallCount(name: string): void {
+  if (!name) return;
+  const counts = getToolCallCounts();
+  counts[name] = (counts[name] || 0) + 1;
+  writeJson(TOOL_COUNTS_KEY, counts);
+}
+
+export function getSkillUseCounts(): Record<string, number> {
+  return readJson<Record<string, number>>(SKILL_COUNTS_KEY, {});
+}
+
+export function incrementSkillUseCount(id: string): void {
+  if (!id) return;
+  const counts = getSkillUseCounts();
+  counts[id] = (counts[id] || 0) + 1;
+  writeJson(SKILL_COUNTS_KEY, counts);
 }
 
 // ---------- custom tool execution ----------

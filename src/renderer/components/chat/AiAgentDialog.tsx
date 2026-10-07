@@ -20,9 +20,10 @@
  * Global AI Agent work area: slides out from the right edge as a
  * non-blocking side panel (persistent drawer — the main view stays
  * usable while the agent works, so file moves/tags can be watched live).
- * Panel width is drag-resizable and persisted. Hosts a Chat/Agent tab
- * switch: the Agent tab runs the standalone AgentPanel (own sessions,
- * tool-call cards), the Chat tab reuses the existing ChatView.
+ * Panel width is drag-resizable and persisted. There is a single
+ * conversation surface (the AgentPanel — it runs the tool-calling loop,
+ * keeps its own sessions, tool-call cards and model picker); the kb/tools/
+ * skills/deepseek tabs open the supporting capabilities.
  */
 import { CloseIcon } from '-/components/CommonIcons';
 import AgentPanel from '-/components/chat/AgentPanel';
@@ -35,16 +36,7 @@ import IconButton from '@mui/material/IconButton';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import Box from '@mui/material/Box';
-import CircularProgress from '@mui/material/CircularProgress';
-import React, { Suspense, useEffect, useRef, useState } from 'react';
-
-// Lazy on purpose: a static import would create a dependency cycle
-// ChatView → ChatProvider → … → MainToolbar → AiAgentDialog
-// eslint-disable-next-line import/no-cycle -- loaded on demand, no runtime cycle
-const ChatView = React.lazy(
-  // eslint-disable-next-line import/no-cycle -- loaded on demand, no runtime cycle
-  () => import(/* webpackChunkName: "ChatView" */ '-/components/chat/ChatView'),
-);
+import React, { useEffect, useRef, useState } from 'react';
 
 const MIN_WIDTH = 360;
 const DEFAULT_WIDTH = 480;
@@ -61,8 +53,8 @@ function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
   const { open, onClose, width, onWidthChange } = props;
   const [view, setView] = useState<
-    'chat' | 'agent' | 'kb' | 'tools' | 'skills' | 'deepseek'
-  >('chat');
+    'agent' | 'kb' | 'tools' | 'skills' | 'deepseek'
+  >('agent');
   const resizing = useRef(false);
 
   useEffect(() => {
@@ -142,7 +134,6 @@ function AiAgentDialog(props: Props) {
             },
           }}
         >
-          <Tab value="chat" label={t('core:aiChatTab')} />
           <Tab
             value="agent"
             label={t('core:aiAgentMode')}
@@ -183,6 +174,7 @@ function AiAgentDialog(props: Props) {
           <KnowledgeBasePanel />
         ) : view === 'tools' || view === 'skills' ? (
           <AiCapabilitiesPanel
+            key={view}
             initialTab={view === 'skills' ? 'skills' : 'tools'}
             hideTabs
             onClose={() => setView('agent')}
@@ -190,11 +182,7 @@ function AiAgentDialog(props: Props) {
         ) : view === 'deepseek' ? (
           <DeepSeekWebPanel />
         ) : (
-          <Suspense
-            fallback={<CircularProgress size={24} sx={{ margin: 'auto' }} />}
-          >
-            <ChatView />
-          </Suspense>
+          <AgentPanel />
         )}
       </Box>
     </Drawer>

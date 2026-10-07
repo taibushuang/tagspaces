@@ -78,7 +78,6 @@ function ChatView() {
     removeImage,
     newChatMessage,
     newAgentMessage,
-    agentMode,
     changeCurrentModel,
     setModel,
     currentModel,
@@ -141,16 +140,7 @@ function ChatView() {
       const updated = [chatMsg.current, ...promptHistory].slice(0, 1);
       setPromptHistory(updated);
     }
-    const request = agentMode
-      ? newAgentMessage(chatMsg.current)
-      : newChatMessage(
-          chatMsg.current,
-          false,
-          'user',
-          currentMode.current,
-          undefined,
-          true,
-        );
+    const request = newAgentMessage(chatMsg.current);
     request
       .then((response) => {
         console.log('chat response:' + response);
@@ -167,7 +157,7 @@ function ChatView() {
         isLoading.current = false;
         forceUpdate();
       });
-  }, [agentMode, newAgentMessage, newChatMessage, promptHistory]);
+  }, [newAgentMessage, promptHistory]);
 
   // Menu handlers
   const handleMoreClick = useCallback(

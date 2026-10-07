@@ -214,16 +214,34 @@ export const OpenedEntryContextProvider = ({
           openLink(window.location.href);
         }, 1000);
       } else if (cmdOpen) {
-        setTimeout(() => {
-          // Re-encode: cmdOpen is an already-decoded absolute path and may
-          // contain characters (#, &, ?, =, spaces) that would otherwise break
-          // URL parsing in parseTsLink and truncate the path.
-          openLink('ts://?cmdopen=' + encodeURIComponent(cmdOpen), {
-            fullWidth: true,
-          });
-        }, 1000);
+        // No artificial delay here: this provider mounts inside PersistGate,
+        // so redux-persist (locations included) has rehydrated, and the main
+        // process registers its IPC handlers before the page loads — the file
+        // can open immediately. This is the file-association preview path,
+        // where every startup millisecond is user-visible.
+        // Re-encode: cmdOpen is an already-decoded absolute path and may
+        // contain characters (#, &, ?, =, spaces) that would otherwise break
+        // URL parsing in parseTsLink and truncate the path.
+        openLink('ts://?cmdopen=' + encodeURIComponent(cmdOpen), {
+          fullWidth: true,
+        });
       }
     }
+    if (AppConfig.isElectron) {
+      // Files handed over by the OS while the app is already running (file
+      // association double-click / CLI) arrive via 'open-cmd-file' from the
+      // main process — open them in this window instead of booting a second
+      // full app window.
+      window.electronIO.ipcRenderer.on('open-cmd-file', (filePath: string) => {
+        openLink('ts://?cmdopen=' + encodeURIComponent(filePath), {
+          fullWidth: true,
+        });
+      });
+      return () => {
+        window.electronIO.ipcRenderer.removeAllListeners('open-cmd-file');
+      };
+    }
+    return undefined;
   }, []);
 
   useEffect(() => {
@@ -793,20 +811,28 @@ export const OpenedEntryContextProvider = ({
             const dirPath = fsEntry.isFile
               ? extractContainingDirectoryPath(fsEntry.path, sep)
               : fsEntry.path;
+            if (fsEntry.isFile) {
+              // Open the file first so the viewer starts rendering right
+              // away; openFsEntry only needs the entry + build-time extension
+              // config, not the directory context. The containing directory
+              // (listing, meta, thumbnails) is prepared in the background —
+              // it only matters once the user closes the file back into the
+              // folder view.
+              openFsEntry(
+                fsEntry,
+                options.fullWidth ? TabNames.closedTabs : undefined,
+              );
+              setSelectedEntries([fsEntry]);
+              setEntryInFullWidth(options.fullWidth);
+              return openDirectory(dirPath, undefined, location).then(
+                () => true,
+              );
+            }
+            // Folder target: navigation below lists it; also set it as the
+            // opened entry so the details panel refreshes. Matches the
+            // behavior of the 'ts' kind path for folder targets.
             return openDirectory(dirPath, undefined, location).then(() => {
-              if (fsEntry.isFile) {
-                openFsEntry(
-                  fsEntry,
-                  options.fullWidth ? TabNames.closedTabs : undefined,
-                );
-                setSelectedEntries([fsEntry]);
-                setEntryInFullWidth(options.fullWidth);
-              } else {
-                // Folder target: navigation above already listed it; also set it
-                // as the opened entry so the details panel refreshes. Matches the
-                // behavior of the 'ts' kind path for folder targets.
-                openEntry(fsEntry);
-              }
+              openEntry(fsEntry);
               return true;
             });
           })

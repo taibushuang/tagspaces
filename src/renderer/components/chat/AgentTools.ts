@@ -18,7 +18,8 @@
 
 /**
  * Tool set exposed to the AI agent. Read-only operations plus reversible tag
- * edits — deliberately NO rename/move/delete tools (see DESIGN-ai-agent.md §4).
+ * edits and non-destructive moves/copies — deliberately NO delete or rename
+ * tools (see DESIGN-ai-agent.md §4).
  *
  * The factory pattern keeps this module context-free: ChatProvider wires the
  * actual TagSpaces capabilities (search, tagging, IO) into `deps` so tools
@@ -42,10 +43,44 @@ import {
   extractOfficeText,
   isOfficeDocumentPath,
 } from '-/services/officeTextExtractor';
+import {
+  buildDeepseekPowResponse,
+  parseDeepseekStream,
+} from '-/services/deepseekPow';
+import {
+  ORGANIZE_DEFAULT_CONFIG,
+  fingerprint,
+  planOrganize,
+  sameFingerprint,
+  validateMovePlan,
+  validateOrganizeConfig,
+} from '-/utils/fileOrganizer';
+import {
+  appendOrganizeRecord,
+  getOrganizeRecord,
+  readOrganizeHistory,
+  updateOrganizeRecord,
+} from '-/utils/organizeHistory';
+import type { OrganizeItem, OrganizeRecord } from '-/utils/organizeHistory';
+import { markInboxOrganized } from '-/utils/inboxOrganize';
+import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import AppConfig from '-/AppConfig';
 import { TS } from '-/tagspaces.namespace';
 import todoApi from '-/components/todo/todoService';
 import { TodoItem } from '-/components/todo/todoTypes';
+
+/** Direct children of `path` may not exceed this when planning an organize. */
+const ORGANIZE_PLAN_LIMIT = 500;
+
+function parentDirPath(p: string): string {
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return idx > 0 ? p.slice(0, idx) : p;
+}
+
+function baseName(p: string): string {
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return idx >= 0 ? p.slice(idx + 1) : p;
+}
 
 export type AgentToolDeps = {
   agentSearch: (searchQuery: TS.SearchQuery) => Promise<TS.FileSystemEntry[]>;
@@ -95,6 +130,19 @@ export type AgentToolDeps = {
   currentLocationPath: string;
   /** Move an entry into another folder of the same location (no overwrite). */
   moveFile: (sourcePath: string, targetFolderPath: string) => Promise<boolean>;
+  /**
+   * Copy an entry into another folder, leaving the source in place (no
+   * overwrite). Used for inboxes whose archive mode is 'copy'. Optional —
+   * when absent the copy mode is unavailable in this context.
+   */
+  copyFile?: (sourcePath: string, targetFolderPath: string) => Promise<boolean>;
+  /**
+   * Move/rename an entry to an EXACT target path (creates the destination
+   * folder; never overwrites — rejects when the target exists). Used by the
+   * folder-organize tools to file items into category folders and to restore
+   * them under a unique name ("name (1).ext") when the original is taken.
+   */
+  moveToPath: (sourcePath: string, targetPath: string) => Promise<boolean>;
   /** Current description of an entry (empty string when none). */
   getDescription: (path: string) => Promise<string>;
   /** Persist a new description for an entry (file or folder). */
@@ -108,6 +156,19 @@ export type AgentToolDeps = {
     content: string,
     overwrite: boolean,
   ) => Promise<void>;
+  /**
+   * Register an existing folder on disk as a TagSpaces location. Returns the
+   * created location or throws. Used by the disk-organize skill to materialize
+   * the plan the user approved.
+   */
+  createLocation: (
+    name: string,
+    path: string,
+    options?: {
+      isDefault?: boolean;
+      isReadOnly?: boolean;
+    },
+  ) => Promise<{ ok: boolean; name: string; path: string }>;
 };
 
 const SEARCH_RESULT_LIMIT = 50;
@@ -173,6 +234,161 @@ function isTodoAvailable(): boolean {
   return typeof window !== 'undefined' && !!(window as any).electronIO;
 }
 
+const DISK_INIT_STATE_KEY = 'tsDiskInitState';
+
+export function isElectron(): boolean {
+  return typeof window !== 'undefined' && !!(window as any).electronIO;
+}
+
+// --- deepseek_search (deep web search through the DeepSeek web session) ---
+// The free web chat has no public API; the programmatic client replays the
+// origin-sensitive requests inside the embedded DeepSeek webview via the
+// 'deepseek-web-drive' IPC (main process), with the PoW header solved locally.
+// One chat session spans the whole run and parent_message_id is chained, so
+// concurrent searches would corrupt the chain — serialize them.
+const DEEPSEEK_SEARCH_TIMEOUT = 45000;
+let deepseekSearchChain: Promise<unknown> = Promise.resolve();
+let deepseekSearchSessionId: number | null = null;
+let deepseekSearchParentId: number | null = null;
+
+async function deepseekSearchOnce(
+  question: string,
+): Promise<{ answer: string; citations: string[] }> {
+  const io = (window as any).electronIO?.ipcRenderer;
+  const drive = (action: string, args?: any) =>
+    io.invoke('deepseek-web-drive', action, args);
+
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(
+      () =>
+        reject(
+          new Error(`DeepSeek 搜索超时（${DEEPSEEK_SEARCH_TIMEOUT / 1000}s）`),
+        ),
+      DEEPSEEK_SEARCH_TIMEOUT,
+    ),
+  );
+  const work = (async () => {
+    if (!deepseekSearchSessionId) {
+      const created: any = await drive('create-session');
+      if (created?.error || !created?.id) {
+        throw new Error(
+          `${created?.error || '创建会话失败'}（请在 AI 弹窗的 DeepSeek 标签打开并登录）`,
+        );
+      }
+      deepseekSearchSessionId = created.id;
+      deepseekSearchParentId = null;
+    }
+    const chal: any = await drive('challenge');
+    const ch = chal?.challenge;
+    if (chal?.error || !ch) {
+      throw new Error(chal?.error || '获取 PoW 挑战失败');
+    }
+    const powHeader = await buildDeepseekPowResponse({
+      ...ch,
+      target_path: '/api/v0/chat/completion',
+    });
+    const res: any = await drive('completion', {
+      body: {
+        chat_session_id: deepseekSearchSessionId,
+        parent_message_id: deepseekSearchParentId,
+        model_type: null,
+        prompt: question,
+        ref_file_ids: [],
+        thinking_enabled: false,
+        search_enabled: true,
+        action: null,
+        preempt: false,
+      },
+      powHeader,
+    });
+    if (res?.error || !res?.ok) {
+      throw new Error(res?.error || res?.text || 'completion 请求失败');
+    }
+    const parsed = parseDeepseekStream(res.text || '');
+    if (parsed.nextParent) deepseekSearchParentId = parsed.nextParent;
+    const answer = parsed.content.trim();
+    if (!answer) {
+      throw new Error('DeepSeek 返回了空答案（可能未登录或触发风控）');
+    }
+    return { answer, citations: parsed.citations };
+  })();
+  // If the timeout wins, the still-running completion must not surface an
+  // unhandled rejection.
+  work.catch(() => {});
+  return Promise.race([work, timeout]);
+}
+
+function deepseekSearch(question: string) {
+  const run = () => deepseekSearchOnce(question);
+  const p = deepseekSearchChain.then(run, run);
+  deepseekSearchChain = p.then(
+    () => undefined,
+    () => undefined,
+  );
+  return p;
+}
+
+export type InboxMode = 'move' | 'copy';
+export type Inbox = { path: string; mode: InboxMode };
+export type DiskInitState = {
+  done?: boolean;
+  at?: number;
+  /**
+   * Folders that collect incoming files. Each carries an archive mode:
+   * 'move' = the source is removed after filing, 'copy' = the original stays.
+   * Legacy state stored plain strings (implicit 'move'); those are normalized
+   * on read by normalizeInboxes.
+   */
+  inboxes?: Inbox[];
+  /** Locations created during the initialization. */
+  locations?: Array<{ name: string; path: string }>;
+  /** Short summary of the agreed filing rules. */
+  rulesSummary?: string;
+};
+
+/**
+ * Coerce one raw inbox entry (legacy plain string or {path, mode}) into a
+ * normalized inbox object. Returns undefined for empty paths. Unknown modes
+ * fall back to 'move'.
+ */
+export function normalizeInbox(raw: any): Inbox | undefined {
+  const path =
+    typeof raw === 'string' ? raw.trim() : String(raw?.path || '').trim();
+  if (!path) return undefined;
+  const mode: InboxMode =
+    raw && typeof raw === 'object' && raw.mode === 'copy' ? 'copy' : 'move';
+  return { path, mode };
+}
+
+export function normalizeInboxes(raw: any): Inbox[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizeInbox)
+    .filter((i: Inbox | undefined): i is Inbox => !!i);
+}
+
+export function readDiskInitState(): DiskInitState | undefined {
+  try {
+    const raw = localStorage.getItem(DISK_INIT_STATE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.inboxes)) {
+      parsed.inboxes = normalizeInboxes(parsed.inboxes);
+    }
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeDiskInitState(state: DiskInitState): void {
+  try {
+    localStorage.setItem(DISK_INIT_STATE_KEY, JSON.stringify(state));
+  } catch {
+    // storage unavailable (private mode) — the guard is best-effort
+  }
+}
+
 /** Compact, token-safe view of a todo item for the agent loop. */
 function todoToSummary(item: TodoItem) {
   return {
@@ -206,14 +422,16 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         'List the connected TagSpaces locations (name + absolute path). ' +
         'Call this first when no specific folder is open: it shows which ' +
         'folders on this machine you can search and organize. Files can be ' +
-        'moved only within one location (folder), never across locations.',
+        'moved or copied between local locations (this is how an inbox is ' +
+        'filed into an archive location); only cloud locations are ' +
+        'restricted to internal moves.',
       parameters: { type: 'object', properties: {}, required: [] },
       execute: async () => {
         const locations = deps.listLocations();
         return {
           count: locations.length,
           locations: locations.map((l) => ({ name: l.name, path: l.path })),
-          note: 'organize within each location; moving across locations is not supported',
+          note: 'filing across local locations is supported (e.g. inbox -> archive); cloud locations only move inside themselves',
         };
       },
     },
@@ -736,9 +954,13 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
     {
       name: 'move_file',
       description:
-        'Move a file or folder into another folder of the same location ' +
-        '(filing / archiving, e.g. sorting an inbox). Never overwrites an ' +
-        'existing target. Move first, then tag the moved entry.',
+        'Move a file or folder into another folder — the destination may be ' +
+        'in the same location or in a different connected location (this is ' +
+        'how an inbox is filed: e.g. Downloads -> a work or archive location). ' +
+        'Never overwrites an existing target. Move first, then tag the moved ' +
+        'entry. Cross-location moves involving a cloud location are rejected. ' +
+        'Set keepSource: true to COPY instead — the original stays where it ' +
+        'is; use this for inboxes whose archive mode is "copy".',
       parameters: {
         type: 'object',
         properties: {
@@ -750,12 +972,28 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
             type: 'string',
             description: 'absolute path of the destination folder',
           },
+          keepSource: {
+            type: 'boolean',
+            description:
+              'copy instead of move — leave the original in place ' +
+              '(for inboxes with archive mode "copy")',
+          },
         },
         required: ['sourcePath', 'targetFolder'],
       },
       execute: async (args) => {
         const sourcePath = requireString(args, 'sourcePath');
         const targetFolder = requireString(args, 'targetFolder');
+        const keepSource = Boolean(args?.keepSource);
+        if (keepSource && !deps.copyFile) {
+          return {
+            error:
+              'copy is not available in this context — the embedded web build ' +
+              'cannot copy files. File the entry with a plain move instead, or ' +
+              'tell the user this inbox needs the desktop app for copy-mode ' +
+              'archiving.',
+          };
+        }
         const norm = (p: string) =>
           p.replace(/[\\/]+/g, '/').replace(/\/$/, '');
         const source = norm(sourcePath);
@@ -787,13 +1025,18 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
             error: `an entry named "${name}" already exists in the target folder — nothing was moved`,
           };
         }
-        const ok = await deps.moveFile(sourcePath, targetFolder);
+        const ok = keepSource
+          ? await deps.copyFile(sourcePath, targetFolder)
+          : await deps.moveFile(sourcePath, targetFolder);
         if (!ok) {
-          return { error: 'the move failed (check notifications for details)' };
+          return {
+            error: `the ${keepSource ? 'copy' : 'move'} failed (check notifications for details)`,
+          };
         }
         return {
           ok: true,
           newPath: `${target}/${name}`,
+          ...(keepSource ? { sourceLeftInPlace: true } : {}),
           note: 'the location index refreshes automatically after the move',
         };
       },
@@ -868,6 +1111,421 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           bytes: content.length,
           replacedExisting: !!existing,
         };
+      },
+    },
+    {
+      name: 'web_search',
+      description:
+        'Search the web and return titles, URLs and snippets (fast, ~0.5s). ' +
+        'Use it to look up information, find references or verify facts; ' +
+        'pair with fetch_web when you need the body of a specific page. ' +
+        'Default engines are [bing, baidu, juejin] — narrow to [baidu] for ' +
+        'Chinese everyday content or [juejin] for technical content.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'the search query — ask it as one clear phrase',
+          },
+          limit: {
+            type: 'number',
+            description: 'how many results to return, 1-50 (default 8)',
+          },
+          engines: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'search engines to use; default [bing, baidu, juejin]',
+          },
+        },
+        required: ['query'],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return {
+            error:
+              'web_search is only available in the desktop app (needs the local open-websearch daemon)',
+          };
+        }
+        try {
+          const result = await (window as any).electronIO.ipcRenderer.invoke(
+            'webSearch',
+            args || {},
+          );
+          return result && result.error ? { error: result.error } : result;
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'fetch_web',
+      description:
+        'Fetch the body text of a web page (default up to 6000 chars). Use ' +
+        'after web_search to read the 1-2 pages you actually need in detail. ' +
+        'Returns title, finalUrl and content; content is truncated at ' +
+        'max_chars.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'full http(s) URL to fetch' },
+          max_chars: {
+            type: 'number',
+            description: 'max chars to return, default 6000, min 1000',
+          },
+        },
+        required: ['url'],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return {
+            error:
+              'fetch_web is only available in the desktop app (needs the local open-websearch daemon)',
+          };
+        }
+        try {
+          const result = await (window as any).electronIO.ipcRenderer.invoke(
+            'fetchWeb',
+            args || {},
+          );
+          return result && result.error ? { error: result.error } : result;
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'deepseek_search',
+      description:
+        'Deep web search: DeepSeek itself browses multiple sources and ' +
+        'returns a synthesized conclusion with citations. Slow (10-45s) and ' +
+        'requires the DeepSeek web app to be logged in (open the AI dialog > ' +
+        'DeepSeek tab once). Use it when web_search results are too scattered ' +
+        'or you want a direct answer instead of links.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: {
+            type: 'string',
+            description: 'the full question to research and synthesize',
+          },
+        },
+        required: ['question'],
+      },
+      execute: async (args) => {
+        const question =
+          args && typeof args.question === 'string' ? args.question.trim() : '';
+        if (!question) return { error: 'missing question' };
+        if (!isElectron()) {
+          return {
+            error: 'deepseek_search is only available in the desktop app',
+          };
+        }
+        try {
+          return await deepseekSearch(question);
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'organize_preview',
+      description:
+        'Plan the organization of a folder: classify its direct children by ' +
+        'file type into destination sub-folders (Documents/Images/Videos/' +
+        'Audio/Archives/Apps/Other by default) and report skipped items with ' +
+        'reasons (system/hidden files, oversized files, existing category ' +
+        'folders, and plain folders by default). READ-ONLY — nothing is ' +
+        'moved. Always call this first, show the user the plan and get their ' +
+        'approval, THEN run organize_apply with the selected moves. Custom ' +
+        'rules can be passed via config: { categories: { Name: { extensions: ' +
+        '[".ext", ...] }, ... }, excludedExtensions, maxFileSizeMb, ' +
+        'includeFolders } — the category with an empty extensions list is the ' +
+        'catch-all.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'folder to organize; defaults to the current folder',
+          },
+          config: {
+            type: 'object',
+            description: 'optional custom classification rules (see default)',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        const root =
+          args?.path && typeof args.path === 'string' && args.path.trim()
+            ? args.path.trim()
+            : deps.currentDirectoryPath;
+        if (!root) {
+          return { error: 'no folder to organize — pass a path' };
+        }
+        let config;
+        try {
+          config = validateOrganizeConfig(args?.config);
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+        let children;
+        try {
+          children = await deps.listChildren(root);
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+        if (children.length > ORGANIZE_PLAN_LIMIT) {
+          return {
+            error: `folder has ${children.length} items — split it into smaller batches (limit ${ORGANIZE_PLAN_LIMIT} per run)`,
+          };
+        }
+        const { organizable, skipped } = planOrganize(root, children, config);
+        return {
+          root,
+          config,
+          summary: {
+            count: organizable.length,
+            totalSize: organizable.reduce((sum, r) => sum + r.size, 0),
+          },
+          organizable: organizable.map((r) => ({
+            path: r.path,
+            name: r.name,
+            size: r.size,
+            category: r.category,
+            targetPath: r.targetPath,
+          })),
+          skipped: skipped.map((r) => ({
+            path: r.path,
+            name: r.name,
+            reason: r.reason,
+          })),
+        };
+      },
+    },
+    {
+      name: 'organize_apply',
+      description:
+        'Execute an organization plan: move files into their category ' +
+        'folders. Pass root, the moves [{ from, to }] selected from ' +
+        'organize_preview (a subset is fine), and the same config you used ' +
+        'for the preview. Destination folders are created as needed and files ' +
+        'are NEVER overwritten — if the target name already exists the move ' +
+        'fails for that item and it is reported. Records the moves in history ' +
+        'so organize_undo can restore them.',
+      parameters: {
+        type: 'object',
+        properties: {
+          root: {
+            type: 'string',
+            description: 'the folder being organized (from organize_preview)',
+          },
+          moves: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                from: { type: 'string', description: 'source path' },
+                to: { type: 'string', description: 'target path' },
+              },
+              required: ['from', 'to'],
+            },
+            description: 'moves to apply (from organize_preview.organizable)',
+          },
+          config: {
+            type: 'object',
+            description: 'the same config used for organize_preview',
+          },
+        },
+        required: ['root', 'moves'],
+      },
+      execute: async (args) => {
+        const root =
+          args?.root && typeof args.root === 'string' ? args.root.trim() : '';
+        const moves = Array.isArray(args?.moves) ? args.moves : [];
+        if (!root || moves.length === 0) {
+          return {
+            error:
+              'root and moves are required — run organize_preview first and pass its moves',
+          };
+        }
+        let config;
+        try {
+          config = validateOrganizeConfig(args?.config);
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+        const { valid, invalid } = validateMovePlan(root, moves);
+        if (valid.length === 0) {
+          return {
+            error: 'no valid moves to apply',
+            invalid: invalid.map((mv) => ({
+              from: mv.from,
+              to: mv.to,
+              reason: mv.reason,
+            })),
+          };
+        }
+        const record: OrganizeRecord = {
+          id: getUuid(),
+          root,
+          date: new Date().toISOString(),
+          config,
+          status: 'pending',
+          items: valid.map(
+            (mv): OrganizeItem => ({
+              original: mv.from,
+              moved: mv.to,
+              category: baseName(parentDirPath(mv.to)),
+              fingerprint: { size: 0, lmdt: 0 },
+              state: 'pending',
+            }),
+          ),
+        };
+        appendOrganizeRecord(record);
+        const moved: Array<{ from: string; to: string }> = [];
+        const failed: Array<{ from: string; to: string; error: string }> = [];
+        for (const mv of valid) {
+          const item = record.items.find((i) => i.original === mv.from);
+          try {
+            const entry = await deps.findEntry(mv.from);
+            if (!entry) {
+              throw new Error('file disappeared before the move');
+            }
+            if (item) item.fingerprint = fingerprint(entry);
+            await deps.moveToPath(mv.from, mv.to);
+            if (item) item.state = 'moved';
+            moved.push({ from: mv.from, to: mv.to });
+          } catch (e: any) {
+            const err = e?.message || String(e);
+            if (item) {
+              item.state = 'failed';
+              item.error = err;
+            }
+            failed.push({ from: mv.from, to: mv.to, error: err });
+          }
+        }
+        record.status =
+          failed.length === 0
+            ? 'done'
+            : moved.length > 0
+              ? 'partial'
+              : 'failed';
+        updateOrganizeRecord(record.id, {
+          status: record.status,
+          items: record.items,
+        });
+        return {
+          recordId: record.id,
+          status: record.status,
+          moved,
+          failed,
+          invalid: invalid.map((mv) => ({
+            from: mv.from,
+            to: mv.to,
+            reason: mv.reason,
+          })),
+        };
+      },
+    },
+    {
+      name: 'organize_undo',
+      description:
+        'Restore files moved by a previous organize_apply, back to their ' +
+        'original location. Pass recordId to pick a specific record, or omit ' +
+        'it to restore the most recent one. Files are only restored when they ' +
+        'are unchanged since the move (fingerprint check); if the original ' +
+        'name is already taken they are restored under "name (1).ext" so ' +
+        'nothing is overwritten. Use organize_history to list records.',
+      parameters: {
+        type: 'object',
+        properties: {
+          recordId: {
+            type: 'string',
+            description: 'organize record id; omit for the most recent',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        const record = getOrganizeRecord(args?.recordId);
+        if (!record) {
+          return {
+            error: 'no matching organize record — run organize_history first',
+          };
+        }
+        const restored: Array<{ moved: string; restoredTo: string }> = [];
+        const failed: Array<{ moved: string; error: string }> = [];
+        for (const item of record.items) {
+          if (item.state !== 'moved') continue;
+          try {
+            const entry = await deps.findEntry(item.moved);
+            if (!entry) {
+              throw new Error('file is no longer at its moved location');
+            }
+            if (!sameFingerprint(fingerprint(entry), item.fingerprint)) {
+              throw new Error(
+                'file changed since the move — left in place to avoid touching it',
+              );
+            }
+            const parent = parentDirPath(item.original);
+            const originalTaken = !!(await deps.findEntry(item.original));
+            let target = item.original;
+            if (originalTaken) {
+              const taken = new Set(
+                (await deps.listChildren(parent)).map((c) =>
+                  c.name.toLocaleLowerCase(),
+                ),
+              );
+              let n = 1;
+              const dot = item.original.lastIndexOf('.');
+              const slash = Math.max(
+                item.original.lastIndexOf('/'),
+                item.original.lastIndexOf('\\'),
+              );
+              let candidate = item.original;
+              while (taken.has(baseName(candidate).toLocaleLowerCase())) {
+                candidate =
+                  dot > slash + 1
+                    ? `${item.original.slice(0, dot)} (${n})${item.original.slice(dot)}`
+                    : `${item.original} (${n})`;
+                n += 1;
+              }
+              target = candidate;
+            }
+            await deps.moveToPath(item.moved, target);
+            item.state = 'restored';
+            restored.push({ moved: item.moved, restoredTo: target });
+          } catch (e: any) {
+            item.state = 'failed';
+            item.error = e?.message || String(e);
+            failed.push({ moved: item.moved, error: item.error });
+          }
+        }
+        record.status = 'undone';
+        updateOrganizeRecord(record.id, {
+          status: record.status,
+          items: record.items,
+        });
+        return { recordId: record.id, restored, failed, status: record.status };
+      },
+    },
+    {
+      name: 'organize_history',
+      description:
+        'List the folder-organization history: each organize_apply records ' +
+        'an entry with its id, root folder, date, status and how many files ' +
+        'were moved. Use the id as recordId for organize_undo.',
+      parameters: { type: 'object', properties: {}, required: [] },
+      execute: async () => {
+        return readOrganizeHistory().map((r) => ({
+          id: r.id,
+          root: r.root,
+          date: r.date,
+          status: r.status,
+          movedCount: r.items.filter((i) => i.state === 'moved').length,
+        }));
       },
     },
     {
@@ -1040,6 +1698,476 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         } catch (e: any) {
           return { error: e?.message || String(e) };
         }
+      },
+    },
+    {
+      name: 'init_scan',
+      description:
+        'One-shot disk initialization scan for the disk-organize skill. ' +
+        'Walks the user home directory (or the given roots) with a bounded ' +
+        'depth and a per-profile extension filter, and returns aggregated ' +
+        'directory stats — never a full file list. Read-only, nothing is ' +
+        'uploaded. Sensitive folders (credentials, keychains, browser data, ' +
+        'chat databases) are skipped. Call this only AFTER the interview is ' +
+        'complete, exactly once per initialization.',
+      parameters: {
+        type: 'object',
+        properties: {
+          profile: {
+            type: 'string',
+            enum: [
+              'programming',
+              'office',
+              'design',
+              'academic',
+              'mixed',
+              'other',
+            ],
+            description:
+              'the user work profile from the interview — drives which file ' +
+              'extensions are counted',
+          },
+          roots: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'absolute directories to scan; defaults to the user home directory',
+          },
+          depth: {
+            type: 'number',
+            description: 'max recursion depth below each root (default 4)',
+          },
+          maxResults: {
+            type: 'number',
+            description:
+              'cap on counted (matching) files; extra matches are dropped and truncated is set',
+          },
+          force: {
+            type: 'boolean',
+            description:
+              'set to true only when the user explicitly asks to redo the initialization',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return {
+            error:
+              'disk scan is only available in the desktop app (it reads the local filesystem via the main process)',
+          };
+        }
+        const state = readDiskInitState();
+        if (state?.done && !args?.force) {
+          return {
+            error:
+              'disk initialization was already completed on this machine. ' +
+              'Do not run it again unless the user explicitly asks for a redo ' +
+              '(then pass force: true).',
+            doneAt: state.at,
+          };
+        }
+        try {
+          const opts: any = {};
+          if (args?.profile) opts.profile = args.profile;
+          if (Array.isArray(args?.roots) && args.roots.length > 0) {
+            opts.roots = args.roots;
+          }
+          if (typeof args?.depth === 'number') opts.depth = args.depth;
+          if (typeof args?.maxResults === 'number') {
+            opts.maxEntries = args.maxResults;
+          }
+          const result = await (window as any).electronIO.ipcRenderer.invoke(
+            'initScan',
+            opts,
+          );
+          if (result?.error) {
+            return { error: result.error };
+          }
+          return result;
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'create_location',
+      description:
+        'Register an existing folder on disk as a TagSpaces location. Used ' +
+        'by the disk-organize skill to materialize the plan the user ' +
+        'approved (e.g. an archive location and the Downloads inbox). The ' +
+        'folder must already exist — this tool never creates or moves ' +
+        'folders, and never overwrites an existing location pointing at the ' +
+        'same path.',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'location name shown in the location manager',
+          },
+          path: {
+            type: 'string',
+            description: 'absolute path of an existing folder to connect',
+          },
+          isDefault: {
+            type: 'boolean',
+            description: 'open this location on app start',
+          },
+          isReadOnly: {
+            type: 'boolean',
+            description: 'never modify files inside this location',
+          },
+        },
+        required: ['name', 'path'],
+      },
+      execute: async (args) => {
+        const name = requireString(args, 'name');
+        const targetPath = requireString(args, 'path');
+        const duplicate = deps
+          .listLocations()
+          .some((l) => l.path === targetPath);
+        if (duplicate) {
+          return {
+            error: `a location for ${targetPath} already exists; do not create a duplicate`,
+          };
+        }
+        try {
+          const created = await deps.createLocation(name, targetPath, {
+            isDefault: Boolean(args?.isDefault),
+            isReadOnly: Boolean(args?.isReadOnly),
+          });
+          return { ok: true, name: created.name, path: created.path };
+        } catch (e: any) {
+          const msg = e?.message || String(e);
+          if (/EPERM|EACCES/.test(msg)) {
+            return {
+              error:
+                `${msg}\n\nThis folder is protected by macOS (TCC). Offer to ` +
+                'open the settings page with the open_privacy_settings tool ' +
+                '(System Settings > Privacy & Security > Full Disk Access), ' +
+                'ask the user to enable TagSpaces there, then retry. Do not ' +
+                'retry in a loop — wait for the user to confirm.',
+            };
+          }
+          return { error: msg };
+        }
+      },
+    },
+    {
+      name: 'open_privacy_settings',
+      description:
+        'Open the operating system privacy settings page where the user ' +
+        'grants this app access to protected folders (macOS: Privacy & ' +
+        'Security > Full Disk Access; Windows: broad file system access). ' +
+        'Use it when a create_location or file write fails with EPERM/EACCES ' +
+        'on a protected folder (Desktop, Downloads, Documents), so the user ' +
+        'does not have to find the page manually.',
+      parameters: { type: 'object', properties: {}, required: [] },
+      execute: async () => {
+        try {
+          const result = await window.electronIO?.ipcRenderer?.invoke(
+            'openPrivacySettings',
+          );
+          if (!result) {
+            return {
+              error:
+                'not available in this context (the embedded web build has ' +
+                'no access to the OS settings)',
+            };
+          }
+          return result;
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'finish_disk_init',
+      description:
+        'Mark the disk initialization as complete. Call exactly once, after ' +
+        'the user approved the plan and every location in it has been ' +
+        'created with create_location. Pass the inboxes (the folders that ' +
+        'collect incoming files — usually the system Downloads folder and ' +
+        'often the Desktop), each with its archive mode: "move" (default — ' +
+        'the source is removed once filed) or "copy" (the original stays in ' +
+        'the inbox). Also pass the locations you created and a short summary ' +
+        'of the filing rules, so later organizing runs know where things ' +
+        'belong without re-reading the whole plan. Once this is set, ' +
+        'init_scan refuses to run again unless the user explicitly asks for ' +
+        'a redo.',
+      parameters: {
+        type: 'object',
+        properties: {
+          inboxes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: {
+                  type: 'string',
+                  description: 'absolute path of the inbox folder',
+                },
+                mode: {
+                  type: 'string',
+                  enum: ['move', 'copy'],
+                  description:
+                    'what happens to the source when a file is filed out of ' +
+                    'this inbox: move (default) removes it, copy leaves the ' +
+                    'original behind',
+                },
+              },
+              required: ['path'],
+            },
+            description:
+              'inboxes the user confirmed, each with its archive mode ' +
+              '(plain path strings are accepted and default to move)',
+          },
+          locations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                path: { type: 'string' },
+              },
+              required: ['name', 'path'],
+            },
+            description: 'locations created for the approved plan',
+          },
+          rulesSummary: {
+            type: 'string',
+            description:
+              'short summary of the agreed filing rules: which file types ' +
+              'or projects go to which location, plus naming/tag conventions',
+          },
+        },
+        required: ['inboxes'],
+      },
+      execute: async (args) => {
+        const rawInboxes = Array.isArray(args?.inboxes) ? args.inboxes : [];
+        const inboxes = normalizeInboxes(rawInboxes);
+        if (inboxes.length === 0) {
+          return {
+            error:
+              'at least one inbox path is required — pass the folders the ' +
+              'user confirmed as inboxes (e.g. Downloads, Desktop)',
+          };
+        }
+        const locations = Array.isArray(args?.locations)
+          ? args.locations
+              .filter((l: any) => l && typeof l.path === 'string')
+              .map((l: any) => ({
+                name: String(l.name || ''),
+                path: String(l.path),
+              }))
+          : undefined;
+        const rulesSummary =
+          typeof args?.rulesSummary === 'string' && args.rulesSummary.trim()
+            ? args.rulesSummary.trim()
+            : undefined;
+        const previous = readDiskInitState();
+        const now = Date.now();
+        writeDiskInitState({
+          done: true,
+          at: now,
+          inboxes,
+          ...(locations && locations.length > 0 ? { locations } : {}),
+          ...(rulesSummary ? { rulesSummary } : {}),
+        });
+        return { ok: true, previous, finishedAt: now, inboxes };
+      },
+    },
+    {
+      name: 'read_disk_init',
+      description:
+        'Read the stored disk-initialization result: which folders are ' +
+        'registered as inboxes (Downloads, Desktop, ...) with their archive ' +
+        'mode (move = source removed after filing, copy = original kept), ' +
+        'plus the agreed filing rules. Call this whenever the user asks to ' +
+        'tidy, organize or file incoming files, so files are moved to the ' +
+        'right destination instead of being reshuffled inside the inbox.',
+      parameters: { type: 'object', properties: {}, required: [] },
+      execute: async () => {
+        const state = readDiskInitState();
+        if (!state) {
+          return {
+            error:
+              'disk initialization has not been run yet — the inbox setup ' +
+              'and filing rules are unknown. Ask the user whether they want ' +
+              'the global initialization first.',
+          };
+        }
+        return state;
+      },
+    },
+    {
+      name: 'update_disk_init',
+      description:
+        'Change the stored disk-initialization result without re-running ' +
+        'the whole interview + scan flow. Use it when the user wants to add ' +
+        'or remove an inbox (e.g. "also treat my Desktop as an inbox"), ' +
+        'change an inbox archive mode (e.g. "keep the originals in ' +
+        'Downloads when filing" — pass the path with mode "copy"; an ' +
+        'already-registered path is updated in place), register more filing ' +
+        'destinations, or adjust the filing rules. Paths are absolute; ' +
+        'additions that are already registered are ignored unless they carry ' +
+        'a different mode, and removing an unknown inbox is ignored too.',
+      parameters: {
+        type: 'object',
+        properties: {
+          addInboxes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                path: {
+                  type: 'string',
+                  description: 'absolute inbox path (e.g. Desktop)',
+                },
+                mode: {
+                  type: 'string',
+                  enum: ['move', 'copy'],
+                  description:
+                    'archive mode for this inbox: move (default) removes the ' +
+                    'source once filed, copy leaves the original behind',
+                },
+              },
+              required: ['path'],
+            },
+            description:
+              'inboxes to register or reconfigure; plain path strings are ' +
+              'accepted and default to move',
+          },
+          removeInboxes: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'absolute inbox paths to unregister',
+          },
+          addLocations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                path: { type: 'string' },
+              },
+              required: ['name', 'path'],
+            },
+            description:
+              'filing destinations to register (e.g. a location just ' +
+              'created with create_location)',
+          },
+          rulesSummary: {
+            type: 'string',
+            description: 'replace the stored filing-rules summary',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        const state = readDiskInitState();
+        if (!state?.done) {
+          return {
+            error:
+              'disk initialization has not been run yet — run the global ' +
+              'initialization first, then use this tool to adjust it.',
+          };
+        }
+        const normalize = (p: string) => String(p || '').trim();
+        const addInboxes = normalizeInboxes(args?.addInboxes);
+        const removeInboxes = (
+          Array.isArray(args?.removeInboxes) ? args.removeInboxes : []
+        )
+          .map(normalize)
+          .filter(Boolean);
+        const addLocations = Array.isArray(args?.addLocations)
+          ? args.addLocations
+              .filter((l: any) => l && typeof l.path === 'string')
+              .map((l: any) => ({
+                name: String(l.name || ''),
+                path: String(l.path),
+              }))
+          : [];
+        const rulesSummary =
+          typeof args?.rulesSummary === 'string' && args.rulesSummary.trim()
+            ? args.rulesSummary.trim()
+            : state.rulesSummary;
+        // Keep existing inboxes unless removed; addInboxes wins on duplicate
+        // paths so an existing inbox can be switched to a different mode.
+        const inboxByPath = new Map<string, Inbox>();
+        for (const ib of state.inboxes || []) {
+          inboxByPath.set(ib.path, ib);
+        }
+        for (const ib of addInboxes) {
+          inboxByPath.set(ib.path, ib);
+        }
+        const inboxes = Array.from(inboxByPath.values()).filter(
+          (ib) => !removeInboxes.includes(ib.path),
+        );
+        if (inboxes.length === 0) {
+          return {
+            error:
+              'refusing to remove the last inbox — at least one inbox must ' +
+              'stay registered',
+          };
+        }
+        const byPath = new Map<string, { name: string; path: string }>();
+        [...(state.locations || []), ...addLocations].forEach((l) => {
+          if (l.path) {
+            byPath.set(l.path, l);
+          }
+        });
+        const locations = Array.from(byPath.values());
+        const next: DiskInitState = {
+          done: true,
+          at: state.at,
+          inboxes,
+          locations,
+          ...(rulesSummary ? { rulesSummary } : {}),
+        };
+        writeDiskInitState(next);
+        return { ok: true, previous: state, state: next };
+      },
+    },
+    {
+      name: 'mark_inbox_organized',
+      description:
+        'Mark one or more inboxes as organized "now" after a successful ' +
+        'inbox-filing pass. Pass inboxPath to mark a single inbox, or omit it ' +
+        'to mark every registered inbox (the ones you just filed). The daily ' +
+        'inbox reminder only shows an inbox again once it has files newer ' +
+        'than this marker. Call it at the END of the daily pass, after you ' +
+        'filed the files, tagged them and wrote the 整理记录.',
+      parameters: {
+        type: 'object',
+        properties: {
+          inboxPath: {
+            type: 'string',
+            description:
+              'absolute path of one inbox to mark; omit to mark all registered inboxes',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        const state = readDiskInitState();
+        const inboxes = state?.inboxes || [];
+        const requested =
+          args?.inboxPath && typeof args.inboxPath === 'string'
+            ? args.inboxPath.trim()
+            : '';
+        const targets = requested
+          ? inboxes.filter((ib) => ib.path === requested)
+          : inboxes;
+        const paths = (
+          targets.length ? targets : requested ? [{ path: requested }] : []
+        )
+          .map((ib) => ib.path)
+          .filter(Boolean);
+        const at = new Date().toISOString();
+        paths.forEach((p) => markInboxOrganized(p));
+        return { ok: true, marked: paths, at };
       },
     },
   ];
