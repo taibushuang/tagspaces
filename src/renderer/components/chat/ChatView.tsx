@@ -439,7 +439,7 @@ function ChatView() {
                                 ...(currentModel?.name
                                   ? [currentModel.name]
                                   : []),
-                                ...(aiDefaultProvider.customModels || []),
+                                ...(aiDefaultProvider?.customModels || []),
                                 ...(models || [])
                                   .map((m) => m.name)
                                   .filter(Boolean),

@@ -616,7 +616,7 @@ function SettingsAI(props: Props) {
                   models={Array.from(
                     new Set<string>(
                       [
-                        ...(provider.customModels || []),
+                        ...(provider?.customModels || []),
                         ...(provider.defaultTextModel
                           ? [provider.defaultTextModel]
                           : []),

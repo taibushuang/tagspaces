@@ -126,6 +126,8 @@ export const SKIP_DIR_PATTERNS = [
   'C:\\Program Files (x86)',
   'C:\\ProgramData',
   'C:\\Users\\Default',
+  '$Recycle.Bin',
+  'System Volume Information',
   'node_modules',
   '.git',
   '__pycache__',
@@ -328,22 +330,13 @@ export async function scanDisks(
     return false;
   }
 
-  if (platform === 'win32') {
-    // Windows: targeted Everything (es.exe) query goes here — aggregation of
-    // results into this same dirMap. Left empty until validated on a Windows
-    // machine; until then Windows reports an explicit not-implemented error
-    // instead of silently doing a full-disk walk.
-    return {
-      dirs: [],
-      extHistogram: [],
-      largestDirs: [],
-      truncated: false,
-      scannedRoots: roots,
-      platform,
-      error:
-        'disk scan on Windows is not implemented yet (Everything integration pending); please run this on macOS or wait for a Windows build with es.exe support',
-    };
-  }
+  // The fs traversal below is cross-platform: SKIP_DIR_PATTERNS / SENSITIVE_DIRS
+  // already cover Windows system locations (C:\Windows, Program Files,
+  // AppData\Local\* browser profiles), EPERM/EACCES on protected directories is
+  // tolerated per-branch, and the depth / maxEntries / timeout guardrails bound
+  // the walk on NTFS as well. Windows used to return a not-implemented error
+  // here; a targeted Everything (es.exe) fast path may replace this walk later,
+  // but the fs path stays as the always-available fallback.
   {
     async function processDir(
       dir: string,
@@ -404,8 +397,11 @@ export async function scanDisks(
   const dirsArr: DirSummary[] = Array.from(dirMap.entries())
     .sort((a, b) => b[1].totalSize - a[1].totalSize)
     .slice(0, maxDirs)
+    // dirMap keys are forward-slash normalised (ancestorsUpTo works on
+    // normalised paths); hand them back in the platform's native form so
+    // callers can compare against path.join() results on Windows.
     .map(([p, d]) => ({
-      path: p,
+      path: path.normalize(p),
       fileCount: d.fileCount,
       totalSize: d.totalSize,
       topExts: Array.from(d.topExts.entries())

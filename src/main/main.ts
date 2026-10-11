@@ -116,7 +116,10 @@ process.argv.forEach((arg, count) => {
     arg.endsWith('electronmon/src/hook.js') ||
     arg === '.' ||
     arg === '--require' ||
-    count === 0
+    count === 0 ||
+    // The Electron entry script itself (e.g. `npx electron ./dist/main/main.js`
+    // via `npm run run-electron`) — not a file the user wants to open.
+    path.resolve(arg) === path.join(__dirname, 'main.js')
   ) {
     // ignore
   } else if (arg.length > 2) {

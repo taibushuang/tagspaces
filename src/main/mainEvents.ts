@@ -928,8 +928,9 @@ export default function loadMainEvents() {
     }
   });
 
-  // Disk initialization scan. Works on macOS/Linux (fs traversal) and returns
-  // an explicit error on Windows until the Everything integration lands.
+  // Disk initialization scan. Cross-platform fs traversal (depth / size /
+  // timeout guardrails); on Windows the same walk runs with the Windows
+  // entries of SKIP_DIR_PATTERNS / SENSITIVE_DIRS applied.
   ipcMain.handle('initScan', async (_event, options) => {
     try {
       const { scanDisks } = require('./diskScanner');

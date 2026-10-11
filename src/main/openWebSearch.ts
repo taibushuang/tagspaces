@@ -30,13 +30,12 @@
  * local service without renderer CORS / mixed-content constraints.
  */
 import http from 'http';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { spawn } from 'child_process';
 
 const MCP_URL = process.env.OPEN_WEBSEARCH_URL || 'http://127.0.0.1:3000/mcp';
-const START_SCRIPT =
-  process.env.OPEN_WEBSEARCH_SCRIPT ||
-  '/Users/sss/Claude/openWebSearch/scripts/start-daemon.sh';
-const START_CWD = '/Users/sss/Claude/openWebSearch';
 const INIT_TIMEOUT = 10000;
 const SEARCH_TIMEOUT = 40000;
 /** request mode (plain HTTP) timeout — most pages take 1-5s */
@@ -180,16 +179,129 @@ async function initSession(): Promise<string> {
   return sid;
 }
 
-/** Pull the daemon up if it is not running (start-daemon.sh is idempotent). */
+// ---------------------------------------------------------------------------
+// Start-script resolution (cross-platform)
+// ---------------------------------------------------------------------------
+
+/** Default checkout location of the open-websearch project. */
+export function defaultProjectDir(): string {
+  return path.join(os.homedir(), 'Claude', 'openWebSearch');
+}
+
+/**
+ * Candidate start scripts relative to the project dir, most specific first.
+ * Windows gets native launchers (.cmd/.bat/.ps1, plus a .sh for Git Bash);
+ * POSIX keeps the original shell script.
+ */
+export function startScriptCandidates(
+  platform: string = process.platform,
+): string[] {
+  if (platform === 'win32') {
+    return [
+      path.join('scripts', 'start-daemon.cmd'),
+      path.join('scripts', 'start-daemon.bat'),
+      path.join('scripts', 'start-daemon.ps1'),
+      path.join('start-daemon.cmd'),
+      path.join('start-daemon.bat'),
+      path.join('scripts', 'start-daemon.sh'),
+    ];
+  }
+  return [path.join('scripts', 'start-daemon.sh')];
+}
+
+/** First existing candidate, or undefined when the project is not installed. */
+export function findStartScript(
+  projectDir: string,
+  candidates: string[],
+  exists: (p: string) => boolean = fs.existsSync,
+): string | undefined {
+  for (const c of candidates) {
+    const full = path.isAbsolute(c) ? c : path.join(projectDir, c);
+    if (exists(full)) return full;
+  }
+  return undefined;
+}
+
+/**
+ * Map the script extension to a launcher that exists on every supported OS.
+ * (.sh → bash, .cmd/.bat → cmd.exe, .ps1 → powershell, .js → node.)
+ */
+export function buildStartCommand(
+  script: string,
+  platform: string = process.platform,
+): { command: string; args: string[] } {
+  const ext = path.extname(script).toLowerCase();
+  switch (ext) {
+    case '.cmd':
+    case '.bat':
+      return platform === 'win32'
+        ? { command: 'cmd.exe', args: ['/c', script] }
+        : { command: 'bash', args: [script] };
+    case '.ps1':
+      return {
+        command: 'powershell.exe',
+        args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
+      };
+    case '.js':
+    case '.cjs':
+    case '.mjs':
+      return { command: 'node', args: [script] };
+    case '.sh':
+    default:
+      return { command: 'bash', args: [script] };
+  }
+}
+
+/** Explicit override wins, otherwise probe the per-platform default location. */
+export function resolveStartScript(
+  platform: string = process.platform,
+  exists: (p: string) => boolean = fs.existsSync,
+): string | undefined {
+  const override = process.env.OPEN_WEBSEARCH_SCRIPT;
+  if (override) return override;
+  return findStartScript(
+    defaultProjectDir(),
+    startScriptCandidates(platform),
+    exists,
+  );
+}
+
+/** Working directory for the launcher: the project root, not scripts/. */
+export function resolveStartCwd(script: string): string {
+  const override = process.env.OPEN_WEBSEARCH_CWD;
+  if (override) return override;
+  const scriptDir = path.dirname(script);
+  return path.basename(scriptDir).toLowerCase() === 'scripts'
+    ? path.dirname(scriptDir)
+    : scriptDir;
+}
+
+/** Pull the daemon up if it is not running (the start script is idempotent). */
 async function ensureDaemon(): Promise<void> {
   if (starting) return starting;
   starting = (async () => {
+    const script = resolveStartScript();
+    if (!script) {
+      throw new Error(
+        '未找到 open-websearch 启动脚本（搜索 web_search/fetch_web 依赖本机 ' +
+          'open-websearch 服务）。请设置环境变量 OPEN_WEBSEARCH_SCRIPT 指向 ' +
+          'start-daemon 脚本，或将项目放到 ' +
+          `${defaultProjectDir()}。`,
+      );
+    }
+    const { command, args } = buildStartCommand(script);
     try {
-      spawn('bash', [START_SCRIPT], {
+      const child = spawn(command, args, {
         detached: true,
         stdio: 'ignore',
-        cwd: START_CWD,
-      }).unref();
+        cwd: resolveStartCwd(script),
+        windowsHide: true,
+      });
+      // spawn failures (e.g. bash missing on a bare Windows box) surface as an
+      // async 'error' event, not a throw — without a listener Node crashes the
+      // main process. Swallow it here; the 20s poll below reports the failure.
+      child.on('error', () => {});
+      child.unref();
     } catch (e) {
       throw new Error(
         `启动 open-websearch 失败: ${(e as Error)?.message || e}`,

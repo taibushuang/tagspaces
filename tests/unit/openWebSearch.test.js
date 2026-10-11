@@ -16,7 +16,7 @@
  *
  */
 import { describe, expect, test } from '@playwright/test';
-import { _internals } from '../../src/main/openWebSearch';
+import { _internals, buildStartCommand, findStartScript, resolveStartCwd, startScriptCandidates } from '../../src/main/openWebSearch';
 
 const { parseSse, pickEngines, clamp, safeJson, truncate, KNOWN_ENGINES, DEFAULT_ENGINES } =
   _internals;
@@ -75,5 +75,59 @@ describe('openWebSearch 内部纯函数', () => {
     expect(safeJson('{"a":1}')).toEqual({ a: 1 });
     expect(safeJson('[1,2]')).toEqual(null);
     expect(safeJson('hi')).toEqual(null);
+  });
+});
+
+describe('openWebSearch 启动脚本解析（跨平台）', () => {
+  test('startScriptCandidates: Windows 优先原生启动器，POSIX 只有 .sh', () => {
+    const win = startScriptCandidates('win32');
+    expect(win[0]).toContain('start-daemon.cmd');
+    expect(win.some((p) => p.endsWith('.ps1'))).toBe(true);
+    expect(win.some((p) => p.endsWith('.sh'))).toBe(true); // Git Bash 兜底
+    expect(startScriptCandidates('darwin')).toEqual([
+      expect.stringContaining('start-daemon.sh'),
+    ]);
+    expect(startScriptCandidates('linux')).toEqual([
+      expect.stringContaining('start-daemon.sh'),
+    ]);
+  });
+
+  test('findStartScript 按候选顺序返回第一个存在的脚本', () => {
+    const exists = (p) => p.endsWith('start-daemon.bat');
+    const script = findStartScript('/proj', ['a.cmd', 'start-daemon.bat'], exists);
+    expect(script).toBe('/proj/start-daemon.bat'.replace(/\//g, require('path').sep));
+    expect(findStartScript('/proj', ['a.cmd'], () => false)).toBeUndefined();
+  });
+
+  test('buildStartCommand 按扩展名选启动器（Windows）', () => {
+    expect(buildStartCommand('C:\\p\\s.cmd', 'win32')).toEqual({
+      command: 'cmd.exe',
+      args: ['/c', 'C:\\p\\s.cmd'],
+    });
+    expect(buildStartCommand('C:\\p\\s.bat', 'win32').command).toBe('cmd.exe');
+    expect(buildStartCommand('C:\\p\\s.ps1', 'win32')).toEqual({
+      command: 'powershell.exe',
+      args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'C:\\p\\s.ps1'],
+    });
+    expect(buildStartCommand('C:\\p\\s.js', 'win32').command).toBe('node');
+    expect(buildStartCommand('C:\\p\\s.sh', 'win32').command).toBe('bash');
+  });
+
+  test('buildStartCommand POSIX 下 .sh 走 bash', () => {
+    expect(buildStartCommand('/p/scripts/start-daemon.sh', 'darwin')).toEqual({
+      command: 'bash',
+      args: ['/p/scripts/start-daemon.sh'],
+    });
+  });
+
+  test('resolveStartCwd 回到项目根而不是 scripts/', () => {
+    const sep = require('path').sep;
+    expect(resolveStartCwd(['', 'proj', 'scripts', 'start-daemon.sh'].join(sep))).toBe(
+      ['', 'proj'].join(sep),
+    );
+    // 根目录下的脚本：父目录就是 cwd
+    expect(resolveStartCwd(['', 'proj', 'start-daemon.cmd'].join(sep))).toBe(
+      ['', 'proj'].join(sep),
+    );
   });
 });

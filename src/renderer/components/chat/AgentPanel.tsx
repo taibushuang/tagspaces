@@ -952,7 +952,7 @@ function AgentPanel() {
           {Array.from(
             new Set<string>([
               ...(currentModel?.name ? [currentModel.name] : []),
-              ...(defaultAiProvider.customModels || []),
+              ...(defaultAiProvider?.customModels || []),
               ...(models || []).map((m) => m.name).filter(Boolean),
             ]),
           ).map((name) => (

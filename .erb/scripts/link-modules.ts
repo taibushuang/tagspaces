@@ -58,9 +58,13 @@ try {
 }
 if (fs.existsSync(appEnv)) {
   try {
-    fs.symlinkSync(appEnv, targetEnv, 'file');
+    // Copy instead of symlink: creating file symlinks on Windows needs
+    // admin/developer mode, and a silently failed symlink leaves the app
+    // without its .env on every production run (startWS ENOENT).
+    fs.copyFileSync(appEnv, targetEnv);
+    console.log(targetEnv + ' copied');
   } catch (e) {
-    console.log(appEnv + ' exist');
+    console.error('Error copying .env to .erb:', e);
   }
 }
 
@@ -74,8 +78,9 @@ try {
 }
 if (fs.existsSync(appEnv)) {
   try {
-    fs.symlinkSync(appEnv, distEnv, 'file');
+    fs.copyFileSync(appEnv, distEnv);
+    console.log(distEnv + ' copied');
   } catch (e) {
-    console.log(distEnv + ' exist');
+    console.error('Error copying .env to dist:', e);
   }
 }

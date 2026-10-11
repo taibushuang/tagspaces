@@ -232,7 +232,7 @@ description 只放精华。单测 `tests/unit/agentDescription.test.js`。
 **已知限制**：自签名证书的内网网关会被渲染层 Chromium 网络栈拒绝（需装企业 CA 或后续加主进程代理）；`/v1/models` 列表不可用的端点（如方舟套餐）需在设置里手动添加模型。CORS 已解决：主进程窗口 `webSecurity: false`（main.ts），因为方舟等网关的 CORS 预检不放行 `Authorization` 且 Electron webRequest 拦不到预检，聊天/Agent/验证直连才能通（2026-09-27，已在真实应用内实测 200）。
 
 **内置技能 `disk-organize`（2026-10-03 落地）**：面向新用户的全局初始化——先一次性访谈（≤3 轮问完职业画像/频繁任务/领域隔离/现有目录习惯/同步需求）→ `init_scan` 定向扫描磁盘 → `write_deliverable` 出《归类方案》+ `write_knowledge_entry` 存收件箱归类映射规则 → 用户批准后 `create_location` 实施。收件箱默认建议复用系统 Downloads，**必须在方案阶段交给用户确认**。幂等：localStorage `tsDiskInitState`（`finish_disk_init` 工具写标记），未执行过时 AgentPanel 持续展示引导卡片与 CTA。隐私：只读、不上传、跳过敏感目录（.ssh/钥匙串/浏览器数据/聊天记录等）。
-- `src/main/diskScanner.ts` — 跨平台定向扫描纯逻辑（无 electron 依赖，可单测）：macOS 走 fs 递归（限深度、跳过系统/敏感目录、容忍 EPERM/EACCES）；**Windows 分支留空占位**（返回 error，Everything 集成待补）。护栏：目录 ≤50、扩展名 Top 20、超时截断
+- `src/main/diskScanner.ts` — 跨平台定向扫描纯逻辑（无 electron 依赖，可单测）：macOS/Linux/Windows 统一走 fs 递归（限深度、跳过系统/敏感目录、容忍 EPERM/EACCES；Windows 用 `C:\Windows`/`Program Files`/`AppData\*`/`$Recycle.Bin` 等条目，2026-10-07 起 win32 不再返回 not-implemented error），es.exe 定向查询加速留待后续；结果目录 key 输出时经 `path.normalize` 归一为系统原生分隔符。护栏：目录 ≤50、扩展名 Top 20、超时截断
 - `src/renderer/components/chat/AgentTools.ts` — `init_scan`（调 `initScan` IPC）/ `create_location`（复用 `useCurrentLocationContext.addLocation`，路径已存在拒绝）/ `finish_disk_init`
 - `src/main/mainEvents.ts` — `ipcMain.handle('initScan', ...)`；`preload.ts` 的 `Channels` 加 `'initScan'`
 - `agentPrompt.ts` — `DISK_ORGANIZE_SKILL` 指令块（一次性访谈清单 + 流水线 + 收件箱需确认 + 隐私声明 + 幂等声明）
