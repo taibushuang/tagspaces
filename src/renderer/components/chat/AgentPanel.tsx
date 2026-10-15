@@ -1075,6 +1075,20 @@ function AgentPanel() {
           padding: 1,
           borderRadius: 1,
           bgcolor: 'background.default',
+          // Global minireset.css sets user-select:none on every element via
+          // :not(input):not(textarea) (specificity 0,0,2). A container-level
+          // userSelect does NOT propagate to descendants, so use the '& *'
+          // subtree override (0,1,0 > 0,0,2) to make chat text selectable
+          // and copyable. Buttons keep their pointer cursor.
+          userSelect: 'text',
+          '& *': {
+            userSelect: 'text',
+            cursor: 'text',
+          },
+          '& button': {
+            userSelect: 'none',
+            cursor: 'pointer',
+          },
         }}
       >
         {!hasContent && diskInitDone && (
