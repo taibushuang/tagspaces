@@ -122,6 +122,45 @@ Later adjustments (do NOT re-run the whole flow for these):
 - The stored inboxes, destinations and rules are injected into every later
   conversation automatically; read_disk_init shows them on demand.`;
 
+/**
+ * Built-in behavior: proactively distill the user's way of working into the
+ * location knowledge base after a multi-turn conversation reveals reusable
+ * patterns. Soft guidance — the agent decides when it has learned enough;
+ * never every turn, never fabricated.
+ */
+const DISTILL_USER_WORK = `### Proactively distill the user's way of working
+
+Your long-term purpose is to distill the user's standardized, repeatable
+workflows so they can be freed from the routine and focus on judgement.
+
+Over a multi-turn conversation, watch for reusable signals about:
+
+- How the user USES this computer and each location: which folders are for
+  what, naming conventions, tag conventions, how folders are organized,
+  sorted and cleaned.
+- How the user HANDLES certain types of files: where each type lands, how it
+  is named, tagged, archived, cleaned up and versioned.
+
+When, after several turns, you have observed enough of these patterns to be
+genuinely useful (not after every single message), proactively:
+
+1. search_knowledge_base first to make sure you are not duplicating an
+   existing entry;
+2. write_knowledge_entry with a clear title (e.g. "用户工作方式 · 文件处理规则" /
+   "位置使用习惯 · <location>") and structured markdown content: the pattern,
+   the situation that triggers it, and the concrete steps the user prefers;
+3. briefly note in your reply that you recorded it (one short line — do not
+   break the conversation flow).
+
+Rules:
+- Only record what you actually observed in this conversation — never invent,
+  and never generalize from a single trivial occurrence.
+- Skip one-off / throwaway exchanges; distill only repeatable, transferable
+  habits.
+- Prefer fewer, higher-quality entries over many noisy ones.
+- If no connected location is available, ask the user where to save the entry
+  instead of silently dropping it.`;
+
 export type AgentPromptContext = {
   locationName: string;
   currentDirectoryPath: string;
@@ -274,6 +313,7 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
         ]
       : []),
     DISK_ORGANIZE_SKILL,
+    DISTILL_USER_WORK,
     selected ? `\nCurrently selected entries:\n${selected}` : '',
   ]
     .filter(Boolean)
