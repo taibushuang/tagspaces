@@ -41,12 +41,32 @@ export type AgentEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_call'; name: string; args: string }
   | { type: 'tool_result'; name: string; result: string }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'interrupt_drained'; remaining: number };
 
 export type AgentMessage = Record<string, any>;
 
+/**
+ * Shared channel for step-boundary injection. The renderer pushes user
+ * messages typed while the agent is running into `pending`; `runAgent`
+ * drains them into the conversation at each step boundary (right before the
+ * next model round-trip), so the model sees the new instruction immediately
+ * without waiting for the whole run to finish. `injections` counts how many
+ * have been delivered this run (budget guard against endless feeding).
+ */
+export type AgentInterruptQueue = {
+  pending: string[];
+  injections: number;
+};
+
 /** Hard budget of model round-trips per run (guards against tool loops). */
 export const MAX_AGENT_STEPS = 8;
+/**
+ * Upper bound on how many step-boundary injections may grant a fresh step
+ * budget in one run. Mirrors MAX_AGENT_CHECKPOINTS so a run that is fed new
+ * instructions forever still terminates.
+ */
+export const MAX_AGENT_INJECTIONS = 4;
 /**
  * When the step budget is exhausted, the model gets a checkpoint prompt:
  * it must summarize progress and either continue (fresh budget) or wrap
@@ -66,6 +86,9 @@ export type AgentRunOptions = {
   onEvent: (event: AgentEvent) => void;
   signal?: AbortSignal;
   maxSteps?: number;
+  /** Step-boundary injection channel (see AgentInterruptQueue). */
+  interruptQueue?: AgentInterruptQueue;
+  maxInjections?: number;
 };
 
 export type AgentRunResult = {
@@ -90,6 +113,39 @@ function truncate(text: string, limit: number) {
     return text;
   }
   return `${text.slice(0, limit)} …[truncated, ${text.length} chars total]`;
+}
+
+export type DrainInterruptResult = {
+  injected: number;
+  /** True when this drain delivered at least one message and the injection
+   * budget allows granting a fresh step window to the new instruction. */
+  grantedBudget: boolean;
+};
+
+/**
+ * Pure drain of a step-boundary injection queue: moves every pending user
+ * message into the conversation as a `role:'user'` turn and counts it toward
+ * the run's injection budget. Called by `runAgent` at each step boundary and
+ * unit-testable without an endpoint.
+ */
+export function drainInterruptQueue(
+  conversation: AgentMessage[],
+  queue: AgentInterruptQueue,
+  maxInjections: number = MAX_AGENT_INJECTIONS,
+): DrainInterruptResult {
+  let injected = 0;
+  while (queue.pending.length > 0) {
+    const content = queue.pending.shift();
+    if (content && content.trim()) {
+      conversation.push({ role: 'user', content });
+      queue.injections += 1;
+      injected += 1;
+    }
+  }
+  return {
+    injected,
+    grantedBudget: injected > 0 && queue.injections <= maxInjections,
+  };
 }
 
 async function executeToolCall(
@@ -134,6 +190,8 @@ export async function runAgent(
     onEvent,
     signal,
     maxSteps = MAX_AGENT_STEPS,
+    interruptQueue,
+    maxInjections = MAX_AGENT_INJECTIONS,
   } = options;
   const conversation: AgentMessage[] = [...messages];
   let finalContent = '';
@@ -153,6 +211,26 @@ export async function runAgent(
     if (signal?.aborted) {
       aborted = true;
       break;
+    }
+    // Step-boundary injection: drain user messages queued while the agent
+    // was working before the next model round-trip, so the model reacts to
+    // the new instruction immediately. A fresh instruction gets a new step
+    // window (budget-reset) unless the injection budget is exhausted.
+    if (interruptQueue) {
+      const { injected, grantedBudget } = drainInterruptQueue(
+        conversation,
+        interruptQueue,
+        maxInjections,
+      );
+      if (grantedBudget) {
+        stepsSinceCheckpoint = 0;
+      }
+      if (injected > 0) {
+        onEvent({
+          type: 'interrupt_drained',
+          remaining: interruptQueue.pending.length,
+        });
+      }
     }
     if (stepsSinceCheckpoint >= maxSteps) {
       if (checkpointsUsed >= MAX_AGENT_CHECKPOINTS) {

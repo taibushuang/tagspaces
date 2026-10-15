@@ -223,6 +223,17 @@ map-reduce 三级金字塔（文件→子文件夹→父文件夹，向上只汇
 超大 folder（list_folder 截断）→ 完整汇总写独立笔记（write_deliverable），
 description 只放精华。单测 `tests/unit/agentDescription.test.js`。
 
+**Step 边界注入（2026-10-15 落地）**：Agent 工具循环运行中，输入框不再
+禁用——发送的补充指令进 `AgentInterruptQueue`（`AgentService.ts` 的
+`drainInterruptQueue` 纯函数），`runAgent` 在**每个 step 边界**（下一次模型
+请求前）drain 成 `role:'user'` 消息注入对话，模型无需等整个 run 结束就能
+看到新指令；注入会给新指令重置步骤预算（`MAX_AGENT_INJECTIONS=4` 上限防
+无限续跑），并发出 `interrupt_drained` 事件供 UI 更新排队计数
+（AgentPanel 输入框上方 "⏳ N 条补充指令待送达" 提示条）。run 结束瞬间
+仍未注入的残留指令由 AgentPanel finally 折叠成一次续跑（不丢消息）；
+点「停止」会清空排队（中断语义，不喂新活）。单测
+`tests/unit/agentService.test.js`（drain 注入/顺序/空白跳过/预算）。
+
 **后续新增（均已落地，详见 `TODO-ai-capabilities.md` 与 `DESIGN-ai-agent.md` §7）**：`set_description`（人工内容保护）、`move_file`（分拣归档）、`write_deliverable`（.md/.txt 文档产出，含文本回复/文件两种目标模式，不覆盖人写文件）；`search_files` 支持 tscmd 风格操作符（`+tag`/`-tag`/`|tag`/`--type`）；约定文件注入 `locationConventions.ts`（location 根 `CLAUDE.md`/`AGENTS.md` → system prompt）；`list_folder` recursive + 携带描述、`get_description`（分层汇总前置）。设置页「保存并验证」含 tool-calling 能力探测（`checkAgentSupport`，不支持时 warning 提示）。
 
 **联网搜索三工具（2026-10-06 移植自 novelist-app）**：`web_search`（搜网页返标题/URL/摘要，快）、`fetch_web`（抓单页正文，默认 ≤6000 字）、`deepseek_search`（DeepSeek 网页自带联网的深度搜索，综合多来源出结论+引用，慢 10-45s）。

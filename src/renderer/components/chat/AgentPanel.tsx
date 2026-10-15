@@ -33,7 +33,11 @@ import {
   SendIcon,
   StopIcon,
 } from '-/components/CommonIcons';
-import { AgentEvent, runAgent } from '-/components/chat/AgentService';
+import {
+  AgentEvent,
+  AgentInterruptQueue,
+  runAgent,
+} from '-/components/chat/AgentService';
 import {
   createAgentTools,
   readDiskInitState,
@@ -229,6 +233,14 @@ function AgentPanel() {
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const abortRef = useRef<AbortController>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
+  // Step-boundary injection: messages the user sends while a run is in
+  // flight are queued here and drained by runAgent right before the next
+  // model round-trip, so the model reacts to them without waiting for the
+  // whole run to finish. `isRunningRef` mirrors `isRunning` synchronously
+  // (setState is async — the run's finally block must not read stale state).
+  const pendingQueueRef = useRef<AgentInterruptQueue>(undefined);
+  const isRunningRef = useRef<boolean>(false);
+  const [queuedCount, setQueuedCount] = useState<number>(0);
 
   const currentSession =
     sessions.find((s) => s.id === currentSessionId) || sessions[0];
@@ -506,13 +518,20 @@ function AgentPanel() {
       abortRef.current.abort();
       abortRef.current = undefined;
     }
+    // Dropping queued instructions on stop matches "interrupt" semantics —
+    // the user asked the agent to halt, not to feed it more work.
+    if (pendingQueueRef.current) {
+      pendingQueueRef.current.pending = [];
+    }
+    isRunningRef.current = false;
+    setQueuedCount(0);
     setIsRunning(false);
   }, []);
 
   const handleSend = useCallback(
     async (overrideText?: string) => {
       const text = (overrideText ?? input).trim();
-      if (!text || isRunning) {
+      if (!text) {
         return;
       }
       if (!defaultAiProvider || !defaultAiProvider.url) {
@@ -528,6 +547,27 @@ function AgentPanel() {
         return;
       }
       const sessionId = session.id;
+
+      // A run is already in flight: queue this message for step-boundary
+      // injection instead of starting a parallel run. runAgent drains it
+      // before the next model round-trip.
+      if (isRunningRef.current && pendingQueueRef.current) {
+        pendingQueueRef.current.pending.push(text);
+        setQueuedCount(pendingQueueRef.current.pending.length);
+        updateSession(sessionId, (s) => ({
+          ...s,
+          title: s.title || shortText(text, 30),
+          messages: [
+            ...s.messages,
+            { role: 'user', content: text } as AgentChatMessage,
+          ],
+        }));
+        setPromptHistory((prev) => [text, ...prev].slice(0, 10));
+        setHistoryIndex(-1);
+        setInput('');
+        return;
+      }
+
       const userMessage: AgentChatMessage = { role: 'user', content: text };
       const assistantMessage: AgentChatMessage = {
         role: 'assistant',
@@ -543,6 +583,11 @@ function AgentPanel() {
       setHistoryIndex(-1);
       setInput('');
       setIsRunning(true);
+      isRunningRef.current = true;
+      // Fresh injection channel for this run; drained by runAgent at each
+      // step boundary. Leftover messages fold into a follow-up run below.
+      const queue: AgentInterruptQueue = { pending: [], injections: 0 };
+      pendingQueueRef.current = queue;
       const abortController = new AbortController();
       abortRef.current = abortController;
 
@@ -600,6 +645,7 @@ function AgentPanel() {
           ],
           tools: buildTools(),
           signal: abortController.signal,
+          interruptQueue: queue,
           onEvent: (event: AgentEvent) => {
             if (event.type === 'text') {
               patchAssistant((msg) => {
@@ -631,6 +677,8 @@ function AgentPanel() {
                 msg.content +=
                   (msg.content ? '\n\n' : '') + '> ⚠️ ' + event.message;
               });
+            } else if (event.type === 'interrupt_drained') {
+              setQueuedCount(event.remaining);
             }
           },
         });
@@ -645,7 +693,17 @@ function AgentPanel() {
         });
       } finally {
         abortRef.current = undefined;
+        isRunningRef.current = false;
+        pendingQueueRef.current = undefined;
+        setQueuedCount(0);
         setIsRunning(false);
+        // Messages still queued when the run ended (e.g. typed right as it
+        // finished, before the next step boundary) are folded into a single
+        // follow-up run so none of them is lost.
+        const leftover = queue.pending.splice(0);
+        if (leftover.length > 0) {
+          handleSend(leftover.join('\n\n'));
+        }
       }
     },
     [
@@ -1123,6 +1181,21 @@ function AgentPanel() {
           </Box>
         )}
       </Box>
+      {queuedCount > 0 && (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            color: 'text.secondary',
+          }}
+        >
+          <CircularProgress size={14} />
+          <Box sx={{ fontSize: '0.8rem' }}>
+            {t('core:aiAgentQueuedHint', { count: queuedCount })}
+          </Box>
+        </Box>
+      )}
       {/* input */}
       <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1 }}>
         <TextField
@@ -1130,7 +1203,6 @@ function AgentPanel() {
           multiline
           minRows={2}
           maxRows={6}
-          disabled={isRunning}
           value={input}
           onChange={(event) => setInput(event.target.value)}
           placeholder={t('core:aiAgentInputPlaceholder')}
@@ -1165,21 +1237,20 @@ function AgentPanel() {
             }
           }}
         />
-        {isRunning ? (
+        {isRunning && (
           <TsIconButton
             tooltip={t('core:aiAgentStopGeneration')}
             onClick={handleStop}
           >
             <StopIcon color="error" />
           </TsIconButton>
-        ) : (
-          <TsIconButton
-            tooltip={t('core:aiAgentSend')}
-            onClick={() => handleSend()}
-          >
-            <SendIcon color={input.trim() ? 'primary' : 'inherit'} />
-          </TsIconButton>
         )}
+        <TsIconButton
+          tooltip={t('core:aiAgentSend')}
+          onClick={() => handleSend()}
+        >
+          <SendIcon color={input.trim() ? 'primary' : 'inherit'} />
+        </TsIconButton>
       </Box>
       {/* rename task goal dialog */}
       <Dialog
