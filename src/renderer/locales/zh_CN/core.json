@@ -687,6 +687,8 @@
   "searchTypeStrict": "严格",
   "searchTypeStrictTooltip": "与半严格相同，但区分大小写",
   "warningOpeningFilesExternally": "打开外部文件时显示警告",
+  "openFilesInNewWindow": "外部打开的文件在新窗口打开",
+  "openFilesInNewWindowInfo": "从文件管理器或其他应用打开文件时，在新窗口中打开，而不是复用当前窗口",
   "geoTaggingFormat": "地理标记格式",
   "searchDisabledWhileIndexing": "索引时搜索已禁用",
   "copyRelativePath": "复制相对路径",

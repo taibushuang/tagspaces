@@ -63,6 +63,13 @@
   `open-cmd-file` IPC 让渲染层直接打开预览（不再新开整窗），这是
   文件关联秒开预览优化的关键路径；主进程 `createWindow` 也不再 await
   i18nInit（菜单/dock 等语言包就绪后再绑定）。
+  2026-10-14 起支持「外部文件在新窗口打开」：设置 → 常规 →
+  `openFilesInNewWindow`（默认开）开启时，second-instance / `open-file`
+  改走 `handleFileOpenRequest` → `createNewWindowInstance(?cmdopen=...)`
+  每个文件新开一窗（窗口级联偏移 32px），用于多文档对照阅读；
+  新窗口也绑定未保存提醒（`bindUnsavedChangesGuard`），且
+  `file-changed`/`description-changed` 按 `event.sender` 所在窗口记录
+  脏标记（不再只挂主窗口）。
 - 双实例的历史危害：共用 userData 的两个实例存储引擎互相覆盖，曾把用户配置
   的 AI provider 清空过。
 - 启动机制要清楚：`npm run start` → `start:renderer` 里的 **concurrently 会同时

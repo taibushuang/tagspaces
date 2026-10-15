@@ -50,6 +50,7 @@ export const types = {
   SET_ENCRYPT_CREDENTIALS_KEY_SOURCE:
     'SETTINGS/SET_ENCRYPT_CREDENTIALS_KEY_SOURCE',
   WARNING_OPENING_FILES_EXTERNALLY: 'SETTINGS/WARNING_OPENING_FILES_EXTERNALLY',
+  SET_OPEN_FILES_IN_NEW_WINDOW: 'SETTINGS/SET_OPEN_FILES_IN_NEW_WINDOW',
   SET_SAVE_TAGS_IN_LOCATION: 'SETTINGS/SET_SAVE_TAGS_IN_LOCATION',
   SET_TAG_DELIMITER: 'SETTINGS/SET_TAG_DELIMITER',
   SET_USE_EVERYTHING_SEARCH: 'SETTINGS/SET_USE_EVERYTHING_SEARCH',
@@ -262,6 +263,12 @@ export default (state: any = defaultSettings, action: any) => {
       return {
         ...state,
         warningOpeningFilesExternally: action.warningOpeningFilesExternally,
+      };
+    }
+    case types.SET_OPEN_FILES_IN_NEW_WINDOW: {
+      return {
+        ...state,
+        openFilesInNewWindow: action.openFilesInNewWindow,
       };
     }
     case types.SET_SAVE_TAGS_IN_LOCATION: {
@@ -788,6 +795,10 @@ export const actions = {
     type: types.WARNING_OPENING_FILES_EXTERNALLY,
     warningOpeningFilesExternally,
   }),
+  setOpenFilesInNewWindow: (openFilesInNewWindow: boolean) => ({
+    type: types.SET_OPEN_FILES_IN_NEW_WINDOW,
+    openFilesInNewWindow,
+  }),
   setSaveTagInLocation: (saveTagInLocation: boolean) => ({
     type: types.SET_SAVE_TAGS_IN_LOCATION,
     saveTagInLocation,
@@ -1171,6 +1182,8 @@ export const getAddTagsToLibrary = (state: any) =>
   state.settings.addTagsToLibrary;
 export const getWarningOpeningFilesExternally = (state: any) =>
   state.settings.warningOpeningFilesExternally;
+export const isOpenFilesInNewWindow = (state: any) =>
+  state.settings.openFilesInNewWindow === true;
 export const getCheckForUpdateOnStartup = (state: any) =>
   AppConfig.ExtCheckForUpdatesOnStartup !== undefined
     ? AppConfig.ExtCheckForUpdatesOnStartup

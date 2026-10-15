@@ -44,6 +44,10 @@ import { resolveHtmlPath } from './util';
 let isMacLike = process.platform === 'darwin';
 let mainWindow: BrowserWindow | null = null;
 let globalShortcutsEnabled = false;
+// When true, files handed over by the OS (file association / CLI) open in a
+// fresh window instead of reusing the current one — the "open several
+// documents side by side" workflow. Synced from the renderer settings.
+let openFilesInNewWindow = false;
 let startupFilePath: string | undefined;
 let portableMode: boolean | undefined;
 let wsProcess: UtilityProcess | null = null;
@@ -84,7 +88,7 @@ app.on('second-instance', (_event, argv) => {
     SUPPORTED_EXTS.has(path.extname(arg).toLowerCase()),
   );
   if (fileArg) {
-    openPathInRunningWindow(fileArg);
+    handleFileOpenRequest(fileArg);
     return;
   }
   const win = BrowserWindow.getAllWindows()[0];
@@ -342,30 +346,73 @@ function resumePlayback() {
 function reloadApp() {
   BrowserWindow.getFocusedWindow()?.loadURL(resolveHtmlPath('index.html'));
 }
+// Warn before closing a window that still has unsaved file/description
+// edits. Applied to the main window and to every extra window created via
+// "New Window" / open-in-new-window, so closing any of them can't silently
+// drop edits.
+function bindUnsavedChangesGuard(win: BrowserWindow) {
+  win.on('close', (e) => {
+    // @ts-ignore
+    if (win.fileChanged || win.descriptionChanged) {
+      // Window creation no longer waits for i18n (startup speed); fall back
+      // to translation keys if the user closes before language packs resolve.
+      const t = (key: string) => (appI18N ? appI18N.t(key) : key);
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'question',
+        buttons: [t('cancel'), t('closeApp')],
+        defaultId: 1,
+        cancelId: 0,
+        title: t('unsavedChanges'),
+        message: t('unsavedChangesMessage'),
+        detail: t('unsavedChangesDetails'),
+      });
+      if (choice === 0) e.preventDefault();
+      // No action needed for "Close Application", window will close
+    }
+  });
+}
+
 function createNewWindowInstance(url?: string) {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow(appI18N);
     return;
   }
   const mainWindowState = windowStateKeeper(getDefaultAppSize());
+  const winCount = BrowserWindow.getAllWindows().length;
   const newWindowInstance = new BrowserWindow({
     ...browserWindowOptions,
     width: mainWindowState.width,
     height: mainWindowState.height,
-    x: mainWindowState.x,
-    y: mainWindowState.y,
+    // Cascade each extra window 32px down/right from the default bounds so
+    // the new window doesn't land exactly on top of an existing one.
+    x: mainWindowState.x + winCount * 32,
+    y: mainWindowState.y + winCount * 32,
     show: true,
     center: true,
   });
-  if (mainWindow) {
-    // @ts-ignore
-    mainWindow.fileChanged = false;
-    // @ts-ignore
-    mainWindow.descriptionChanged = false;
-  }
+  bindUnsavedChangesGuard(newWindowInstance);
+  // @ts-ignore
+  newWindowInstance.fileChanged = false;
+  // @ts-ignore
+  newWindowInstance.descriptionChanged = false;
   newWindowInstance.setMenuBarVisibility(false);
   if (url) newWindowInstance.loadURL(url);
   else newWindowInstance.loadURL(resolveHtmlPath('index.html'));
+}
+
+// OS file handover (file-association double-click / CLI while the app is
+// running). Respects the user's "open in new window" preference; otherwise
+// reuses the running window for the fast preview path.
+function handleFileOpenRequest(filePath: string) {
+  if (openFilesInNewWindow) {
+    createNewWindowInstance(
+      resolveHtmlPath('index.html') +
+        '?cmdopen=' +
+        encodeURIComponent(filePath),
+    );
+    return;
+  }
+  openPathInRunningWindow(filePath);
 }
 
 // Reuse an existing window when the OS hands over a file while the app is
@@ -619,25 +666,7 @@ const createWindow = async (i18n: any) => {
     if (!mainWindow) throw new Error('"mainWindow" is not defined');
   });
 
-  mainWindow.on('close', (e) => {
-    // @ts-ignore
-    if (mainWindow.fileChanged || mainWindow.descriptionChanged) {
-      // Window creation no longer waits for i18n (startup speed); fall back
-      // to translation keys if the user closes before language packs resolve.
-      const t = (key: string) => (appI18N ? appI18N.t(key) : key);
-      const choice = dialog.showMessageBoxSync(mainWindow, {
-        type: 'question',
-        buttons: [t('cancel'), t('closeApp')],
-        defaultId: 1,
-        cancelId: 0,
-        title: t('unsavedChanges'),
-        message: t('unsavedChangesMessage'),
-        detail: t('unsavedChangesDetails'),
-      });
-      if (choice === 0) e.preventDefault();
-      // No action needed for "Close Application", window will close
-    }
-  });
+  bindUnsavedChangesGuard(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -681,8 +710,9 @@ app.on('open-file', (event, filePath) => {
   startupFilePath = filePath;
   if (app.isReady()) {
     // App already running: reuse the existing window instead of booting a
-    // second full app window (openLink from 'open-cmd-file' in the renderer).
-    openPathInRunningWindow(filePath);
+    // second full app window (openLink from 'open-cmd-file' in the renderer),
+    // or open a fresh window when the user enabled "open in new window".
+    handleFileOpenRequest(filePath);
   }
 });
 
@@ -781,12 +811,23 @@ app
     ipcMain.on('show-main-window', showApp);
     ipcMain.on('create-new-window', (e, url) => createNewWindowInstance(url));
     ipcMain.on('file-changed', (e, isChanged) => {
-      // @ts-ignore
-      if (mainWindow) mainWindow.fileChanged = isChanged;
+      // Track unsaved edits per window (multi-window safe): the dirty flag
+      // lives on the window that reported the change, not just the first one.
+      const win = BrowserWindow.fromWebContents(e.sender);
+      if (win) {
+        // @ts-ignore
+        win.fileChanged = isChanged;
+      }
     });
     ipcMain.on('description-changed', (e, isChanged) => {
-      // @ts-ignore
-      if (mainWindow) mainWindow.descriptionChanged = isChanged;
+      const win = BrowserWindow.fromWebContents(e.sender);
+      if (win) {
+        // @ts-ignore
+        win.descriptionChanged = isChanged;
+      }
+    });
+    ipcMain.on('set-open-files-in-new-window', (_e, value) => {
+      openFilesInNewWindow = value === true;
     });
 
     loadMainEvents();

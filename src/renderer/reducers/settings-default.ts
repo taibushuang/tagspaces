@@ -63,6 +63,9 @@ export default {
   isUpdateAvailable: false,
   enableWS: AppConfig.isElectron,
   warningOpeningFilesExternally: true,
+  // When enabled, files opened via the OS (file association / CLI) open in a
+  // fresh window each time instead of reusing the current one.
+  openFilesInNewWindow: true,
   tagDelimiter: AppConfig.tagDelimiter,
   maxSearchResult: 1000,
   desktopMode,

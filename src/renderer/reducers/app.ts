@@ -21,12 +21,14 @@ import {
   actions as SettingsActions,
   getCheckForUpdateOnStartup,
   isGlobalKeyBindingEnabled,
+  isOpenFilesInNewWindow,
 } from '-/reducers/settings';
 import {
   isWorkerAvailable,
   loadExtensions,
   setGlobalShortcuts,
   setLanguage,
+  setOpenFilesInNewWindow,
 } from '-/services/utils-io';
 import { getURLParameter } from '-/utils/dom';
 import { deriveInitialOnline } from '-/utils/OfflineError';
@@ -193,6 +195,7 @@ export const actions = {
     }
     setTimeout(() => {
       setGlobalShortcuts(isGlobalKeyBindingEnabled(state));
+      setOpenFilesInNewWindow(isOpenFilesInNewWindow(state));
       loadExtensions();
     }, 1000);
     const langURLParam = getURLParameter('locale');

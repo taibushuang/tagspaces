@@ -687,6 +687,8 @@
   "searchTypeStrict": "Strict",
   "searchTypeStrictTooltip": "Same as semi-strict but case sensitive",
   "warningOpeningFilesExternally": "Show warning on opening files externally",
+  "openFilesInNewWindow": "Open files opened externally in a new window",
+  "openFilesInNewWindowInfo": "When a file is opened from the file manager or another app, open it in a new window instead of reusing the current one",
   "geoTaggingFormat": "Geo Tagging Format",
   "searchDisabledWhileIndexing": "Search disabled while indexing",
   "copyRelativePath": "Copy Relative Path",

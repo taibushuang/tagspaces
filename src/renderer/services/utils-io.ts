@@ -1019,6 +1019,15 @@ export function setGlobalShortcuts(globalShortcutsEnabled) {
   }
 }
 
+export function setOpenFilesInNewWindow(openInNewWindow: boolean) {
+  if (AppConfig.isElectron) {
+    window.electronIO.ipcRenderer.sendMessage(
+      'set-open-files-in-new-window',
+      openInNewWindow,
+    );
+  }
+}
+
 export function loadExtensions() {
   if (AppConfig.isElectron) {
     window.electronIO.ipcRenderer.sendMessage('load-extensions');

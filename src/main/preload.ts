@@ -23,6 +23,7 @@ export type Channels =
   | 'isDirectory'
   | 'resolveRelativePaths'
   | 'set-language'
+  | 'set-open-files-in-new-window'
   | 'setZoomFactor'
   | 'global-shortcuts-enabled'
   | 'show-main-window'

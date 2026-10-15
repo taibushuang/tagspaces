@@ -52,6 +52,7 @@ import {
   getPersistTagsInSidecarFile,
   getSettings,
   isDevMode,
+  isOpenFilesInNewWindow,
 } from '-/reducers/settings';
 import { actions as LocationActions } from '-/reducers/locations';
 import {
@@ -68,7 +69,11 @@ import {
 } from '-/services/secure-crypto';
 import { isAnotherTabOpen } from '-/services/credentialsTabGuard';
 import CredentialsPasswordSetupDialog from '-/components/dialogs/CredentialsPasswordSetupDialog';
-import { isWorkerAvailable, setLanguage } from '-/services/utils-io';
+import {
+  isWorkerAvailable,
+  setLanguage,
+  setOpenFilesInNewWindow,
+} from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
 import { clearAllURLParams } from '-/utils/dom';
 import { getDarkThemes, getLightThemes } from '-/utils/Themes';
@@ -112,6 +117,7 @@ function SettingsGeneral() {
   const settings = useSelector(getSettings);
   const persistTagsInSidecarFile = useSelector(getPersistTagsInSidecarFile);
   const filenameTagPlacedAtEnd = useSelector(getFileNameTagPlace);
+  const openFilesInNewWindow = useSelector(isOpenFilesInNewWindow);
 
   // --- Advanced settings imports ---
   const maxCollectedTag = useSelector(getMaxCollectedTag);
@@ -1170,6 +1176,24 @@ function SettingsGeneral() {
                   )
                 }
                 checked={settings.warningOpeningFilesExternally}
+              />
+            </ListItem>
+          ),
+        },
+        AppConfig.isElectron && {
+          label: t('core:openFilesInNewWindow'),
+          description: t('core:openFilesInNewWindowInfo'),
+          jsx: (
+            <ListItem>
+              <ListItemText primary={t('core:openFilesInNewWindow')} />
+              <TsSwitch
+                data-tid="settingsOpenFilesInNewWindow"
+                onClick={() => {
+                  const value = !openFilesInNewWindow;
+                  dispatch(SettingsActions.setOpenFilesInNewWindow(value));
+                  setOpenFilesInNewWindow(value);
+                }}
+                checked={openFilesInNewWindow}
               />
             </ListItem>
           ),
