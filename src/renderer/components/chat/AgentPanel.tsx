@@ -246,10 +246,17 @@ function AgentPanel() {
   // hit Stop and a new run started while the old one was still tearing down)
   // it would clobber the new run's controller and injection queue.
   const runIdRef = useRef<number>(0);
-  // Leftover queued instructions not drained before the run ended; folded
+  // Location (uuid) the current run was started from, so the leftover resume
+  // can refuse to auto-continue if the user switched location meanwhile (it
+  // would otherwise re-run the old task with the new location's context).
+  const runLocationIdRef = useRef<string>('');
+  // Leftover queued instructions not drained before the run ended, folded
   // into ONE follow-up run by an effect once the latest session state (incl.
-  // the finished run's apiMessages) is committed.
-  const resumeRef = useRef<string[]>([]);
+  // the finished run's apiMessages) is committed. Carries the originating
+  // location id so the resume can verify the context is still the same.
+  const resumeRef = useRef<{ locationId: string; texts: string[] } | null>(
+    null,
+  );
 
   const currentSession =
     sessions.find((s) => s.id === currentSessionId) || sessions[0];
@@ -537,6 +544,8 @@ function AgentPanel() {
     runIdRef.current += 1;
     isRunningRef.current = false;
     setQueuedCount(0);
+    // Interrupt semantics: nothing may auto-resume after Stop.
+    resumeRef.current = null;
     setIsRunning(false);
   }, []);
 
@@ -601,6 +610,7 @@ function AgentPanel() {
       setIsRunning(true);
       isRunningRef.current = true;
       const myRunId = ++runIdRef.current;
+      runLocationIdRef.current = findLocation()?.uuid ?? '';
       // Fresh injection channel for this run; drained by runAgent at each
       // step boundary. Leftover messages fold into a follow-up run below.
       const queue: AgentInterruptQueue = { pending: [], injections: 0 };
@@ -728,7 +738,10 @@ function AgentPanel() {
         // the user bubble that was already shown at queue time.
         const leftover = queue.pending.splice(0);
         if (leftover.length > 0) {
-          resumeRef.current = leftover;
+          resumeRef.current = {
+            locationId: runLocationIdRef.current,
+            texts: leftover,
+          };
         }
       }
     },
@@ -751,15 +764,23 @@ function AgentPanel() {
   // committed session state (the finished run's apiMessages) is visible, so
   // the follow-up run carries the full history instead of a stale snapshot.
   useEffect(() => {
-    if (isRunning || resumeRef.current.length === 0) {
+    if (isRunning || !resumeRef.current) {
       return;
     }
-    const messages = resumeRef.current;
-    resumeRef.current = [];
-    // Several leftovers are joined into one user turn on the wire (each was
-    // already shown as its own bubble when queued).
-    handleSend(messages.join('\n\n'), { skipUserBubble: true });
-  }, [isRunning, handleSend]);
+    const { locationId, texts } = resumeRef.current;
+    resumeRef.current = null;
+    if ((findLocation()?.uuid ?? '') === locationId) {
+      // Same location: auto-resume (existing behavior), reusing the already
+      // shown user bubble (the message was displayed when it was queued).
+      handleSend(texts.join('\n\n'), { skipUserBubble: true });
+    } else {
+      // Location switched since the task started: do NOT auto-resume — it
+      // would execute the old task with the new location's context. Move the
+      // instruction back to the input box and let the user review it.
+      setInput(texts.join('\n\n'));
+      showNotification(t('core:aiAgentResumeContextChanged'), 'warning');
+    }
+  }, [isRunning, handleSend, findLocation]);
 
   const handleStartDiskInit = useCallback(() => {
     handleSend(t('core:aiAgentIntroInitMessage'));
@@ -822,12 +843,21 @@ function AgentPanel() {
   }, [currentSession, t]);
 
   const handleNewSession = useCallback(() => {
+    // Session operations are locked while a run is in flight: switching the
+    // "current session" mid-run would misroute queued instructions and the
+    // leftover resume to the wrong session.
+    if (isRunningRef.current) {
+      return;
+    }
     const session = newSession();
     setSessions((prev) => [session, ...prev]);
     setCurrentSessionId(session.id);
   }, []);
 
   const handleDeleteSession = useCallback(() => {
+    if (isRunningRef.current) {
+      return;
+    }
     if (!currentSession) {
       return;
     }
@@ -971,6 +1001,7 @@ function AgentPanel() {
         <Button
           size="small"
           data-tid="agentTaskGoalTID"
+          disabled={isRunning}
           onClick={(e) => setSessionMenuAnchor(e.currentTarget)}
           endIcon={<ArrowDropUpIcon />}
           sx={{
@@ -1095,12 +1126,14 @@ function AgentPanel() {
         </Menu>
         <TsIconButton
           tooltip={t('core:aiAgentNewSession')}
+          disabled={isRunning}
           onClick={handleNewSession}
         >
           <AddIcon />
         </TsIconButton>
         <TsIconButton
           tooltip={t('core:aiAgentDeleteSession')}
+          disabled={isRunning}
           onClick={handleDeleteSession}
         >
           <DeleteIcon />

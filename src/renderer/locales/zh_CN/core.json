@@ -1222,6 +1222,7 @@
   "aiInboxOrganizeMessage": "请执行一次收件箱每日整理：列出下面每个收件箱，按已定规则归档其中的新文件（注意归档模式——copy 模式保留原件），给移动的文件打上约定标签，写入整理记录，最后调用 mark_inbox_organized。",
   "aiAgentRunning": "Agent 正在工作…",
   "aiAgentQueuedHint": "⏳ {{count}} 条补充指令待送达（当前步骤完成后注入）",
+  "aiAgentResumeContextChanged": "任务开始后位置已切换，未送达的补充指令已放回输入框，请确认后手动发送。",
   "aiAgentInputPlaceholder": "向 Agent 提问…（Enter 发送，Shift+Enter 换行）",
   "aiAgentStopGeneration": "停止 Agent",
   "aiAgentSend": "发送",
