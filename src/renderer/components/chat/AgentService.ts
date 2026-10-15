@@ -42,7 +42,10 @@ export type AgentEvent =
   | { type: 'tool_call'; name: string; args: string }
   | { type: 'tool_result'; name: string; result: string }
   | { type: 'error'; message: string }
-  | { type: 'interrupt_drained'; remaining: number };
+  // Emitted after a step-boundary drain actually injected messages; the panel
+  // clears its queued-count indicator on it (drain removes everything in one
+  // pass, so there is no meaningful "remaining" count to carry).
+  | { type: 'interrupt_drained' };
 
 export type AgentMessage = Record<string, any>;
 
@@ -226,10 +229,7 @@ export async function runAgent(
         stepsSinceCheckpoint = 0;
       }
       if (injected > 0) {
-        onEvent({
-          type: 'interrupt_drained',
-          remaining: interruptQueue.pending.length,
-        });
+        onEvent({ type: 'interrupt_drained' });
       }
     }
     if (stepsSinceCheckpoint >= maxSteps) {

@@ -241,6 +241,15 @@ function AgentPanel() {
   const pendingQueueRef = useRef<AgentInterruptQueue>(undefined);
   const isRunningRef = useRef<boolean>(false);
   const [queuedCount, setQueuedCount] = useState<number>(0);
+  // Monotonic id of the currently active run. The dying run's finally only
+  // cleans the shared refs when its own id is still current — otherwise (user
+  // hit Stop and a new run started while the old one was still tearing down)
+  // it would clobber the new run's controller and injection queue.
+  const runIdRef = useRef<number>(0);
+  // Leftover queued instructions not drained before the run ended; folded
+  // into ONE follow-up run by an effect once the latest session state (incl.
+  // the finished run's apiMessages) is committed.
+  const resumeRef = useRef<string[]>([]);
 
   const currentSession =
     sessions.find((s) => s.id === currentSessionId) || sessions[0];
@@ -523,13 +532,16 @@ function AgentPanel() {
     if (pendingQueueRef.current) {
       pendingQueueRef.current.pending = [];
     }
+    // Invalidate the dying run: its finally would otherwise clear the shared
+    // refs even if a new run was already started during the (slow) teardown.
+    runIdRef.current += 1;
     isRunningRef.current = false;
     setQueuedCount(0);
     setIsRunning(false);
   }, []);
 
   const handleSend = useCallback(
-    async (overrideText?: string) => {
+    async (overrideText?: string, opts?: { skipUserBubble?: boolean }) => {
       const text = (overrideText ?? input).trim();
       if (!text) {
         return;
@@ -577,13 +589,18 @@ function AgentPanel() {
       updateSession(sessionId, (s) => ({
         ...s,
         title: s.title || shortText(text, 30),
-        messages: [...s.messages, userMessage, assistantMessage],
+        // The resume path (leftover fold) skips the user bubble — it was
+        // already shown when the instruction was queued mid-run.
+        messages: opts?.skipUserBubble
+          ? [...s.messages, assistantMessage]
+          : [...s.messages, userMessage, assistantMessage],
       }));
       setPromptHistory((prev) => [text, ...prev].slice(0, 10));
       setHistoryIndex(-1);
       setInput('');
       setIsRunning(true);
       isRunningRef.current = true;
+      const myRunId = ++runIdRef.current;
       // Fresh injection channel for this run; drained by runAgent at each
       // step boundary. Leftover messages fold into a follow-up run below.
       const queue: AgentInterruptQueue = { pending: [], injections: 0 };
@@ -678,7 +695,7 @@ function AgentPanel() {
                   (msg.content ? '\n\n' : '') + '> ⚠️ ' + event.message;
               });
             } else if (event.type === 'interrupt_drained') {
-              setQueuedCount(event.remaining);
+              setQueuedCount(0);
             }
           },
         });
@@ -692,23 +709,31 @@ function AgentPanel() {
             (msg.content ? '\n\n' : '') + '> ⚠️ ' + (e?.message || String(e));
         });
       } finally {
+        // Only the run that is still "current" may touch the shared refs. If
+        // the user hit Stop and started another run while this one was still
+        // tearing down (tool IPC calls don't abort promptly), the old run
+        // must not clear the new run's controller / injection queue.
+        if (runIdRef.current !== myRunId) {
+          return;
+        }
         abortRef.current = undefined;
         isRunningRef.current = false;
         pendingQueueRef.current = undefined;
         setQueuedCount(0);
         setIsRunning(false);
-        // Messages still queued when the run ended (e.g. typed right as it
-        // finished, before the next step boundary) are folded into a single
-        // follow-up run so none of them is lost.
+        // Messages still queued when the run ended (typed right as it
+        // finished, before the next step boundary) fold into ONE follow-up
+        // run. The resume is deferred to an effect so it runs with the latest
+        // committed session state (incl. this run's apiMessages) and skips
+        // the user bubble that was already shown at queue time.
         const leftover = queue.pending.splice(0);
         if (leftover.length > 0) {
-          handleSend(leftover.join('\n\n'));
+          resumeRef.current = leftover;
         }
       }
     },
     [
       input,
-      isRunning,
       defaultAiProvider,
       currentModel,
       currentSession,
@@ -720,6 +745,21 @@ function AgentPanel() {
       updateSession,
     ],
   );
+
+  // Fold leftover queued instructions into a follow-up run after the previous
+  // run has fully stopped. Running it in an effect guarantees the latest
+  // committed session state (the finished run's apiMessages) is visible, so
+  // the follow-up run carries the full history instead of a stale snapshot.
+  useEffect(() => {
+    if (isRunning || resumeRef.current.length === 0) {
+      return;
+    }
+    const messages = resumeRef.current;
+    resumeRef.current = [];
+    // Several leftovers are joined into one user turn on the wire (each was
+    // already shown as its own bubble when queued).
+    handleSend(messages.join('\n\n'), { skipUserBubble: true });
+  }, [isRunning, handleSend]);
 
   const handleStartDiskInit = useCallback(() => {
     handleSend(t('core:aiAgentIntroInitMessage'));
