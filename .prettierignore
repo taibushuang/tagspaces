@@ -1,6 +1,7 @@
 node_modules
 public/modules
 builds
+.ts/
 dll
 web
 web/files
