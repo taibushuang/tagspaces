@@ -46,8 +46,10 @@ let mainWindow: BrowserWindow | null = null;
 let globalShortcutsEnabled = false;
 // When true, files handed over by the OS (file association / CLI) open in a
 // fresh window instead of reusing the current one — the "open several
-// documents side by side" workflow. Synced from the renderer settings.
-let openFilesInNewWindow = false;
+// documents side by side" workflow. Defaults to true to match the renderer
+// setting (settings-default.ts), so files arriving before the renderer syncs
+// still take the new-window path.
+let openFilesInNewWindow = true;
 let startupFilePath: string | undefined;
 let portableMode: boolean | undefined;
 let wsProcess: UtilityProcess | null = null;
@@ -379,16 +381,25 @@ function createNewWindowInstance(url?: string) {
   }
   const mainWindowState = windowStateKeeper(getDefaultAppSize());
   const winCount = BrowserWindow.getAllWindows().length;
+  // Only cascade when the main window has real saved bounds. On first launch
+  // window-state has no x/y yet (undefined + offset = NaN), and `center`
+  // would override x/y anyway, so center the new window instead.
+  const hasSavedBounds =
+    Number.isInteger(mainWindowState.x) && Number.isInteger(mainWindowState.y);
   const newWindowInstance = new BrowserWindow({
     ...browserWindowOptions,
     width: mainWindowState.width,
     height: mainWindowState.height,
-    // Cascade each extra window 32px down/right from the default bounds so
-    // the new window doesn't land exactly on top of an existing one.
-    x: mainWindowState.x + winCount * 32,
-    y: mainWindowState.y + winCount * 32,
+    ...(hasSavedBounds
+      ? {
+          // Cascade each extra window 32px down/right from the main window's
+          // last position so new windows don't land on top of existing ones.
+          x: mainWindowState.x + winCount * 32,
+          y: mainWindowState.y + winCount * 32,
+        }
+      : {}),
     show: true,
-    center: true,
+    center: !hasSavedBounds,
   });
   bindUnsavedChangesGuard(newWindowInstance);
   // @ts-ignore
