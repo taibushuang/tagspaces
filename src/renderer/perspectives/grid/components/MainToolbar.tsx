@@ -152,193 +152,207 @@ function MainToolbar(props: Props) {
         backdropFilter: 'blur(5px)',
         // borderBottom: '1px solid ' + theme.palette.divider,
         width: 'calc(100% - 10px)',
-        overflowX: 'auto',
-        overflowY: 'hidden',
+        overflow: 'hidden',
       }}
       variant="dense"
       data-tid={prefixDataTID + 'perspectiveToolbar'}
     >
-      <TsToolbarButton
-        tooltip={t('core:navigateToParentDirectory')}
-        title={t('core:parentFolder')}
-        keyBinding={keyBindings['openParentDirectory']}
-        aria-label={t('core:navigateToParentDirectory')}
-        data-tid={prefixDataTID + 'PerspectiveOnBackButton'}
-        onClick={() => {
-          loadParentDirectoryContent();
+      {/* Scrollable left/middle area: shrinks (and scrolls) when the content
+          area gets narrow, so it never pushes the fixed right-side actions
+          (todo / AI agent / perspective settings) out of the toolbar. */}
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          flex: '1 1 auto',
+          minWidth: 0,
+          overflowX: 'auto',
+          overflowY: 'hidden',
         }}
       >
-        <ParentFolderIcon />
-      </TsToolbarButton>
-      <TsToolbarButton
-        tooltip={t('core:toggleSelectAllFiles')}
-        title={t('core:selectAll')}
-        keyBinding={keyBindings['selectAll']}
-        data-tid={prefixDataTID + 'PerspectiveSelectAllFiles'}
-        onClick={toggleSelectAllFiles}
-      >
-        {selectedEntries.length > 1 ? <SelectedIcon /> : <UnSelectedIcon />}
-      </TsToolbarButton>
-      <TsToolbarButton
-        tooltip={t('core:directoryPropertiesTitle')}
-        title={t('core:details')}
-        aria-label={t('core:directoryPropertiesTitle')}
-        data-tid="openFolderProperties"
-        onClick={showProperties}
-      >
-        <EntryPropertiesIcon />
-      </TsToolbarButton>
-      <TsToolbarButton
-        tooltip={t('core:sort')}
-        aria-label={t('core:sort')}
-        title={t('core:sort')}
-        data-tid={prefixDataTID + 'PerspectiveSortMenu'}
-        onClick={(e) => {
-          handleSortingMenu(e);
-        }}
-      >
-        <SortingIcon />
-      </TsToolbarButton>
-      <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1.5 }} />
-      <Box sx={{ display: selectedEntries.length < 1 ? 'none' : 'flex' }}>
-        {!currentLocation?.isReadOnly && (
-          <TsToolbarButton
-            tooltip={t('core:fileTags')}
-            title={t('core:fileTags')}
-            keyBinding={keyBindings['addRemoveTags']}
-            aria-label={t('core:tagSelectedEntries')}
-            data-tid={prefixDataTID + 'PerspectiveAddRemoveTags'}
-            onClick={() => {
-              if (
-                openedEntry &&
-                fileChanged &&
-                selectedEntries &&
-                selectedEntries.some((e) => e.path === openedEntry.path)
-              ) {
-                showNotification(
-                  `You can't edit tags, because '${openedEntry.path}' is opened for editing`,
-                  'default',
-                  true,
-                );
-                return;
-              }
-              openAddRemoveTagsDialog(selectedEntries);
-            }}
-          >
-            <TagIcon />
-          </TsToolbarButton>
-        )}
-        {!currentLocation?.isReadOnly && !hideProFeatures && (
-          <TsToolbarButton
-            tooltip={t('core:aiGenSelectedEntries')}
-            title={t('core:aiSettingsTab')}
-            aria-label={t('core:aiGenSelectedEntries')}
-            data-tid={prefixDataTID + 'PerspectiveAiGenTID'}
-            onClick={() => openAiGenerationDialog()}
-          >
-            <AIIcon />
-          </TsToolbarButton>
-        )}
-        {!currentLocation?.isReadOnly && (
-          <TsToolbarButton
-            tooltip={t('core:copyMoveSelectedEntries')}
-            title={
-              t('core:copyEntriesButton') + '/' + t('core:moveEntriesButton')
-            }
-            keyBinding={keyBindings['copyMoveSelectedEntries']}
-            aria-label={t('core:copyMoveSelectedEntries')}
-            data-tid={prefixDataTID + 'PerspectiveCopySelectedFiles'}
-            onClick={() => openMoveCopyFilesDialog(selectedEntries)}
-          >
-            <CopyMoveIcon />
-          </TsToolbarButton>
-        )}
-        {!currentLocation?.isReadOnly && (
-          <TsToolbarButton
-            tooltip={t('core:deleteSelectedEntries')}
-            title={t('core:delete')}
-            keyBinding={keyBindings['deleteDocument']}
-            aria-label={t('core:deleteSelectedEntries')}
-            data-tid={prefixDataTID + 'PerspectiveDeleteMultipleFiles'}
-            onClick={() => openDeleteMultipleEntriesDialog()}
-          >
-            <DeleteIcon />
-          </TsToolbarButton>
-        )}
-        {isSearchMode &&
-          !currentLocation?.isReadOnly &&
-          currentDirectoryEntries.length > 0 && (
-            <TsToolbarButton
-              tooltip={t('core:fileVersionCleanupTooltip')}
-              title={t('core:fileVersionCleanup')}
-              aria-label={t('core:fileVersionCleanup')}
-              data-tid={prefixDataTID + 'PerspectiveVersionCleanup'}
-              onClick={() =>
-                openFileVersionCleanupDialog(currentDirectoryEntries)
-              }
-            >
-              <VersionCleanupIcon />
-            </TsToolbarButton>
-          )}
-        {!hideProFeatures &&
-          Pro &&
-          currentLocation?.haveObjectStoreSupport() && (
-            <TsToolbarButton
-              tooltip={t('core:shareFiles')}
-              title={t('core:shareFiles')}
-              aria-label={t('core:shareFiles')}
-              data-tid={prefixDataTID + 'PerspectiveShareFiles'}
-              onClick={() => openShareFilesDialog()}
-              disabled={selectedEntries.length < 1}
-            >
-              <ShareIcon />
-            </TsToolbarButton>
-          )}
-        <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1 }} />
-      </Box>
-      <Box sx={{ display: 'flex' }}>
-        <ZoomComponent preview={false} />
-        <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1 }} />
-      </Box>
-      {showDownloadButton && (
         <TsToolbarButton
-          tooltip={t('core:downloadFiles')}
-          title={t('core:downloadsFolder')}
-          data-tid={prefixDataTID + 'PerspectiveDownloadMultipleMenuTID'}
-          onClick={multipleDownload}
-        >
-          <DownloadIcon />
-        </TsToolbarButton>
-      )}
-      {!hideProFeatures &&
-        Pro && ( // SaveAs do not work on Android
-          <TsToolbarButton
-            tooltip={t('core:exportCsv')}
-            title={t('core:startExportButton')}
-            data-tid={prefixDataTID + 'PerspectiveExportCsvMenuTID'}
-            onClick={handleExportCsvMenu}
-          >
-            <ExportIcon />
-          </TsToolbarButton>
-        )}
-      {AppConfig.isElectron && !currentLocation?.haveObjectStoreSupport() && (
-        <TsToolbarButton
-          tooltip={t('core:dragMode')}
-          data-tid={prefixDataTID + 'PerspectiveDragNative'}
+          tooltip={t('core:navigateToParentDirectory')}
+          title={t('core:parentFolder')}
+          keyBinding={keyBindings['openParentDirectory']}
+          aria-label={t('core:navigateToParentDirectory')}
+          data-tid={prefixDataTID + 'PerspectiveOnBackButton'}
           onClick={() => {
-            setNativeDragModeEnabled(!nativeDragModeEnabled);
+            loadParentDirectoryContent();
           }}
-          title={t('core:dragModeCaption')}
         >
-          {nativeDragModeEnabled ? (
-            <DragOnIcon color="primary" />
-          ) : (
-            <DragOffIcon />
-          )}
+          <ParentFolderIcon />
         </TsToolbarButton>
-      )}
-      <Box sx={{ flexGrow: 1 }} />
-      <Box sx={{ display: 'flex' }}>
+        <TsToolbarButton
+          tooltip={t('core:toggleSelectAllFiles')}
+          title={t('core:selectAll')}
+          keyBinding={keyBindings['selectAll']}
+          data-tid={prefixDataTID + 'PerspectiveSelectAllFiles'}
+          onClick={toggleSelectAllFiles}
+        >
+          {selectedEntries.length > 1 ? <SelectedIcon /> : <UnSelectedIcon />}
+        </TsToolbarButton>
+        <TsToolbarButton
+          tooltip={t('core:directoryPropertiesTitle')}
+          title={t('core:details')}
+          aria-label={t('core:directoryPropertiesTitle')}
+          data-tid="openFolderProperties"
+          onClick={showProperties}
+        >
+          <EntryPropertiesIcon />
+        </TsToolbarButton>
+        <TsToolbarButton
+          tooltip={t('core:sort')}
+          aria-label={t('core:sort')}
+          title={t('core:sort')}
+          data-tid={prefixDataTID + 'PerspectiveSortMenu'}
+          onClick={(e) => {
+            handleSortingMenu(e);
+          }}
+        >
+          <SortingIcon />
+        </TsToolbarButton>
+        <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1.5 }} />
+        <Box sx={{ display: selectedEntries.length < 1 ? 'none' : 'flex' }}>
+          {!currentLocation?.isReadOnly && (
+            <TsToolbarButton
+              tooltip={t('core:fileTags')}
+              title={t('core:fileTags')}
+              keyBinding={keyBindings['addRemoveTags']}
+              aria-label={t('core:tagSelectedEntries')}
+              data-tid={prefixDataTID + 'PerspectiveAddRemoveTags'}
+              onClick={() => {
+                if (
+                  openedEntry &&
+                  fileChanged &&
+                  selectedEntries &&
+                  selectedEntries.some((e) => e.path === openedEntry.path)
+                ) {
+                  showNotification(
+                    `You can't edit tags, because '${openedEntry.path}' is opened for editing`,
+                    'default',
+                    true,
+                  );
+                  return;
+                }
+                openAddRemoveTagsDialog(selectedEntries);
+              }}
+            >
+              <TagIcon />
+            </TsToolbarButton>
+          )}
+          {!currentLocation?.isReadOnly && !hideProFeatures && (
+            <TsToolbarButton
+              tooltip={t('core:aiGenSelectedEntries')}
+              title={t('core:aiSettingsTab')}
+              aria-label={t('core:aiGenSelectedEntries')}
+              data-tid={prefixDataTID + 'PerspectiveAiGenTID'}
+              onClick={() => openAiGenerationDialog()}
+            >
+              <AIIcon />
+            </TsToolbarButton>
+          )}
+          {!currentLocation?.isReadOnly && (
+            <TsToolbarButton
+              tooltip={t('core:copyMoveSelectedEntries')}
+              title={
+                t('core:copyEntriesButton') + '/' + t('core:moveEntriesButton')
+              }
+              keyBinding={keyBindings['copyMoveSelectedEntries']}
+              aria-label={t('core:copyMoveSelectedEntries')}
+              data-tid={prefixDataTID + 'PerspectiveCopySelectedFiles'}
+              onClick={() => openMoveCopyFilesDialog(selectedEntries)}
+            >
+              <CopyMoveIcon />
+            </TsToolbarButton>
+          )}
+          {!currentLocation?.isReadOnly && (
+            <TsToolbarButton
+              tooltip={t('core:deleteSelectedEntries')}
+              title={t('core:delete')}
+              keyBinding={keyBindings['deleteDocument']}
+              aria-label={t('core:deleteSelectedEntries')}
+              data-tid={prefixDataTID + 'PerspectiveDeleteMultipleFiles'}
+              onClick={() => openDeleteMultipleEntriesDialog()}
+            >
+              <DeleteIcon />
+            </TsToolbarButton>
+          )}
+          {isSearchMode &&
+            !currentLocation?.isReadOnly &&
+            currentDirectoryEntries.length > 0 && (
+              <TsToolbarButton
+                tooltip={t('core:fileVersionCleanupTooltip')}
+                title={t('core:fileVersionCleanup')}
+                aria-label={t('core:fileVersionCleanup')}
+                data-tid={prefixDataTID + 'PerspectiveVersionCleanup'}
+                onClick={() =>
+                  openFileVersionCleanupDialog(currentDirectoryEntries)
+                }
+              >
+                <VersionCleanupIcon />
+              </TsToolbarButton>
+            )}
+          {!hideProFeatures &&
+            Pro &&
+            currentLocation?.haveObjectStoreSupport() && (
+              <TsToolbarButton
+                tooltip={t('core:shareFiles')}
+                title={t('core:shareFiles')}
+                aria-label={t('core:shareFiles')}
+                data-tid={prefixDataTID + 'PerspectiveShareFiles'}
+                onClick={() => openShareFilesDialog()}
+                disabled={selectedEntries.length < 1}
+              >
+                <ShareIcon />
+              </TsToolbarButton>
+            )}
+          <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1 }} />
+        </Box>
+        <Box sx={{ display: 'flex' }}>
+          <ZoomComponent preview={false} />
+          <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1 }} />
+        </Box>
+        {showDownloadButton && (
+          <TsToolbarButton
+            tooltip={t('core:downloadFiles')}
+            title={t('core:downloadsFolder')}
+            data-tid={prefixDataTID + 'PerspectiveDownloadMultipleMenuTID'}
+            onClick={multipleDownload}
+          >
+            <DownloadIcon />
+          </TsToolbarButton>
+        )}
+        {!hideProFeatures &&
+          Pro && ( // SaveAs do not work on Android
+            <TsToolbarButton
+              tooltip={t('core:exportCsv')}
+              title={t('core:startExportButton')}
+              data-tid={prefixDataTID + 'PerspectiveExportCsvMenuTID'}
+              onClick={handleExportCsvMenu}
+            >
+              <ExportIcon />
+            </TsToolbarButton>
+          )}
+        {AppConfig.isElectron && !currentLocation?.haveObjectStoreSupport() && (
+          <TsToolbarButton
+            tooltip={t('core:dragMode')}
+            data-tid={prefixDataTID + 'PerspectiveDragNative'}
+            onClick={() => {
+              setNativeDragModeEnabled(!nativeDragModeEnabled);
+            }}
+            title={t('core:dragModeCaption')}
+          >
+            {nativeDragModeEnabled ? (
+              <DragOnIcon color="primary" />
+            ) : (
+              <DragOffIcon />
+            )}
+          </TsToolbarButton>
+        )}
+        <Box sx={{ flexGrow: 1 }} />
+      </Box>
+      {/* Fixed right-side actions: never shrink, never overflow the toolbar. */}
+      <Box sx={{ display: 'flex', flexShrink: 0 }}>
         <Badge
           badgeContent={pendingCount}
           color="error"
