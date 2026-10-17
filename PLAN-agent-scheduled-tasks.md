@@ -36,9 +36,12 @@
     常量）、hour 0-23、dayOfMonth 1-31、month 1-12、dayOfWeek 0-6；
   - 静态不可能日期表（两行查表，非搜索）：`month==2 && day>29`、`day==31 &&
     month∈{4,6,9,11}` 拒绝——"2 月 31 号"这类永不触发被拦截，但 2/29 闰年仍允许；
-  - dayOfMonth 与 dayOfWeek **同给 = 显式 OR**（标准 cron 语义）：`describeSchedule`
-    渲染成"每月 1 日 **或** 每周一"让用户确认，歧义在确认层消掉、不在功能层
-    砍掉（见 §5.5）；
+  - dayOfMonth 与 dayOfWeek **同给 = 拒绝（fail-closed，2026-10-17 定）**：
+    `scheduleToCron` 报错让模型与用户确认后二选一重发——真正的确认只能发生
+    在"创建被拦住"时；若接受标准 cron 的 OR 语义静默创建，复述只是事后告知，
+    任务可能已按每月约 5 次的非预期频率在跑（见 §5.5）。`matches` 仍按标准
+    Vixie OR 语义求值（手写 cron 可达），`describeSchedule` 保留 OR 渲染作为
+    防御性分支；
   - DST 用本地钟面语义（缺口日不跑、重叠只跑一次）。
 
 **能力边界（诚实声明）**：Agent 是渲染层能力，**应用必须处于运行状态**才会
@@ -146,7 +149,7 @@ IPC。**新增文件 `src/main/agentScheduler.ts`，不碰 `main.ts`**（挂载�
 - `findOverdue(tasks, now, missedThresholdMs = 12h)` —— 启动时补跑扫描。
 - `describeSchedule(cron): string` —— cron 渲染人话（"每天 09:00" / "每周一、
   三、六 09:00" / "每月 1 日和 15 日" / "每 2 小时"），对话确认与 UI 展示共用；
-  **dom+dow 同给必须显式渲染成"…或…"**。
+  **dom+dow 同给（仅手写 cron 可达，工具路径已拒绝）渲染成"…或…"**。
 
 主进程 tick：`setInterval(30_000)`，逐个检查 due 任务 → 广播 `scheduledTaskDue`。
 系统休眠期间 interval 停摆，唤醒后第一个 tick 会把 due 的任务一次性广播出来
@@ -185,10 +188,11 @@ UI 与对话写同一份 tasks.json。
   （minute ⊆ {0,15,30,45}、hour 0-23、dayOfMonth 1-31、month 1-12、dayOfWeek
   0-6、stepHours 1-23）+ 静态不可能日期表（`month==2 && day>29`、`day==31 &&
   month∈{4,6,9,11}` 拒绝）+ 任务数 ≤ 20、name/prompt 非空。
-- **dayOfMonth 与 dayOfWeek 同给 = 显式 OR（不拒绝）**：标准 cron 语义，二者
-  都设置时命中任一即触发。歧义不在功能层砍掉，而在**确认层消掉**——
-  `describeSchedule` 必须渲染成"每月 1 日 **或** 每周一"，system prompt 要求
-  Agent 向用户复述时用"或"连接（见下）。
+- **dayOfMonth 与 dayOfWeek 同给 = 拒绝（fail-closed，2026-10-17 定）**：
+  `scheduleToCron` 抛错（"cannot both be set"），以 `{ error }` 回传模型。
+  拒绝本身就是触发确认的机制——模型被拦住后只能回头与用户确认想要哪个
+  维度，再二选一重发；这是**事前消歧**。若按标准 cron OR 语义静默创建，
+  歧义只能靠事后复述告知，无人值守任务可能已按非预期频率跑过。
 - **无歧义确认**：工具返回值带 `describeSchedule(cron)` 的人话描述 + 绑定
   location 名，system prompt 要求 Agent 创建后向用户复述该描述再继续
   （"已设置：每月 1 日 09:00 **或** 每周一 09:00，位置 X，指令摘要…"）。歧义
@@ -339,11 +343,12 @@ AgentPanel 顶部（对话列表上方）一条横幅："⏰ N 个定时任务�
 
 `tests/unit/agentScheduler.test.js`（新）：
 - `scheduleToCron`：字段 → cron 映射（含 `*/N` step、缺省维度补 `*`）；
-- `matches`：维度间 AND、**dom+dow 同给的 OR 语义**（重点）、month/闰年 2/29；
+- `matches`：维度间 AND、**dom+dow 同给的 OR 语义**（手写 cron 可达，重点）、
+  month/闰年 2/29；`scheduleToCron` 对 dom+dow 同给必须拒绝；
 - `nextRunAfter`：15 分钟对齐、当天已过/未过、月末、跨年；
 - 校验：分钟位非对齐（如 09:17）、`month==2 && day>29`、`day==31 && month∈
   {4,6,9,11}`、stepHours 0/24 拒绝；
-- `describeSchedule`：dom+dow 同给必须渲染出"或"；
+- `describeSchedule`：dom+dow 同给（手写 cron）仍渲染出"或"（防御性分支）；
 - `isDue` / `findOverdue` 的 grace 与阈值；
 - store 纯逻辑：CRUD、校验（任务超 20 拒绝）、原子写与损坏回滚
   （参照 todoStore 测试写法）。
@@ -361,7 +366,7 @@ AgentPanel 顶部（对话列表上方）一条横幅："⏰ N 个定时任务�
 5. 对话创建：说"每天早上 9 点整理收件箱"→ Agent 调 `schedule_task` → 字段参数
    正确（minute:[0], hour:[9]）→ 主进程转 cron 存储 → Agent 复述人话描述；
    参数非法（如 minute=[17]、month=[2] & dayOfMonth=[31]）时报错且模型自纠；
-   dom+dow 同给时描述用"或"呈现。
+   dom+dow 同给时被拒绝，模型向用户确认后二选一重发。
 6. 任务绑定的 location 被删除 → skipped + 原因，不误跑。
 7. 应用退出期间到期的任务：下次启动出提醒条，一键补跑/忽略。
 8. 删除 location/会话/任务链路无悬空引用；`tasks.json` 损坏自动回滚。

@@ -68,6 +68,8 @@ import AppConfig from '-/AppConfig';
 import { TS } from '-/tagspaces.namespace';
 import todoApi from '-/components/todo/todoService';
 import { TodoItem } from '-/components/todo/todoTypes';
+import { describeSchedule } from '-/utils/agentSchedule';
+import type { AgentScheduledTask } from '-/utils/agentSchedule';
 
 /** Direct children of `path` may not exceed this when planning an organize. */
 const ORGANIZE_PLAN_LIMIT = 500;
@@ -112,7 +114,9 @@ export type AgentToolDeps = {
     content: string,
     locationPath?: string,
   ) => Promise<{ id: string; path: string }>;
-  currentLocationName: string;
+  currentLocationName?: string;
+  /** uuid of the current location — used to bind scheduled tasks. */
+  currentLocationId?: string;
   currentDirectoryPath: string;
   selectedEntries: TS.FileSystemEntry[];
   addTagsToFsEntry: (
@@ -229,6 +233,8 @@ const TODO_STATUSES = ['open', 'doing', 'done'];
 const TODO_PRIORITIES = ['high', 'medium', 'low'];
 const TODO_UNAVAILABLE =
   'todo tools are only available in the desktop app (todo data is stored on the main process)';
+const SCHEDULED_TASK_UNAVAILABLE =
+  'scheduled task tools are only available in the desktop app (task data is stored on the main process)';
 
 function isTodoAvailable(): boolean {
   return typeof window !== 'undefined' && !!(window as any).electronIO;
@@ -2168,6 +2174,233 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
         const at = new Date().toISOString();
         paths.forEach((p) => markInboxOrganized(p));
         return { ok: true, marked: paths, at };
+      },
+    },
+    {
+      name: 'schedule_task',
+      description:
+        'Create or update a scheduled agent task (定时任务). Use it when the ' +
+        'user says they want something done regularly from now on, e.g. ' +
+        '"every morning at 9 tidy my inbox" / "以后每周一汇总周报". ' +
+        'Do NOT write a cron expression: pass the structured schedule fields. ' +
+        'minute must be 0/15/30/45 (15-minute alignment); minute and hour are ' +
+        'required unless stepHours is used; dayOfMonth and dayOfWeek are ' +
+        'mutually exclusive; stepHours (1-23) is exclusive with hour. ' +
+        'The task is bound to the CURRENT location automatically. ' +
+        'After creating, repeat the returned human-readable `description` to ' +
+        'the user ("已设置：<description>") before continuing. ' +
+        'Pass taskId to update an existing task (name/prompt/schedule).',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: {
+            type: 'string',
+            description:
+              'existing task id (from scheduled_tasks); omit to create a new task',
+          },
+          name: {
+            type: 'string',
+            description: 'short human-readable task name',
+          },
+          prompt: {
+            type: 'string',
+            description:
+              'the instruction seeded into the agent on every run — make it ' +
+              'deterministic and self-contained for unattended execution',
+          },
+          schedule: {
+            type: 'object',
+            description:
+              'structured schedule fields (never a cron string); required when ' +
+              'creating, optional when updating (omit to keep the current ' +
+              'schedule)',
+            properties: {
+              minute: {
+                type: 'array',
+                items: { type: 'number' },
+                description: 'minutes, each one of 0, 15, 30, 45',
+              },
+              hour: {
+                type: 'array',
+                items: { type: 'number' },
+                description: 'hours 0-23',
+              },
+              dayOfMonth: {
+                type: 'array',
+                items: { type: 'number' },
+                description:
+                  'days of month 1-31 (mutually exclusive with dayOfWeek; if ' +
+                  'the user seems to want both, ask which one they mean first)',
+              },
+              month: {
+                type: 'array',
+                items: { type: 'number' },
+                description: 'months 1-12',
+              },
+              dayOfWeek: {
+                type: 'array',
+                items: { type: 'number' },
+                description:
+                  'weekdays 0-6, 0 = Sunday (mutually exclusive with ' +
+                  'dayOfMonth; if the user seems to want both, ask which one ' +
+                  'they mean first)',
+              },
+              stepHours: {
+                type: 'number',
+                description:
+                  'every N hours (1-23), exclusive with hour — e.g. 2 = every 2 hours',
+              },
+            },
+            required: [],
+          },
+        },
+        required: ['name', 'prompt'],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return { error: SCHEDULED_TASK_UNAVAILABLE };
+        }
+        const updating = !!args?.taskId;
+        const locationId = deps.currentLocationId;
+        if (!updating && !locationId) {
+          return {
+            error:
+              'no connected location is open — scheduled tasks must be bound ' +
+              'to a location. Ask the user to open a location first.',
+          };
+        }
+        const hasSchedule = args?.schedule !== undefined;
+        if (
+          hasSchedule &&
+          (!args.schedule ||
+            typeof args.schedule !== 'object' ||
+            Array.isArray(args.schedule))
+        ) {
+          return { error: 'schedule must be an object of structured fields' };
+        }
+        if (!updating && !hasSchedule) {
+          return { error: 'schedule object is required when creating a task' };
+        }
+        try {
+          const name = requireString(args, 'name');
+          const prompt = requireString(args, 'prompt');
+          let task: AgentScheduledTask;
+          if (updating) {
+            task = (await window.electronIO.ipcRenderer.invoke(
+              'scheduledTask:update',
+              String(args.taskId),
+              {
+                name,
+                prompt,
+                ...(hasSchedule ? { fields: args.schedule } : {}),
+              },
+            )) as AgentScheduledTask;
+          } else {
+            task = (await window.electronIO.ipcRenderer.invoke(
+              'scheduledTask:create',
+              { name, prompt, fields: args.schedule, locationId },
+            )) as AgentScheduledTask;
+          }
+          let description = task.schedule.cron;
+          try {
+            description = describeSchedule(task.schedule.cron);
+          } catch (e) {
+            // keep the raw cron if a stored schedule is unparseable
+          }
+          const locationName = deps.currentLocationName || locationId || '';
+          return {
+            ok: true,
+            id: task.id,
+            name: task.name,
+            cron: task.schedule.cron,
+            description: locationName
+              ? `${description} · ${locationName}`
+              : description,
+            nextRunAt: task.nextRunAt,
+            note:
+              'Tell the user "已设置：<description>" (in their language) so the ' +
+              'schedule is confirmed in plain words. Unattended runs should be ' +
+              'deterministic and recoverable (organizing/archiving), not flows ' +
+              'that require a human confirmation mid-run.',
+          };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'scheduled_tasks',
+      description:
+        'List all scheduled agent tasks with their human-readable schedule, ' +
+        'bound location, enabled state, next run time and last result. Use it ' +
+        'before updating (schedule_task with taskId) or deleting ' +
+        '(unschedule_task) a task.',
+      parameters: { type: 'object', properties: {}, required: [] },
+      execute: async () => {
+        if (!isElectron()) {
+          return { error: SCHEDULED_TASK_UNAVAILABLE };
+        }
+        try {
+          const list = (await window.electronIO.ipcRenderer.invoke(
+            'scheduledTask:list',
+          )) as AgentScheduledTask[];
+          return {
+            count: list.length,
+            tasks: (list || []).map((task) => {
+              let description = task.schedule.cron;
+              try {
+                description = describeSchedule(task.schedule.cron);
+              } catch (e) {
+                // keep raw cron for unparseable legacy data
+              }
+              const last = task.lastResults[task.lastResults.length - 1];
+              return {
+                id: task.id,
+                name: task.name,
+                cron: task.schedule.cron,
+                description,
+                locationId: task.locationId,
+                enabled: task.enabled,
+                nextRunAt: task.nextRunAt,
+                ...(last ? { lastResult: last } : {}),
+              };
+            }),
+          };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'unschedule_task',
+      description:
+        'Delete a scheduled agent task permanently. Get the id from ' +
+        'scheduled_tasks. To pause a task without deleting it, tell the user ' +
+        'to toggle it in the scheduled-task list — there is no pause tool.',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: {
+            type: 'string',
+            description: 'id of the scheduled task to delete',
+          },
+        },
+        required: ['taskId'],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return { error: SCHEDULED_TASK_UNAVAILABLE };
+        }
+        try {
+          const taskId = requireString(args, 'taskId');
+          const removed = await window.electronIO.ipcRenderer.invoke(
+            'scheduledTask:delete',
+            taskId,
+          );
+          return { ok: true, removed };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
       },
     },
   ];

@@ -161,6 +161,41 @@ Rules:
 - If no connected location is available, ask the user where to save the entry
   instead of silently dropping it.`;
 
+const SCHEDULE_TASK = `### Scheduled tasks (定时执行)
+
+When the user expresses a recurring intent — "以后每天…", "每周一…", "定期…",
+"每 2 小时…", "from now on every morning at 9…" — offer to automate it and call
+schedule_task. Do not just acknowledge the recurrence in text.
+
+Tool usage:
+- schedule_task({ name, prompt, schedule }) creates a task; schedule carries
+  STRUCTURED FIELDS, never a cron string:
+  minute (each 0/15/30/45 — 15-minute alignment), hour (0-23), dayOfMonth
+  (1-31), month (1-12), dayOfWeek (0-6, 0 = Sunday), stepHours (1-23).
+- minute and hour are required (use stepHours for "every N hours"); stepHours
+  is mutually exclusive with hour. dayOfMonth and dayOfWeek cannot both be set:
+  if the user seems to want both (e.g. "every Monday or the 1st"), ASK the user
+  which one they mean and resend with only that dimension — never pick one
+  yourself. Monthly rules must use real dates (no Feb 30, no 31st in 30-day
+  months) — the tool validates and returns { error } for correction.
+- The task is bound to the CURRENT location automatically; never pass or invent
+  a location id.
+- To change an existing task, call schedule_task with its taskId (list ids with
+  scheduled_tasks). To delete one, call unschedule_task({ taskId }).
+
+Confirmation is mandatory: after creating or updating, repeat the returned
+human-readable description to the user before continuing, in their language:
+"已设置：<description>" (the description already contains the location). Never
+show the raw cron string to the user.
+
+Unattended-task guidance:
+- Prefer deterministic, recoverable instructions (organize/archive/file/tag,
+  write a note) that can run without a human answering mid-run.
+- Do not schedule flows that require an approval question or ambiguous
+  decisions; those need a human in the loop.
+- The application must be running for a task to fire; missed runs are offered
+  for manual catch-up on the next start.`;
+
 export type AgentPromptContext = {
   locationName: string;
   currentDirectoryPath: string;
@@ -314,6 +349,7 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
       : []),
     DISK_ORGANIZE_SKILL,
     DISTILL_USER_WORK,
+    SCHEDULE_TASK,
     selected ? `\nCurrently selected entries:\n${selected}` : '',
   ]
     .filter(Boolean)

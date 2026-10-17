@@ -46,6 +46,7 @@ import {
 import { readMacOSTags } from './macUserTags';
 import registerSecureStorageEvents from './secureStorage';
 import initTodoStore from './todoStoreIpc';
+import initAgentScheduler from './agentSchedulerIpc';
 import { searchWeb, fetchWeb } from './openWebSearch';
 import { findMetaIgnoreDirs, isMetaIgnoredDir } from './metaIgnore';
 
@@ -93,6 +94,7 @@ function isSafePath(filePath) {
 export default function loadMainEvents() {
   registerSecureStorageEvents();
   initTodoStore();
+  initAgentScheduler();
 
   ipcMain.on('reloadWindow', () => {
     const mainWindow = BrowserWindow.getAllWindows();

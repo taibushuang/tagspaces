@@ -35,6 +35,7 @@ import { NewAudioDialogContextProvider } from '-/components/dialogs/hooks/NewAud
 import { NewFileDialogContextProvider } from '-/components/dialogs/hooks/NewFileDialogContextProvider';
 import { OnboardingDialogContextProvider } from '-/components/dialogs/hooks/OnboardingDialogContextProvider';
 import { AiAgentDialogContextProvider } from '-/components/dialogs/hooks/AiAgentDialogContextProvider';
+import { AgentSessionsContextProvider } from '-/components/chat/AgentSessionsContextProvider';
 import { PerspectiveOnboardingContextProvider } from '-/components/dialogs/hooks/PerspectiveOnboardingContextProvider';
 import { BuyProDialogContextProvider } from '-/components/dialogs/hooks/BuyProDialogContextProvider';
 import { ProTeaserDialogContextProvider } from '-/components/dialogs/hooks/ProTeaserDialogContextProvider';
@@ -63,6 +64,12 @@ const providers = [
   // NOTE: the AI capabilities center now lives as a tab inside the AI work
   // area (AiAgentDialog) — no cross-provider toggle needed anymore.
   PerspectiveOnboardingContextProvider,
+  // Persistent agent sessions + scheduled-task executor. Must be OUTSIDE
+  // AiAgentDialogContextProvider: that provider renders the AI Drawer as a
+  // sibling of its children (not a descendant), and the drawer unmounts when
+  // closed. Earlier array entries are outer providers (reduceRight), so due
+  // tasks keep running with the panel closed.
+  AgentSessionsContextProvider,
   AiAgentDialogContextProvider,
   SettingsDialogContextProvider,
   // FilePickerDialogContextProvider must wrap NewFileDialogContextProvider so

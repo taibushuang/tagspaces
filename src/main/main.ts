@@ -43,6 +43,11 @@ import { resolveHtmlPath } from './util';
 // --- App State ---
 let isMacLike = process.platform === 'darwin';
 let mainWindow: BrowserWindow | null = null;
+// Set by `before-quit` (Cmd+Q / app.quit / tray quit). While false, closing
+// the main window minimizes it to the taskbar instead of destroying it — the
+// window (and the scheduled-task executor inside it) must stay alive while
+// the app is running.
+let isQuitting = false;
 let globalShortcutsEnabled = false;
 // When true, files handed over by the OS (file association / CLI) open in a
 // fresh window instead of reusing the current one — the "open several
@@ -348,29 +353,57 @@ function resumePlayback() {
 function reloadApp() {
   BrowserWindow.getFocusedWindow()?.loadURL(resolveHtmlPath('index.html'));
 }
+// Ask about unsaved edits when closing a window that still has dirty
+// file/description state. Returns true when the close must be aborted
+// (user chose "Cancel"), false when the close may proceed.
+function closeBlockedByUnsavedEdits(win: BrowserWindow): boolean {
+  // @ts-ignore
+  if (win.fileChanged || win.descriptionChanged) {
+    // Window creation no longer waits for i18n (startup speed); fall back
+    // to translation keys if the user closes before language packs resolve.
+    const t = (key: string) => (appI18N ? appI18N.t(key) : key);
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'question',
+      buttons: [t('cancel'), t('closeApp')],
+      defaultId: 1,
+      cancelId: 0,
+      title: t('unsavedChanges'),
+      message: t('unsavedChangesMessage'),
+      detail: t('unsavedChangesDetails'),
+    });
+    return choice === 0; // 0 = Cancel → abort close
+  }
+  return false;
+}
+
 // Warn before closing a window that still has unsaved file/description
-// edits. Applied to the main window and to every extra window created via
-// "New Window" / open-in-new-window, so closing any of them can't silently
-// drop edits.
+// edits. Applied to every extra window created via "New Window" /
+// open-in-new-window, so closing any of them can't silently drop edits.
 function bindUnsavedChangesGuard(win: BrowserWindow) {
   win.on('close', (e) => {
-    // @ts-ignore
-    if (win.fileChanged || win.descriptionChanged) {
-      // Window creation no longer waits for i18n (startup speed); fall back
-      // to translation keys if the user closes before language packs resolve.
-      const t = (key: string) => (appI18N ? appI18N.t(key) : key);
-      const choice = dialog.showMessageBoxSync(win, {
-        type: 'question',
-        buttons: [t('cancel'), t('closeApp')],
-        defaultId: 1,
-        cancelId: 0,
-        title: t('unsavedChanges'),
-        message: t('unsavedChangesMessage'),
-        detail: t('unsavedChangesDetails'),
-      });
-      if (choice === 0) e.preventDefault();
-      // No action needed for "Close Application", window will close
+    if (closeBlockedByUnsavedEdits(win)) e.preventDefault();
+  });
+}
+
+// Main-window close handler: unless the app is genuinely quitting, closing
+// the main window minimizes it to the taskbar instead of destroying it. The
+// main window is the sole scheduled-task executor — keeping it alive means
+// tasks never pause just because the user "closed" the window. Only explicit
+// quit (Cmd+Q / app.quit / tray quit) destroys it.
+function bindMainWindowCloseGuard(win: BrowserWindow) {
+  win.on('close', (e) => {
+    // Unsaved-edit guard runs in BOTH paths (close-to-minimize AND explicit
+    // quit). A quit must not silently drop unsaved edits; when the user
+    // cancels here, preventDefault aborts the close (and therefore the quit).
+    if (closeBlockedByUnsavedEdits(win)) {
+      e.preventDefault();
+      return; // user chose Cancel → keep the window open / abort the quit
     }
+    if (isQuitting) {
+      return; // explicit quit → let the window really close
+    }
+    e.preventDefault();
+    win.minimize(); // "close" = minimize to the taskbar; renderer stays alive
   });
 }
 
@@ -406,6 +439,9 @@ function createNewWindowInstance(url?: string) {
   newWindowInstance.fileChanged = false;
   // @ts-ignore
   newWindowInstance.descriptionChanged = false;
+  // MD-document / extra windows are never the scheduled-task executor.
+  (newWindowInstance as { isMainAgentWindow?: boolean }).isMainAgentWindow =
+    false;
   newWindowInstance.setMenuBarVisibility(false);
   if (url) newWindowInstance.loadURL(url);
   else newWindowInstance.loadURL(resolveHtmlPath('index.html'));
@@ -612,6 +648,9 @@ const createWindow = async (i18n: any) => {
   mainWindow.fileChanged = false;
   // @ts-ignore
   mainWindow.descriptionChanged = false;
+  // The main window is the sole scheduled-task executor (see
+  // agentSchedulerIpc.pickExecutorWindow). Child windows are tagged false.
+  (mainWindow as { isMainAgentWindow?: boolean }).isMainAgentWindow = true;
 
   mainWindow.setMenuBarVisibility(false);
 
@@ -677,7 +716,7 @@ const createWindow = async (i18n: any) => {
     if (!mainWindow) throw new Error('"mainWindow" is not defined');
   });
 
-  bindUnsavedChangesGuard(mainWindow);
+  bindMainWindowCloseGuard(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -735,6 +774,12 @@ if (!isDebug) {
   // 'second-instance' (including file handover) is handled by the unified
   // top-level handler near the single-instance lock above.
 }
+
+app.on('before-quit', () => {
+  // Explicit quit (Cmd+Q / app.quit / tray quit): subsequent window close
+  // events must really close, not minimize (see bindMainWindowCloseGuard).
+  isQuitting = true;
+});
 
 app.on('window-all-closed', () => {
   // Respect the macOS convention of having the application in memory even

@@ -1179,6 +1179,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         locations.map((l) => ({ name: l.name, path: l.path })),
       ...makeKbToolDeps(findLocationByPath, findLocation),
       currentLocationName: currentLocation ? currentLocation.name : '',
+      currentLocationId: currentLocation ? currentLocation.uuid : '',
       currentLocationPath: currentLocation ? currentLocation.path : '',
       currentDirectoryPath: currentDirectoryPath || '',
       selectedEntries,

@@ -17,16 +17,22 @@
  */
 
 /**
- * Standalone AI Agent panel: session list (persisted to localStorage), chat
- * bubbles, collapsible tool-call cards, streaming output with a stop button.
- * Talks to the same OpenAI-compatible endpoints and provider settings as the
- * chat tab, but keeps its own transcript independent of any opened folder.
+ * Standalone AI Agent panel: session list, chat bubbles, collapsible
+ * tool-call cards, streaming output with a stop button, a scheduled-task
+ * sub-view and a live view of a scheduled run.
+ *
+ * Sessions and the active run live in AgentSessionsContextProvider so they
+ * survive this panel being unmounted (Drawer closed / tab switched) and so
+ * scheduled tasks can execute in the background. This component only owns
+ * view-local state (input text, menus, sub-view selection).
  */
 import {
   AddIcon,
   ArrowDropUpIcon,
+  CloseIcon,
   DeleteIcon,
   EditIcon,
+  GoBackIcon,
   HTMLFileIcon,
   MarkdownFileIcon,
   MoreMenuIcon,
@@ -34,37 +40,22 @@ import {
   StopIcon,
 } from '-/components/CommonIcons';
 import {
-  AgentEvent,
-  AgentInterruptQueue,
-  runAgent,
-} from '-/components/chat/AgentService';
-import {
-  createAgentTools,
-  readDiskInitState,
-} from '-/components/chat/AgentTools';
-import { buildAgentSystemPrompt } from '-/components/chat/agentPrompt';
-import { inboxLastOrganizedMs, newEntriesSince } from '-/utils/inboxOrganize';
-import { makeKbToolDeps } from '-/services/knowledgeBase';
-import {
-  getEnabledCustomSkills,
-  incrementSkillUseCount,
-  incrementToolCallCount,
-} from '-/components/chat/agentCapabilities';
-import TsIconButton from '-/components/TsIconButton';
+  AgentChatMessage,
+  AgentScheduledRunning,
+  sessionTitle,
+  shortText,
+  prettyArgs,
+  transcriptToMarkdown,
+  useAgentSessionsContext,
+} from '-/components/chat/AgentSessionsContextProvider';
+import { readDiskInitState } from '-/components/chat/AgentTools';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
-import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
-import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
-import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
-import { loadLocationConventions } from '-/components/chat/locationConventions';
 import { useChatContext } from '-/hooks/useChatContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
-import { getDefaultAIProvider, getCurrentLanguage } from '-/reducers/settings';
-import { CommonLocation } from '-/utils/CommonLocation';
-import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import { TS } from '-/tagspaces.namespace';
+import { inboxLastOrganizedMs, newEntriesSince } from '-/utils/inboxOrganize';
+import { getDefaultAIProvider } from '-/reducers/settings';
+import TsIconButton from '-/components/TsIconButton';
 import Accordion from '@mui/material/Accordion';
 import AccordionDetails from '@mui/material/AccordionDetails';
 import AccordionSummary from '@mui/material/AccordionSummary';
@@ -76,13 +67,16 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import ScheduleIcon from '@mui/icons-material/Schedule';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
+import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import { useTheme } from '@mui/material/styles';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import {
   convertMarkDownToHtml,
   getMimeType,
@@ -92,101 +86,24 @@ import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
+import { describeSchedule } from '-/utils/agentSchedule';
+import type { AgentScheduledTask } from '-/utils/agentSchedule';
+import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 
-export type AgentToolStep = {
-  id: string;
-  name: string;
-  args: string;
-  result?: string;
-  isError?: boolean;
+type AgentPanelView = 'agent' | 'scheduled';
+type LastResult = AgentScheduledTask['lastResults'][number];
+
+const selectableTextSx = {
+  userSelect: 'text',
+  '& *': {
+    userSelect: 'text',
+    cursor: 'text',
+  },
+  '& button': {
+    userSelect: 'none',
+    cursor: 'pointer',
+  },
 };
-
-export type AgentChatMessage =
-  | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; steps: AgentToolStep[] };
-
-export type AgentSession = {
-  id: string;
-  title: string;
-  updatedAt: number;
-  messages: AgentChatMessage[];
-  /** OpenAI-format conversation carried across runs (incl. tool results). */
-  apiMessages: Record<string, any>[];
-};
-
-const SESSIONS_KEY = 'tsAiAgentSessions';
-
-function loadSessions(): AgentSession[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-function newSession(): AgentSession {
-  const now = Date.now();
-  return {
-    id: 'agent-' + now,
-    title: '',
-    updatedAt: now,
-    messages: [],
-    apiMessages: [],
-  };
-}
-
-function sessionTitle(session: AgentSession): string {
-  if (session.title) {
-    return session.title;
-  }
-  const firstUser = session.messages.find((m) => m.role === 'user');
-  if (firstUser && firstUser.content) {
-    return firstUser.content.slice(0, 30);
-  }
-  return format(session.updatedAt, 'MM-dd HH:mm');
-}
-
-function shortText(text: string, limit = 120): string {
-  const oneLine = text.replace(/\s+/g, ' ').trim();
-  return oneLine.length > limit ? oneLine.slice(0, limit) + '…' : oneLine;
-}
-
-function prettyArgs(args: string): string {
-  try {
-    return JSON.stringify(JSON.parse(args || '{}'), null, 2);
-  } catch (e) {
-    return args || '{}';
-  }
-}
-
-function transcriptToMarkdown(
-  session: AgentSession,
-  t: (key: string) => string,
-): string {
-  return session.messages
-    .map((message) => {
-      if (message.role === 'user') {
-        return `### ${t('core:aiAgentRoleUser')}\n\n${message.content}`;
-      }
-      const steps = message.steps
-        .map((step) => {
-          const parts = [
-            `**${step.name}**`,
-            '```json\n' + prettyArgs(step.args) + '\n```',
-          ];
-          if (step.result) {
-            parts.push('```\n' + step.result + '\n```');
-          }
-          return parts.join('\n\n');
-        })
-        .join('\n\n');
-      return `### ${t('core:aiAgentRoleAssistant')}\n\n${
-        steps ? steps + '\n\n' : ''
-      }${message.content}`;
-    })
-    .join('\n\n---\n\n');
-}
 
 function AgentPanel() {
   const { t } = useTranslation();
@@ -195,23 +112,41 @@ function AgentPanel() {
   const { currentModel, models, setModel, changeCurrentModel } =
     useChatContext();
   const defaultAiProvider = useSelector(getDefaultAIProvider);
-  const interfaceLanguage = useSelector(getCurrentLanguage);
-  const { findLocation, findLocationByPath, locations, addLocation } =
-    useCurrentLocationContext();
-  const { agentSearch, getIndex, findEntry, listChildren } =
-    useLocationIndexContext();
-  const { currentDirectoryPath } = useDirectoryContentContext();
-  const { selectedEntries } = useSelectedEntriesContext();
-  const { addTagsToFsEntry, removeTagsFromEntry } = useTaggingActionsContext();
-  const { setDescriptionChange, moveFiles, copyFiles, saveTextFilePromise } =
-    useIOActionsContext();
-  const { moveFilesPromise } = usePlatformFacadeContext();
+  const { findLocation } = useCurrentLocationContext();
+  const { listChildren } = useLocationIndexContext();
+  const {
+    sessions,
+    currentSession,
+    currentSessionId,
+    setCurrentSessionId,
+    updateSession,
+    isRunning,
+    queuedCount,
+    runningTask,
+    isExecutor,
+    restoredInput,
+    consumeRestoredInput,
+    startRun,
+    stopRun,
+    enqueueInterrupt,
+    newAgentSession,
+    deleteCurrentAgentSession,
+    tasks,
+    refreshTasks,
+    runNow,
+    deleteTask,
+    toggleTaskEnabled,
+    missedTasks,
+    dismissMissed,
+  } = useAgentSessionsContext();
 
-  const [sessions, setSessions] = useState<AgentSession[]>(loadSessions);
-  const [currentSessionId, setCurrentSessionId] = useState<string>(
-    () => sessions[0]?.id || '',
+  const [view, setView] = useState<AgentPanelView>('agent');
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AgentScheduledTask | null>(
+    null,
   );
-  const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [liveInput, setLiveInput] = useState<string>('');
   const [input, setInput] = useState<string>('');
   const [diskInitDone, setDiskInitDone] = useState<boolean>(() =>
     Boolean(readDiskInitState()?.done),
@@ -231,55 +166,8 @@ function AgentPanel() {
   const [renameValue, setRenameValue] = useState<string>('');
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
-  const abortRef = useRef<AbortController>(undefined);
   const listRef = useRef<HTMLDivElement>(null);
-  // Step-boundary injection: messages the user sends while a run is in
-  // flight are queued here and drained by runAgent right before the next
-  // model round-trip, so the model reacts to them without waiting for the
-  // whole run to finish. `isRunningRef` mirrors `isRunning` synchronously
-  // (setState is async — the run's finally block must not read stale state).
-  const pendingQueueRef = useRef<AgentInterruptQueue>(undefined);
-  const isRunningRef = useRef<boolean>(false);
-  const [queuedCount, setQueuedCount] = useState<number>(0);
-  // Monotonic id of the currently active run. The dying run's finally only
-  // cleans the shared refs when its own id is still current — otherwise (user
-  // hit Stop and a new run started while the old one was still tearing down)
-  // it would clobber the new run's controller and injection queue.
-  const runIdRef = useRef<number>(0);
-  // Location (uuid) the current run was started from, so the leftover resume
-  // can refuse to auto-continue if the user switched location meanwhile (it
-  // would otherwise re-run the old task with the new location's context).
-  const runLocationIdRef = useRef<string>('');
-  // Leftover queued instructions not drained before the run ended, folded
-  // into ONE follow-up run by an effect once the latest session state (incl.
-  // the finished run's apiMessages) is committed. Carries the originating
-  // location id so the resume can verify the context is still the same.
-  const resumeRef = useRef<{ locationId: string; texts: string[] } | null>(
-    null,
-  );
-
-  const currentSession =
-    sessions.find((s) => s.id === currentSessionId) || sessions[0];
-
-  // persist sessions on every change
-  useEffect(() => {
-    try {
-      localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
-    } catch (e) {
-      console.log('agent sessions persist failed', e);
-    }
-  }, [sessions]);
-
-  // keep at least one session
-  useEffect(() => {
-    if (sessions.length === 0) {
-      const session = newSession();
-      setSessions([session]);
-      setCurrentSessionId(session.id);
-    } else if (!sessions.some((s) => s.id === currentSessionId)) {
-      setCurrentSessionId(sessions[0].id);
-    }
-  }, [sessions, currentSessionId]);
+  const detailListRef = useRef<HTMLDivElement>(null);
 
   // refresh the disk-init marker whenever an agent run finishes so the
   // intro card and its CTA chip disappear once the skill has run
@@ -325,232 +213,24 @@ function AgentPanel() {
     }
   });
 
-  const updateSession = useCallback(
-    (sessionId: string, updater: (session: AgentSession) => AgentSession) => {
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === sessionId ? { ...updater(s), updatedAt: Date.now() } : s,
-        ),
-      );
-    },
-    [],
-  );
-
-  const buildTools = useCallback(() => {
-    const location = findLocation();
-    const locationForPath = (path: string) =>
-      findLocationByPath(path) || location || undefined;
-    return createAgentTools({
-      agentSearch,
-      getIndex,
-      findEntry,
-      listChildren,
-      listLocations: () =>
-        locations.map((l) => ({ name: l.name, path: l.path })),
-      ...makeKbToolDeps(findLocationByPath, findLocation),
-      currentLocationName: location ? location.name : '',
-      currentLocationPath: location ? location.path : '',
-      currentDirectoryPath: currentDirectoryPath || '',
-      selectedEntries,
-      addTagsToFsEntry: (entry, tags) => addTagsToFsEntry(entry, tags),
-      removeTagsFromEntry,
-      moveFile: (sourcePath: string, targetFolderPath: string) => {
-        const srcLoc = locationForPath(sourcePath);
-        const tgtLoc = locationForPath(targetFolderPath);
-        if (!srcLoc) {
-          return Promise.reject(
-            new Error('source path is not inside any connected location'),
-          );
-        }
-        if (!tgtLoc) {
-          return Promise.reject(
-            new Error(
-              'target path is not inside any connected location — create or connect the destination first',
-            ),
-          );
-        }
-        // Cloud gating mirrors MoveCopyFilesDialog: cross-location moves are
-        // fine between local locations, but a cloud location may only move
-        // inside itself.
-        const srcIsCloud = !!srcLoc.haveObjectStoreSupport?.();
-        const tgtIsCloud = !!tgtLoc.haveObjectStoreSupport?.();
-        if ((srcIsCloud || tgtIsCloud) && srcLoc.uuid !== tgtLoc.uuid) {
-          return Promise.reject(
-            new Error(
-              'cross-location move involving a cloud location is not supported',
-            ),
-          );
-        }
-        // Pass the TARGET location id — same as the move dialog (handleMove).
-        return moveFiles([sourcePath], targetFolderPath, tgtLoc.uuid);
-      },
-      copyFile: (sourcePath: string, targetFolderPath: string) => {
-        const srcLoc = locationForPath(sourcePath);
-        const tgtLoc = locationForPath(targetFolderPath);
-        if (!srcLoc) {
-          return Promise.reject(
-            new Error('source path is not inside any connected location'),
-          );
-        }
-        if (!tgtLoc) {
-          return Promise.reject(
-            new Error(
-              'target path is not inside any connected location — create or connect the destination first',
-            ),
-          );
-        }
-        // Same cloud constraint as MoveCopyFilesDialog.
-        const srcIsCloud = !!srcLoc.haveObjectStoreSupport?.();
-        const tgtIsCloud = !!tgtLoc.haveObjectStoreSupport?.();
-        if ((srcIsCloud || tgtIsCloud) && srcLoc.uuid !== tgtLoc.uuid) {
-          return Promise.reject(
-            new Error(
-              'cross-location copy involving a cloud location is not supported',
-            ),
-          );
-        }
-        return copyFiles([sourcePath], targetFolderPath, tgtLoc.uuid);
-      },
-      moveToPath: (sourcePath: string, targetPath: string) => {
-        const srcLoc = locationForPath(sourcePath);
-        const tgtLoc = locationForPath(targetPath);
-        if (!srcLoc) {
-          return Promise.reject(
-            new Error('source path is not inside any connected location'),
-          );
-        }
-        if (!tgtLoc) {
-          return Promise.reject(
-            new Error(
-              'target path is not inside any connected location — create or connect the destination first',
-            ),
-          );
-        }
-        const srcIsCloud = !!srcLoc.haveObjectStoreSupport?.();
-        const tgtIsCloud = !!tgtLoc.haveObjectStoreSupport?.();
-        if ((srcIsCloud || tgtIsCloud) && srcLoc.uuid !== tgtLoc.uuid) {
-          return Promise.reject(
-            new Error(
-              'cross-location move involving a cloud location is not supported',
-            ),
-          );
-        }
-        return moveFilesPromise([[sourcePath, targetPath]], srcLoc.uuid).then(
-          (results: any[]) => {
-            const err = (results || []).find(
-              (r) => r instanceof Error || (r && r.message),
-            );
-            if (err) {
-              throw err instanceof Error ? err : new Error(String(err));
-            }
-            return true;
-          },
-        );
-      },
-      loadTextFile: (path: string) => {
-        const loc = locationForPath(path);
-        if (!loc) {
-          return Promise.reject(
-            new Error('path is not inside any connected location'),
-          );
-        }
-        return loc.loadTextFilePromise(path);
-      },
-      readFileBytes: (path: string) => {
-        const loc = locationForPath(path);
-        if (!loc) {
-          return Promise.reject(
-            new Error('path is not inside any connected location'),
-          );
-        }
-        return Promise.resolve(loc.getFileContentPromise(path, 'arraybuffer'));
-      },
-      getDescription: (path: string) => {
-        const loc = locationForPath(path);
-        if (!loc) {
-          return Promise.resolve('');
-        }
-        return Promise.resolve(
-          loc
-            .loadFileMetaDataPromise(path)
-            .then((meta: TS.FileSystemEntryMeta) => meta?.description || '')
-            .catch(() => ''),
-        );
-      },
-      setDescription: (entry: TS.FileSystemEntry, description: string) =>
-        setDescriptionChange(entry, description),
-      writeTextFile: (path: string, content: string, overwrite: boolean) => {
-        const loc = locationForPath(path);
-        if (!loc) {
-          return Promise.reject(
-            new Error('path is not inside any connected location'),
-          );
-        }
-        return Promise.resolve(
-          loc.saveTextFilePromise({ path }, content, overwrite),
-        ).then(() => undefined);
-      },
-      createLocation: (
-        name: string,
-        locationPath: string,
-        options?: { isDefault?: boolean; isReadOnly?: boolean },
-      ) => {
-        if (locations.some((l) => l.path === locationPath)) {
-          return Promise.reject(
-            new Error('location already connected: ' + locationPath),
-          );
-        }
-        addLocation(
-          new CommonLocation({
-            uuid: getUuid(),
-            name,
-            type: '0',
-            path: locationPath,
-            paths: [locationPath],
-            isDefault: Boolean(options?.isDefault),
-            isReadOnly: Boolean(options?.isReadOnly),
-          }),
-          false,
-        );
-        return Promise.resolve({ ok: true, name, path: locationPath });
-      },
-    });
-  }, [
-    findLocation,
-    findLocationByPath,
-    locations,
-    addLocation,
-    listChildren,
-    agentSearch,
-    getIndex,
-    currentDirectoryPath,
-    selectedEntries,
-    addTagsToFsEntry,
-    removeTagsFromEntry,
-  ]);
-
-  const handleStop = useCallback(() => {
-    if (abortRef.current) {
-      abortRef.current.abort();
-      abortRef.current = undefined;
+  // live view of a scheduled run follows its transcript while streaming
+  useEffect(() => {
+    if (detailListRef.current) {
+      detailListRef.current.scrollTop = detailListRef.current.scrollHeight;
     }
-    // Dropping queued instructions on stop matches "interrupt" semantics —
-    // the user asked the agent to halt, not to feed it more work.
-    if (pendingQueueRef.current) {
-      pendingQueueRef.current.pending = [];
+  }, [runningTask?.taskId, sessions]);
+
+  // A run refused to auto-resume because the location changed: bring the
+  // instruction back into the input box for review.
+  useEffect(() => {
+    if (restoredInput !== null) {
+      setInput(restoredInput);
+      consumeRestoredInput();
     }
-    // Invalidate the dying run: its finally would otherwise clear the shared
-    // refs even if a new run was already started during the (slow) teardown.
-    runIdRef.current += 1;
-    isRunningRef.current = false;
-    setQueuedCount(0);
-    // Interrupt semantics: nothing may auto-resume after Stop.
-    resumeRef.current = null;
-    setIsRunning(false);
-  }, []);
+  }, [restoredInput, consumeRestoredInput]);
 
   const handleSend = useCallback(
-    async (overrideText?: string, opts?: { skipUserBubble?: boolean }) => {
+    (overrideText?: string) => {
       const text = (overrideText ?? input).trim();
       if (!text) {
         return;
@@ -563,228 +243,48 @@ function AgentPanel() {
       if (!model) {
         return;
       }
-      const session = currentSession;
-      if (!session) {
+      const sessionId = currentSession?.id;
+      if (!sessionId) {
         return;
       }
-      const sessionId = session.id;
 
       // A run is already in flight: queue this message for step-boundary
-      // injection instead of starting a parallel run. runAgent drains it
-      // before the next model round-trip.
-      if (isRunningRef.current && pendingQueueRef.current) {
-        pendingQueueRef.current.pending.push(text);
-        setQueuedCount(pendingQueueRef.current.pending.length);
-        updateSession(sessionId, (s) => ({
-          ...s,
-          title: s.title || shortText(text, 30),
-          messages: [
-            ...s.messages,
-            { role: 'user', content: text } as AgentChatMessage,
-          ],
-        }));
-        setPromptHistory((prev) => [text, ...prev].slice(0, 10));
-        setHistoryIndex(-1);
-        setInput('');
-        return;
+      // injection instead of starting a parallel run. Never inject into a
+      // scheduled run that belongs to a different session — that would
+      // misroute the instruction (cross-session injection).
+      if (isRunning) {
+        if (runningTask && runningTask.sessionId !== sessionId) {
+          showNotification(
+            t('core:aiAgentScheduledAnotherTaskRunning'),
+            'warning',
+          );
+          return;
+        }
+        enqueueInterrupt(text);
+      } else {
+        void startRun({ sessionId, text });
       }
-
-      const userMessage: AgentChatMessage = { role: 'user', content: text };
-      const assistantMessage: AgentChatMessage = {
-        role: 'assistant',
-        content: '',
-        steps: [],
-      };
-      updateSession(sessionId, (s) => ({
-        ...s,
-        title: s.title || shortText(text, 30),
-        // The resume path (leftover fold) skips the user bubble — it was
-        // already shown when the instruction was queued mid-run.
-        messages: opts?.skipUserBubble
-          ? [...s.messages, assistantMessage]
-          : [...s.messages, userMessage, assistantMessage],
-      }));
       setPromptHistory((prev) => [text, ...prev].slice(0, 10));
       setHistoryIndex(-1);
       setInput('');
-      setIsRunning(true);
-      isRunningRef.current = true;
-      const myRunId = ++runIdRef.current;
-      runLocationIdRef.current = findLocation()?.uuid ?? '';
-      // Fresh injection channel for this run; drained by runAgent at each
-      // step boundary. Leftover messages fold into a follow-up run below.
-      const queue: AgentInterruptQueue = { pending: [], injections: 0 };
-      pendingQueueRef.current = queue;
-      const abortController = new AbortController();
-      abortRef.current = abortController;
-
-      // Skills are instruction blocks with no call event of their own, so each
-      // enabled one counts as "used" by this run. Local-only counters.
-      getEnabledCustomSkills().forEach((s) => incrementSkillUseCount(s.id));
-
-      const patchAssistant = (
-        patch: (msg: Extract<AgentChatMessage, { role: 'assistant' }>) => void,
-      ) => {
-        updateSession(sessionId, (s) => {
-          const messages = [...s.messages];
-          for (let i = messages.length - 1; i >= 0; i -= 1) {
-            if (messages[i].role === 'assistant') {
-              const copy: Extract<AgentChatMessage, { role: 'assistant' }> = {
-                ...(messages[i] as Extract<
-                  AgentChatMessage,
-                  { role: 'assistant' }
-                >),
-              };
-              patch(copy);
-              messages[i] = copy;
-              break;
-            }
-          }
-          return { ...s, messages };
-        });
-      };
-
-      try {
-        const result = await runAgent({
-          url: defaultAiProvider.url,
-          authKey: defaultAiProvider.authKey,
-          model,
-          messages: [
-            {
-              role: 'system',
-              content: buildAgentSystemPrompt({
-                locationName: findLocation()?.name || '',
-                currentDirectoryPath: currentDirectoryPath || '',
-                selectedEntries,
-                language: interfaceLanguage || 'en',
-                conventions: await loadLocationConventions(findLocation()),
-                customSkills: getEnabledCustomSkills().map((s) => ({
-                  name: s.name,
-                  instruction: s.instruction,
-                })),
-                diskInitState: readDiskInitState() ?? undefined,
-              }),
-            },
-            ...session.apiMessages,
-            // The user's message MUST be part of the API conversation — it is
-            // only appended to session.apiMessages via the run result below.
-            { role: 'user', content: text },
-          ],
-          tools: buildTools(),
-          signal: abortController.signal,
-          interruptQueue: queue,
-          onEvent: (event: AgentEvent) => {
-            if (event.type === 'text') {
-              patchAssistant((msg) => {
-                msg.content += event.delta;
-              });
-            } else if (event.type === 'tool_call') {
-              incrementToolCallCount(event.name);
-              patchAssistant((msg) => {
-                msg.steps.push({
-                  id: 'step-' + Date.now() + '-' + msg.steps.length,
-                  name: event.name,
-                  args: event.args,
-                });
-              });
-            } else if (event.type === 'tool_result') {
-              patchAssistant((msg) => {
-                const last = msg.steps[msg.steps.length - 1];
-                if (last) {
-                  last.result = event.result;
-                  try {
-                    last.isError = !!JSON.parse(event.result)?.error;
-                  } catch (e) {
-                    last.isError = false;
-                  }
-                }
-              });
-            } else if (event.type === 'error') {
-              patchAssistant((msg) => {
-                msg.content +=
-                  (msg.content ? '\n\n' : '') + '> ⚠️ ' + event.message;
-              });
-            } else if (event.type === 'interrupt_drained') {
-              setQueuedCount(0);
-            }
-          },
-        });
-        updateSession(sessionId, (s) => ({
-          ...s,
-          apiMessages: result.messages,
-        }));
-      } catch (e) {
-        patchAssistant((msg) => {
-          msg.content +=
-            (msg.content ? '\n\n' : '') + '> ⚠️ ' + (e?.message || String(e));
-        });
-      } finally {
-        // Only the run that is still "current" may touch the shared refs. If
-        // the user hit Stop and started another run while this one was still
-        // tearing down (tool IPC calls don't abort promptly), the old run
-        // must not clear the new run's controller / injection queue.
-        if (runIdRef.current !== myRunId) {
-          return;
-        }
-        abortRef.current = undefined;
-        isRunningRef.current = false;
-        pendingQueueRef.current = undefined;
-        setQueuedCount(0);
-        setIsRunning(false);
-        // Messages still queued when the run ended (typed right as it
-        // finished, before the next step boundary) fold into ONE follow-up
-        // run. The resume is deferred to an effect so it runs with the latest
-        // committed session state (incl. this run's apiMessages) and skips
-        // the user bubble that was already shown at queue time.
-        const leftover = queue.pending.splice(0);
-        if (leftover.length > 0) {
-          resumeRef.current = {
-            locationId: runLocationIdRef.current,
-            texts: leftover,
-          };
-        }
-      }
     },
     [
       input,
       defaultAiProvider,
       currentModel,
       currentSession,
-      findLocation,
-      currentDirectoryPath,
-      selectedEntries,
-      interfaceLanguage,
-      buildTools,
-      updateSession,
+      isRunning,
+      runningTask,
+      enqueueInterrupt,
+      startRun,
+      showNotification,
+      t,
     ],
   );
 
-  // Fold leftover queued instructions into a follow-up run after the previous
-  // run has fully stopped. Running it in an effect guarantees the latest
-  // committed session state (the finished run's apiMessages) is visible, so
-  // the follow-up run carries the full history instead of a stale snapshot.
-  useEffect(() => {
-    if (isRunning || !resumeRef.current) {
-      return;
-    }
-    const { locationId, texts } = resumeRef.current;
-    resumeRef.current = null;
-    if ((findLocation()?.uuid ?? '') === locationId) {
-      // Same location: auto-resume (existing behavior), reusing the already
-      // shown user bubble (the message was displayed when it was queued).
-      handleSend(texts.join('\n\n'), { skipUserBubble: true });
-    } else {
-      // Location switched since the task started: do NOT auto-resume — it
-      // would execute the old task with the new location's context. Move the
-      // instruction back to the input box and let the user review it.
-      setInput(texts.join('\n\n'));
-      showNotification(t('core:aiAgentResumeContextChanged'), 'warning');
-    }
-  }, [isRunning, handleSend, findLocation]);
-
   const handleStartDiskInit = useCallback(() => {
     handleSend(t('core:aiAgentIntroInitMessage'));
-  }, [handleSend]);
+  }, [handleSend, t]);
 
   const handleOrganizeInbox = useCallback(() => {
     const fresh = pendingInboxes.filter((p) => p.count > 0).slice(0, 5);
@@ -792,7 +292,7 @@ function AgentPanel() {
       pendingInboxes.filter((p) => p.count > 0).length > 5 ? '\n…' : '';
     const list = fresh.map((p) => `${p.path} (${p.count})`).join('\n');
     handleSend(`${t('core:aiInboxOrganizeMessage')}\n${list}${more}`);
-  }, [pendingInboxes, handleSend]);
+  }, [pendingInboxes, handleSend, t]);
 
   const handleChangeModel = useCallback(
     (newModelName: string) => {
@@ -843,27 +343,12 @@ function AgentPanel() {
   }, [currentSession, t]);
 
   const handleNewSession = useCallback(() => {
-    // Session operations are locked while a run is in flight: switching the
-    // "current session" mid-run would misroute queued instructions and the
-    // leftover resume to the wrong session.
-    if (isRunningRef.current) {
-      return;
-    }
-    const session = newSession();
-    setSessions((prev) => [session, ...prev]);
-    setCurrentSessionId(session.id);
-  }, []);
+    newAgentSession();
+  }, [newAgentSession]);
 
   const handleDeleteSession = useCallback(() => {
-    if (isRunningRef.current) {
-      return;
-    }
-    if (!currentSession) {
-      return;
-    }
-    const rest = sessions.filter((s) => s.id !== currentSession.id);
-    setSessions(rest.length > 0 ? rest : [newSession()]);
-  }, [currentSession, sessions]);
+    deleteCurrentAgentSession();
+  }, [deleteCurrentAgentSession]);
 
   const taskGoalLabel =
     currentSession && currentSession.messages.length > 0
@@ -888,6 +373,55 @@ function AgentPanel() {
     }
     updateSession(currentSession.id, (s) => ({ ...s, title: value }));
   }, [renameValue, currentSession, updateSession]);
+
+  const handleLiveSend = useCallback(() => {
+    const text = liveInput.trim();
+    if (!text) {
+      return;
+    }
+    enqueueInterrupt(text);
+    setLiveInput('');
+  }, [liveInput, enqueueInterrupt]);
+
+  const describeTask = useCallback((task: AgentScheduledTask) => {
+    try {
+      return describeSchedule(task.schedule.cron);
+    } catch (e) {
+      return task.schedule.cron;
+    }
+  }, []);
+
+  const statusText = useCallback(
+    (status: LastResult['status']) => {
+      switch (status) {
+        case 'success':
+          return t('core:aiAgentScheduledStatusSuccess');
+        case 'failed':
+          return t('core:aiAgentScheduledStatusFailed');
+        case 'skipped':
+          return t('core:aiAgentScheduledStatusSkipped');
+        default:
+          return t('core:aiAgentScheduledStatusMissed');
+      }
+    },
+    [t],
+  );
+
+  const detailText = useCallback(
+    (detail?: string) => {
+      if (!detail) {
+        return '';
+      }
+      if (detail === 'agent busy') {
+        return t('core:aiAgentScheduledSkippedBusy');
+      }
+      if (detail === 'location missing') {
+        return t('core:aiAgentScheduledSkippedLocation');
+      }
+      return detail;
+    },
+    [t],
+  );
 
   const renderMessage = (message: AgentChatMessage, index: number) => {
     if (message.role === 'user') {
@@ -985,7 +519,400 @@ function AgentPanel() {
     );
   };
 
+  const renderLastResultBadge = (task: AgentScheduledTask) => {
+    const last = task.lastResults[task.lastResults.length - 1];
+    if (!last) {
+      return (
+        <Box sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
+          {t('core:aiAgentScheduledNoRuns')}
+        </Box>
+      );
+    }
+    const color =
+      last.status === 'success'
+        ? 'success.main'
+        : last.status === 'failed'
+          ? 'error.main'
+          : 'text.secondary';
+    return (
+      <Box
+        component="span"
+        title={detailText(last.detail)}
+        sx={{ fontSize: '0.78rem', color }}
+      >
+        {statusText(last.status)} ·{' '}
+        {formatDistanceToNow(last.startedAt, { addSuffix: true })}
+      </Box>
+    );
+  };
+
+  const renderTaskHistory = (task: AgentScheduledTask) => {
+    if (task.lastResults.length === 0) {
+      return (
+        <Box sx={{ fontSize: '0.78rem', color: 'text.secondary' }}>
+          {t('core:aiAgentScheduledNoRuns')}
+        </Box>
+      );
+    }
+    return [...task.lastResults].reverse().map((result, index) => (
+      <Box
+        key={'result-' + index}
+        sx={{
+          display: 'flex',
+          gap: 1,
+          fontSize: '0.78rem',
+          alignItems: 'baseline',
+        }}
+      >
+        <Box component="span" sx={{ minWidth: 140 }}>
+          {format(result.startedAt, 'yyyy-MM-dd HH:mm')}
+        </Box>
+        <Box component="span">{statusText(result.status)}</Box>
+        {result.detail && (
+          <Box
+            component="span"
+            sx={{ color: 'text.secondary', wordBreak: 'break-word' }}
+          >
+            {detailText(result.detail)}
+          </Box>
+        )}
+      </Box>
+    ));
+  };
+
+  const activeRunningTask: AgentScheduledRunning | null =
+    runningTask && runningTask.taskId === detailTaskId ? runningTask : null;
+
+  const renderRunningDetail = (active: AgentScheduledRunning) => {
+    const task = tasks.find((item) => item.id === active.taskId);
+    const session = sessions.find((item) => item.id === active.sessionId);
+    const location = task ? findLocation(task.locationId) : undefined;
+    return (
+      <Box
+        data-tid="agentScheduledDetailTID"
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          gap: 1,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <TsIconButton
+            tooltip={t('core:aiAgentScheduledBack')}
+            onClick={() => setDetailTaskId(null)}
+          >
+            <GoBackIcon fontSize="small" />
+          </TsIconButton>
+          <Box sx={{ flexGrow: 1, fontWeight: 600, minWidth: 0 }}>
+            {task ? task.name : t('core:aiAgentScheduledDetailTitle')}
+          </Box>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.5,
+              color: 'text.secondary',
+              fontSize: '0.8rem',
+            }}
+          >
+            <CircularProgress size={12} />
+            {t('core:aiAgentScheduledRunning')}
+          </Box>
+          <TsIconButton
+            tooltip={t('core:aiAgentScheduledStopRun')}
+            onClick={stopRun}
+          >
+            <StopIcon color="error" />
+          </TsIconButton>
+        </Box>
+        {task && (
+          <Box sx={{ fontSize: '0.8rem', color: 'text.secondary' }}>
+            {describeTask(task)} ·{' '}
+            {location
+              ? location.name
+              : t('core:aiAgentScheduledLocationMissing')}
+          </Box>
+        )}
+        {task && (
+          <Box
+            sx={{
+              fontSize: '0.85rem',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              maxHeight: 100,
+              overflowY: 'auto',
+            }}
+          >
+            {task.prompt}
+          </Box>
+        )}
+        <Box
+          ref={detailListRef}
+          sx={{
+            flexGrow: 1,
+            overflowY: 'auto',
+            padding: 1,
+            borderRadius: 1,
+            bgcolor: 'background.default',
+            ...selectableTextSx,
+          }}
+        >
+          {session?.messages.map(renderMessage)}
+        </Box>
+        {queuedCount > 0 && (
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              color: 'text.secondary',
+            }}
+          >
+            <CircularProgress size={14} />
+            <Box sx={{ fontSize: '0.8rem' }}>
+              {t('core:aiAgentQueuedHint', { count: queuedCount })}
+            </Box>
+          </Box>
+        )}
+        <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 1 }}>
+          <TextField
+            fullWidth
+            multiline
+            minRows={2}
+            maxRows={6}
+            value={liveInput}
+            onChange={(event) => setLiveInput(event.target.value)}
+            placeholder={t('core:aiAgentScheduledLiveInputPlaceholder')}
+            onKeyDown={(event) => {
+              if (
+                event.key === 'Enter' &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                handleLiveSend();
+              }
+            }}
+          />
+          <TsIconButton
+            tooltip={t('core:aiAgentSend')}
+            onClick={handleLiveSend}
+          >
+            <SendIcon color={liveInput.trim() ? 'primary' : 'inherit'} />
+          </TsIconButton>
+        </Box>
+      </Box>
+    );
+  };
+
+  const renderScheduledView = () => {
+    if (activeRunningTask) {
+      return renderRunningDetail(activeRunningTask);
+    }
+    return (
+      <Box
+        data-tid="agentScheduledViewTID"
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          gap: 1,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ flexGrow: 1, fontWeight: 600 }}>
+            {t('core:aiAgentScheduledTitle')}
+          </Box>
+          <TsIconButton
+            tooltip={t('core:aiAgentScheduledBack')}
+            onClick={() => {
+              setView('agent');
+              setDetailTaskId(null);
+            }}
+          >
+            <CloseIcon />
+          </TsIconButton>
+        </Box>
+        <Box
+          sx={{
+            flexGrow: 1,
+            overflowY: 'auto',
+            padding: 1,
+            borderRadius: 1,
+            bgcolor: 'background.default',
+            ...selectableTextSx,
+          }}
+        >
+          {tasks.length === 0 && (
+            <Box
+              sx={{
+                color: 'text.secondary',
+                textAlign: 'center',
+                marginTop: 4,
+                paddingX: 2,
+              }}
+            >
+              {t('core:aiAgentScheduledEmpty')}
+            </Box>
+          )}
+          {tasks.map((task) => {
+            const isTaskRunning = runningTask?.taskId === task.id;
+            const expanded = expandedTaskId === task.id;
+            const location = findLocation(task.locationId);
+            return (
+              <Box
+                key={task.id}
+                sx={{
+                  paddingY: 1,
+                  borderBottom: '1px solid',
+                  borderColor: 'divider',
+                  opacity: task.enabled ? 1 : 0.6,
+                }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Switch
+                    size="small"
+                    checked={task.enabled}
+                    disabled={isTaskRunning}
+                    onChange={(event) =>
+                      toggleTaskEnabled(task.id, event.target.checked)
+                    }
+                  />
+                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        minWidth: 0,
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          fontWeight: 500,
+                          overflow: 'hidden',
+                          whiteSpace: 'nowrap',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {task.name}
+                      </Box>
+                      {isTaskRunning && (
+                        <Box
+                          component="button"
+                          type="button"
+                          data-tid="agentScheduledRunningBadgeTID"
+                          onClick={() => setDetailTaskId(task.id)}
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                            border: '1px solid ' + theme.palette.primary.main,
+                            borderRadius: 999,
+                            padding: '1px 8px',
+                            color: 'primary.main',
+                            backgroundColor: 'transparent',
+                            cursor: 'pointer',
+                            fontSize: '0.72rem',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          <CircularProgress size={10} />
+                          {t('core:aiAgentScheduledRunning')}
+                        </Box>
+                      )}
+                    </Box>
+                    <Box
+                      sx={{
+                        fontSize: '0.8rem',
+                        color: 'text.secondary',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {describeTask(task)} ·{' '}
+                      {location
+                        ? location.name
+                        : t('core:aiAgentScheduledLocationMissing')}
+                    </Box>
+                    {renderLastResultBadge(task)}
+                  </Box>
+                  <TsIconButton
+                    tooltip={t('core:aiAgentScheduledRunNow')}
+                    disabled={isTaskRunning}
+                    onClick={() => {
+                      void runNow(task.id);
+                    }}
+                    data-tid="agentScheduledRunNowTID"
+                  >
+                    <PlayArrowIcon fontSize="small" />
+                  </TsIconButton>
+                  <TsIconButton
+                    tooltip={t('core:aiAgentScheduledDelete')}
+                    disabled={isTaskRunning}
+                    onClick={() => setDeleteTarget(task)}
+                    data-tid="agentScheduledDeleteTID"
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </TsIconButton>
+                  <TsIconButton
+                    tooltip={t('core:aiAgentScheduledHistory')}
+                    onClick={() => setExpandedTaskId(expanded ? null : task.id)}
+                  >
+                    <ExpandMoreIcon
+                      fontSize="small"
+                      sx={{
+                        transform: expanded ? 'rotate(180deg)' : 'none',
+                      }}
+                    />
+                  </TsIconButton>
+                </Box>
+                {expanded && (
+                  <Box sx={{ marginTop: 1, marginLeft: 5 }}>
+                    {renderTaskHistory(task)}
+                  </Box>
+                )}
+              </Box>
+            );
+          })}
+        </Box>
+      </Box>
+    );
+  };
+
   const hasContent = currentSession && currentSession.messages.length > 0;
+
+  if (view === 'scheduled') {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          gap: 1,
+        }}
+      >
+        {renderScheduledView()}
+        <ConfirmDialog
+          open={!!deleteTarget}
+          title={t('core:aiAgentScheduledDeleteConfirmTitle')}
+          content={
+            deleteTarget
+              ? t('core:aiAgentScheduledDeleteConfirmContent', {
+                  name: deleteTarget.name,
+                })
+              : undefined
+          }
+          confirmCallback={(result) => {
+            if (result && deleteTarget) {
+              void deleteTask(deleteTarget.id);
+            }
+          }}
+          onClose={() => setDeleteTarget(null)}
+        />
+      </Box>
+    );
+  }
 
   return (
     <Box
@@ -1100,6 +1027,18 @@ function AgentPanel() {
             </MenuItem>
           ))}
         </Menu>
+        {isExecutor && (
+          <TsIconButton
+            tooltip={t('core:aiAgentScheduledTitle')}
+            onClick={() => {
+              setView('scheduled');
+              void refreshTasks();
+            }}
+            data-tid="agentScheduledTasksButtonTID"
+          >
+            <ScheduleIcon />
+          </TsIconButton>
+        )}
         <TsIconButton
           tooltip={t('core:aiAgentExportTranscript')}
           onClick={(e) => setExportMenuAnchor(e.currentTarget)}
@@ -1142,6 +1081,51 @@ function AgentPanel() {
           <DeleteIcon />
         </TsIconButton>
       </Box>
+      {/* missed scheduled runs (while the app was closed) */}
+      {missedTasks.length > 0 && (
+        <Box
+          data-tid="agentScheduledMissedBannerTID"
+          sx={{
+            padding: 1,
+            borderRadius: 2,
+            bgcolor: 'background.paper',
+            border: '1px solid ' + theme.palette.divider,
+            wordBreak: 'break-word',
+          }}
+        >
+          <Box sx={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: 0.5 }}>
+            {t('core:aiAgentScheduledMissedBanner', {
+              count: missedTasks.length,
+            })}
+          </Box>
+          {missedTasks.map((task) => (
+            <Box
+              key={task.id}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                fontSize: '0.85rem',
+              }}
+            >
+              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                {task.name} · {describeTask(task)}
+              </Box>
+              <Button
+                size="small"
+                onClick={() => {
+                  void runNow(task.id);
+                }}
+              >
+                {t('core:aiAgentScheduledMissedRun')}
+              </Button>
+            </Box>
+          ))}
+          <Button size="small" onClick={dismissMissed}>
+            {t('core:aiAgentScheduledDismiss')}
+          </Button>
+        </Box>
+      )}
       {/* messages */}
       <Box
         ref={listRef}
@@ -1156,15 +1140,7 @@ function AgentPanel() {
           // userSelect does NOT propagate to descendants, so use the '& *'
           // subtree override (0,1,0 > 0,0,2) to make chat text selectable
           // and copyable. Buttons keep their pointer cursor.
-          userSelect: 'text',
-          '& *': {
-            userSelect: 'text',
-            cursor: 'text',
-          },
-          '& button': {
-            userSelect: 'none',
-            cursor: 'pointer',
-          },
+          ...selectableTextSx,
         }}
       >
         {!hasContent && diskInitDone && (
@@ -1330,7 +1306,7 @@ function AgentPanel() {
         {isRunning && (
           <TsIconButton
             tooltip={t('core:aiAgentStopGeneration')}
-            onClick={handleStop}
+            onClick={stopRun}
           >
             <StopIcon color="error" />
           </TsIconButton>
