@@ -1038,6 +1038,9 @@ function AgentPanel() {
           {sessions.map((session) => (
             <MenuItem
               key={session.id}
+              // Guard covers the case where the menu was already open when a
+              // run started — the anchor button's disabled state can't help.
+              disabled={isRunning}
               selected={session.id === currentSession?.id}
               onClick={() => {
                 setCurrentSessionId(session.id);
