@@ -23,6 +23,7 @@
 ## 通用要求
 
 - **思考过程和讨论交流一律使用中文**（包括内部分析、计划、解释和总结）。代码、注释、commit message、i18n 英文文案仍用英文。
+- **commit 即 push（2026-10-16 定）**：用户说「commit / 提交」时，完成 commit 后**默认顺便 push 到远程**（除非用户明确说先不推）；push 失败时报告原因，不要静默放弃。
 
 - **主功能界面一律"挤占式"（2026-10-02 定）**：凡需要"展示一个完整功能面板"的页面（待办列表、AI 技能与工具等），**不用弹窗/对话框承载主内容**，而是在内容区组件 `src/renderer/components/RenderPerspective.tsx` 用 inline 面板**替换原文件夹内容区域**展示。统一模式：
   1. 全局 Context 持有 `isXxxOpen` + `toggleXxx()`（如 `TodoListContextProvider`、`AiCapabilitiesContextProvider`），入口（工具栏按钮/其他弹窗内按钮）调 `toggleXxx`；
@@ -231,7 +232,15 @@ description 只放精华。单测 `tests/unit/agentDescription.test.js`。
 无限续跑），并发出 `interrupt_drained` 事件供 UI 更新排队计数
 （AgentPanel 输入框上方 "⏳ N 条补充指令待送达" 提示条）。run 结束瞬间
 仍未注入的残留指令由 AgentPanel finally 折叠成一次续跑（不丢消息）；
-点「停止」会清空排队（中断语义，不喂新活）。单测
+点「停止」会清空排队（中断语义，不喂新活，且不自动续跑）。续跑前校验
+location 与发起 run 时一致（`runLocationIdRef` 快照
+`findLocation()?.uuid`），不一致则不自动续跑、指令放回输入框并 warning
+提示（防拿新 location 上下文执行旧任务；放回后重发会在会话中显示两次，
+可接受取舍）。**run 运行中锁定会话操作**：任务目标按钮、新建/删除会话
+入口及下拉菜单里的会话切换项全部 `disabled={isRunning}`（菜单先打开、
+run 后启动的窗口由 MenuItem disabled 兜住），`handleNewSession`/
+`handleDeleteSession` 内另有 `isRunningRef` guard；切 location 不受限
+（运行中 run 用启动时快照，续跑由上述校验兜底）。单测
 `tests/unit/agentService.test.js`（drain 注入/顺序/空白跳过/预算）。
 
 **后续新增（均已落地，详见 `TODO-ai-capabilities.md` 与 `DESIGN-ai-agent.md` §7）**：`set_description`（人工内容保护）、`move_file`（分拣归档）、`write_deliverable`（.md/.txt 文档产出，含文本回复/文件两种目标模式，不覆盖人写文件）；`search_files` 支持 tscmd 风格操作符（`+tag`/`-tag`/`|tag`/`--type`）；约定文件注入 `locationConventions.ts`（location 根 `CLAUDE.md`/`AGENTS.md` → system prompt）；`list_folder` recursive + 携带描述、`get_description`（分层汇总前置）。设置页「保存并验证」含 tool-calling 能力探测（`checkAgentSupport`，不支持时 warning 提示）。
