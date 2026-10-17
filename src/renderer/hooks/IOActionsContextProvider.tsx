@@ -813,6 +813,11 @@ export const IOActionsContextProvider = ({
           const moveError = moveArray.find((err) => err instanceof Error);
           if (!moveError) {
             showNotification(t('core:filesMovedSuccessful'));
+            // Target is `.ts-ignore`-marked — skip moving sidecar/thumb meta
+            // into `<target>/.ts`.
+            if (await location.isMetaIgnoredDir(targetPath)) {
+              return true;
+            }
             const moveMetaJobs = [];
             moveJobs.map((job) => {
               // Move revisions
@@ -952,6 +957,16 @@ export const IOActionsContextProvider = ({
       .then(async (success) => {
         if (success) {
           showNotification(t('core:filesCopiedSuccessful'));
+          // Target is `.ts-ignore`-marked — skip copying sidecar/thumb meta
+          // into `<target>/.ts` (copyFilePromise would auto-create the
+          // forbidden meta folder).
+          const copyTargetLocation = findLocation(locationID);
+          if (
+            copyTargetLocation &&
+            (await copyTargetLocation.isMetaIgnoredDir(targetPath))
+          ) {
+            return true;
+          }
           const metaPaths = paths.flatMap((path) =>
             path.indexOf(
               AppConfig.dirSeparator +
@@ -2192,6 +2207,15 @@ export const IOActionsContextProvider = ({
     if (entry) {
       let metaFilePath;
       if (entry.isFile) {
+        // Skip writes inside `.ts-ignore`-marked directories — the meta folder
+        // that would hold this entry's sidecar is forbidden there.
+        const containingDir = extractContainingDirectoryPath(
+          entry.path,
+          location.getDirSeparator(),
+        );
+        if (await location.isMetaIgnoredDir(containingDir)) {
+          return undefined;
+        }
         metaFilePath = getMetaFileLocationForFile(
           entry.path,
           location.getDirSeparator(),
@@ -2217,6 +2241,9 @@ export const IOActionsContextProvider = ({
       } else {
         // check and create meta folder if not exist
         // todo not need to check if folder exist first createDirectoryPromise() recursively will skip creation of existing folders https://nodejs.org/api/fs.html#fs_fs_mkdir_path_options_callback
+        if (await location.isMetaIgnoredDir(entry.path)) {
+          return undefined;
+        }
         const metaDirectoryPath = getMetaDirectoryPath(
           entry.path,
           location.getDirSeparator(),

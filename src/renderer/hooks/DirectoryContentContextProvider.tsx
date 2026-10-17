@@ -915,8 +915,13 @@ export const DirectoryContentContextProvider = ({
     }
 
     const isMetaPath = isMeta(directoryPath);
+    // In a `.ts-ignore`-marked directory, do not read/write the `.ts` folder
+    // (both would create it): skip the folder meta load and the default-meta
+    // save that otherwise write `<dir>/.ts/tsm.json`.
+    const suppressMeta =
+      !isMetaPath && (await location.isMetaIgnoredDir(directoryPath));
     let meta;
-    if (!isMetaPath) {
+    if (!isMetaPath && !suppressMeta) {
       // Fetch directory metadata
       meta = await getDirMeta(directoryPath, location);
       // Update directory metadata
@@ -946,19 +951,21 @@ export const DirectoryContentContextProvider = ({
         }),
       );
       directoryMeta.current = meta;
-      const content = JSON.stringify(meta);
-      const metaFilePath = getMetaFileLocationForDir(
-        directoryPath,
-        location.getDirSeparator(),
-      );
-      try {
-        await location.saveTextFilePromise(
-          { path: metaFilePath, locationID: location.uuid },
-          content,
-          true,
+      if (!suppressMeta) {
+        const content = JSON.stringify(meta);
+        const metaFilePath = getMetaFileLocationForDir(
+          directoryPath,
+          location.getDirSeparator(),
         );
-      } catch (e) {
-        console.log(e);
+        try {
+          await location.saveTextFilePromise(
+            { path: metaFilePath, locationID: location.uuid },
+            content,
+            true,
+          );
+        } catch (e) {
+          console.log(e);
+        }
       }
     }
 
@@ -1461,24 +1468,33 @@ export const DirectoryContentContextProvider = ({
       return Promise.resolve([]);
     }
     return currentLocation
-      .listMetaDirectoryPromise(directoryPath)
-      .then((meta) => {
-        const dirEntriesPromises = dirEntries
-          .filter((entry) => !entry.isFile)
-          .map((entry) => getEnhancedDir(entry));
-        const files = pageFiles
-          ? pageFiles
-          : dirEntries.filter((entry) => entry.isFile);
-        const fileEntriesPromises = getFileEntriesPromises(files, meta);
-        const thumbs = getThumbs(files, meta);
-        return getEntries(
-          [...dirEntriesPromises, ...fileEntriesPromises, ...thumbs],
-          dirEntries,
-        );
-      })
-      .catch((ex) => {
-        console.log(ex);
-        return undefined;
+      .isMetaIgnoredDir(directoryPath)
+      .then((metaIgnored) => {
+        if (metaIgnored) {
+          // `.ts-ignore`-marked directory — listing its meta folder would create
+          // it, so return the entries without any sidecar meta.
+          return dirEntries;
+        }
+        return currentLocation
+          .listMetaDirectoryPromise(directoryPath)
+          .then((meta) => {
+            const dirEntriesPromises = dirEntries
+              .filter((entry) => !entry.isFile)
+              .map((entry) => getEnhancedDir(entry));
+            const files = pageFiles
+              ? pageFiles
+              : dirEntries.filter((entry) => entry.isFile);
+            const fileEntriesPromises = getFileEntriesPromises(files, meta);
+            const thumbs = getThumbs(files, meta);
+            return getEntries(
+              [...dirEntriesPromises, ...fileEntriesPromises, ...thumbs],
+              dirEntries,
+            );
+          })
+          .catch((ex) => {
+            console.log(ex);
+            return undefined;
+          });
       });
   }
 

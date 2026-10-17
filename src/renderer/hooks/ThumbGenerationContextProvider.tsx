@@ -328,7 +328,7 @@ export const ThumbGenerationContextProvider = ({
     return generateThumbnails2(dirEntries, false, location, signal);
   }
 
-  function generateThumbnails2(
+  async function generateThumbnails2(
     dirEntries: TS.FileSystemEntry[],
     isWorkerAvailable,
     location: CommonLocation,
@@ -339,12 +339,28 @@ export const ThumbGenerationContextProvider = ({
     const pdfEntries: string[] = [];
     console.time('TMB_GENERATION_RENDERER');
     console.time('TMB_GENERATION_WORKER');
-    dirEntries.map((entry) => {
+    // Skip files living inside `.ts-ignore`-marked directories: writing a
+    // thumbnail would auto-create the forbidden `.ts` folder. Each distinct
+    // containing directory is probed at most once per batch.
+    const dirIgnoredCache = new Map<string, boolean>();
+    for (const entry of dirEntries) {
       if (!entry.isFile) {
-        return true;
+        continue;
       }
       if (!showUnixHiddenEntries && entry.name.startsWith('.')) {
-        return true;
+        continue;
+      }
+      const containingDir = extractContainingDirectoryPath(
+        entry.path,
+        location.getDirSeparator(),
+      );
+      let ignored = dirIgnoredCache.get(containingDir);
+      if (ignored === undefined) {
+        ignored = await location.isMetaIgnoredDir(containingDir);
+        dirIgnoredCache.set(containingDir, ignored);
+      }
+      if (ignored) {
+        continue;
       }
       const extension = entry.extension
         ? entry.extension
@@ -380,8 +396,7 @@ export const ThumbGenerationContextProvider = ({
       } else {
         console.log('Unsupported thumb generation ext:' + extension);
       }
-      return true;
-    });
+    }
 
     if (pdfEntries.length > 0) {
       createThumbnailsInWorker(pdfEntries, location.fullTextIndex)
@@ -562,24 +577,32 @@ export const ThumbGenerationContextProvider = ({
     if (normalizedFileDirectory.endsWith(AppConfig.metaFolder)) {
       return Promise.resolve(undefined); // prevent creating thumbs in meta/.ts folder
     }
-    return location.checkDirExist(metaDirectory).then((exist) => {
-      if (!exist) {
-        return createDirectoryPromise(metaDirectory, location.uuid).then(() => {
+    return location.isMetaIgnoredDir(fileDirectory).then((ignored) => {
+      if (ignored) {
+        // do not generate thumbnails inside `.ts-ignore`-marked directories
+        return undefined;
+      }
+      return location.checkDirExist(metaDirectory).then((exist) => {
+        if (!exist) {
+          return createDirectoryPromise(metaDirectory, location.uuid).then(
+            () => {
+              return createThumbnailSavePromise(
+                filePath,
+                fileSize,
+                thumbFilePath,
+                location,
+              );
+            },
+          );
+        } else {
           return createThumbnailSavePromise(
             filePath,
             fileSize,
             thumbFilePath,
             location,
           );
-        });
-      } else {
-        return createThumbnailSavePromise(
-          filePath,
-          fileSize,
-          thumbFilePath,
-          location,
-        );
-      }
+        }
+      });
     });
   }
 

@@ -46,6 +46,8 @@ export type Channels =
   | 'getPropertiesPromise'
   | 'checkDirExist'
   | 'checkFileExist'
+  | 'findMetaIgnoreDirs'
+  | 'isMetaIgnoredDir'
   | 'createDirectoryPromise'
   | 'createSymlinkPromise'
   | 'copyFilePromiseOverwrite'

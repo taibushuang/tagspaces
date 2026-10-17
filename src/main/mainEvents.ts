@@ -47,6 +47,7 @@ import { readMacOSTags } from './macUserTags';
 import registerSecureStorageEvents from './secureStorage';
 import initTodoStore from './todoStoreIpc';
 import { searchWeb, fetchWeb } from './openWebSearch';
+import { findMetaIgnoreDirs, isMetaIgnoredDir } from './metaIgnore';
 
 // let watcher: FSWatcher;
 const progress: Record<string, any> = {};
@@ -375,6 +376,13 @@ export default function loadMainEvents() {
     },
   );
   ipcMain.handle('listMetaDirectoryPromise', async (event, path) => {
+    // Single-point closure for `.ts-ignore`-marked directories: listing a
+    // marked directory's meta folder would auto-create it (io-fsclient
+    // ensureDirSync). Returning [] here covers every current and future
+    // renderer call site, including per-subdirectory meta loading.
+    if (await isMetaIgnoredDir(path)) {
+      return [];
+    }
     const result = await listMetaDirectoryPromise(path);
     return result;
   });
@@ -389,6 +397,12 @@ export default function loadMainEvents() {
   ipcMain.handle('checkFileExist', async (event, file) => {
     const stats = await getPropertiesPromise(file);
     return stats && stats.isFile;
+  });
+  ipcMain.handle('findMetaIgnoreDirs', async (event, rootPath) => {
+    return findMetaIgnoreDirs(rootPath);
+  });
+  ipcMain.handle('isMetaIgnoredDir', async (event, dirPath) => {
+    return isMetaIgnoredDir(dirPath);
   });
   ipcMain.handle('createDirectoryPromise', async (event, dirPath) => {
     const result = await createDirectoryPromise(dirPath);

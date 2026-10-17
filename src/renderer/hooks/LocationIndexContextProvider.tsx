@@ -57,6 +57,7 @@ import {
   getThumbFileLocationForFile,
   joinPaths,
 } from '@tagspaces/tagspaces-common/paths';
+import { metaIgnoreDirToPatterns } from '-/utils/metaIgnore';
 import { loadJSONString } from '@tagspaces/tagspaces-common/utils-io';
 import {
   createIndex,
@@ -761,15 +762,38 @@ export function LocationIndexContextProvider({
     const indexFilePath = getMetaIndexFilePath(param.path);
 
     ignoreByWatcher(indexFilePath);
-    return createDirectoryIndex(
-      param,
-      extractText,
-      ignorePatterns,
-      enableWS,
-      isWalking,
-      extractLinks,
-      forceFullReindex,
-    )
+    // Fold `.ts-ignore`-marked directories into the ignore patterns so the
+    // walker never descends into them — listing a directory in metadata mode
+    // auto-creates its `.ts` folder, which is exactly what the marker forbids.
+    const loc = findLocation(param.locationID);
+    const dirSeparator = loc?.getDirSeparator() || AppConfig.dirSeparator;
+    return Promise.all([
+      loc ? loc.isMetaIgnoredDir(param.path) : Promise.resolve(false),
+      loc ? loc.findMetaIgnoreDirs(param.path) : Promise.resolve([]),
+    ])
+      .then(([rootMarked, markedDirs]) => {
+        if (rootMarked) {
+          // The whole indexed subtree is marked — return an empty index and
+          // skip the indexer entirely. Otherwise the worker's persistIndex
+          // would recreate `<root>/.ts/tsi.json`.
+          return Promise.resolve([]);
+        }
+        const mergedIgnorePatterns = [
+          ...markedDirs.flatMap((dir: string) =>
+            metaIgnoreDirToPatterns(dir, dirSeparator),
+          ),
+          ...(ignorePatterns || []),
+        ];
+        return createDirectoryIndex(
+          param,
+          extractText,
+          mergedIgnorePatterns,
+          enableWS,
+          isWalking,
+          extractLinks,
+          forceFullReindex,
+        );
+      })
       .then((index) => {
         deignoreByWatcher(indexFilePath);
         return index;
@@ -1522,6 +1546,14 @@ export function LocationIndexContextProvider({
     if (!parentExists) {
       console.log(
         `Skipping index persist — directory does not exist: ${directoryPath}`,
+      );
+      return false;
+    }
+    // Don't persist index into `.ts-ignore`-marked directories — creating the
+    // meta folder there is exactly what the marker forbids.
+    if (await cLocation.isMetaIgnoredDir(directoryPath)) {
+      console.log(
+        `Skipping index persist — directory is .ts-ignore marked: ${directoryPath}`,
       );
       return false;
     }

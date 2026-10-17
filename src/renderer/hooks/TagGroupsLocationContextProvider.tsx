@@ -360,6 +360,10 @@ export const TagGroupsLocationContextProvider = ({
     if (!saveTagInLocation || !location) {
       return Promise.resolve(undefined);
     }
+    // Skip tag-group persistence in `.ts-ignore`-marked locations.
+    if (await location.isMetaIgnoredDir(location.path)) {
+      return Promise.resolve(undefined);
+    }
     let metaFilePath;
     // if (!entryProperties.isFile) {
     // check and create meta folder if not exist

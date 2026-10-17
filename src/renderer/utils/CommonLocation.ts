@@ -544,6 +544,32 @@ export class CommonLocation implements TS.Location {
     return Promise.reject(new Error('checkDirExist: not implemented'));
   };
 
+  /**
+   * Find directories (below rootPath) that carry a `.ts-ignore` marker — used
+   * to build index ignore patterns so the walker never descends into marked
+   * subtrees (which would otherwise get auto-created `.ts` folders).
+   */
+  findMetaIgnoreDirs = (rootPath: string): Promise<string[]> => {
+    if (AppConfig.isElectron && window.electronIO) {
+      return window.electronIO.ipcRenderer.invoke(
+        'findMetaIgnoreDirs',
+        rootPath,
+      );
+    }
+    return Promise.resolve([]);
+  };
+
+  /**
+   * True when dirPath itself or any ancestor carries a `.ts-ignore` marker —
+   * such directories must not get `.ts` meta folders created.
+   */
+  isMetaIgnoredDir = (dirPath: string): Promise<boolean> => {
+    if (AppConfig.isElectron && window.electronIO) {
+      return window.electronIO.ipcRenderer.invoke('isMetaIgnoredDir', dirPath);
+    }
+    return Promise.resolve(false);
+  };
+
   delUrlCache = (path) => {
     delete this.urlCache[path];
   };
