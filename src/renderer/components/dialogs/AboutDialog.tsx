@@ -198,6 +198,13 @@ function AboutDialog(props: Props) {
           for more details.
           <br />
           <br />
+          <Typography component="span" variant="body2">
+            本软件基于开源项目 TagSpaces（GNU AGPL v3
+            协议）二次开发，不提供额外的网络服务。有需要者可发送邮件至
+            mao3bbb@163.com 免费索取对应源代码（自本版本发布之日起三年内有效）。
+          </Typography>
+          <br />
+          <br />
           {imprintURL && (
             <TsButton
               sx={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
