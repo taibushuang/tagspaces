@@ -1,0 +1,11 @@
+# TagSpaces meta-folder marker (see src/renderer/utils/metaIgnore.ts)
+#
+# This file tells TagSpaces (https://www.tagspaces.org) NOT to create its
+# per-directory meta folder (".ts") in this directory or anywhere below it,
+# and to keep this subtree out of the location index walker.
+#
+# It exists because this repository is itself opened as a TagSpaces location,
+# and without the marker the file manager scatters empty ".ts" folders into
+# node_modules and every other directory of the working tree.
+#
+# The file name is the whole signal - the contents are ignored by the app.
