@@ -48,7 +48,11 @@ import registerSecureStorageEvents from './secureStorage';
 import initTodoStore from './todoStoreIpc';
 import initAgentScheduler from './agentSchedulerIpc';
 import { searchWeb, fetchWeb } from './openWebSearch';
-import { findMetaIgnoreDirs, isMetaIgnoredDir } from './metaIgnore';
+import {
+  findMetaIgnoreDirs,
+  isMetaIgnoredDir,
+  stripMetaLoadModes,
+} from './metaIgnore';
 
 // let watcher: FSWatcher;
 const progress: Record<string, any> = {};
@@ -373,7 +377,21 @@ export default function loadMainEvents() {
   ipcMain.handle(
     'listDirectoryPromise',
     async (event, path, mode, ignorePatterns) => {
-      const result = await listDirectoryPromise(path, mode, ignorePatterns);
+      // Single-point closure for `.ts-ignore`-marked directories: reading a
+      // directory with a meta-loading mode makes io-fsclient create its `.ts`
+      // folder. Directory readers also default to `['extractThumbPath']` when
+      // no mode is handed over, so stripping the modes here covers the call
+      // sites that pass none as well.
+      const dirPath = typeof path === 'string' ? path : path?.path;
+      const metaIgnored =
+        typeof dirPath === 'string' &&
+        dirPath.length > 0 &&
+        (await isMetaIgnoredDir(dirPath));
+      const result = await listDirectoryPromise(
+        path,
+        metaIgnored ? stripMetaLoadModes(mode) : mode,
+        ignorePatterns,
+      );
       return result;
     },
   );

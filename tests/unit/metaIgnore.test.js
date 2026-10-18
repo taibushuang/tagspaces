@@ -17,6 +17,7 @@ import {
   findMetaIgnoreDirs,
   isMetaIgnoredDir,
   clearMetaIgnoreCaches,
+  stripMetaLoadModes,
 } from '../../src/main/metaIgnore';
 
 let root;
@@ -106,6 +107,32 @@ describe('findMetaIgnoreDirs', () => {
     mark(hidden);
     // even a marked hidden dir must not be reported (we never descend there)
     expect(await findMetaIgnoreDirs(root)).toEqual([]);
+  });
+});
+
+describe('stripMetaLoadModes', () => {
+  test('removes the modes that would create the .ts folder', () => {
+    expect(stripMetaLoadModes(['extractThumbPath'])).toEqual([]);
+    expect(stripMetaLoadModes(['loadMeta'])).toEqual([]);
+    expect(stripMetaLoadModes(['loadMeta', 'extractThumbPath'])).toEqual([]);
+  });
+
+  test('keeps unrelated modes', () => {
+    expect(
+      stripMetaLoadModes(['loadMeta', 'extractTextContent', 'extractLinks']),
+    ).toEqual(['extractTextContent', 'extractLinks']);
+  });
+
+  test('a missing mode collapses to [] so the reader default cannot kick in', () => {
+    // io-fsclient defaults to ['extractThumbPath'] when mode is undefined,
+    // which would load (and therefore create) the .ts folder.
+    expect(stripMetaLoadModes(undefined)).toEqual([]);
+    expect(stripMetaLoadModes(null)).toEqual([]);
+    expect(stripMetaLoadModes('extractThumbPath')).toEqual([]);
+  });
+
+  test('an empty mode list stays empty', () => {
+    expect(stripMetaLoadModes([])).toEqual([]);
   });
 });
 

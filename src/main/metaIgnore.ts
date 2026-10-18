@@ -123,6 +123,29 @@ export async function isMetaIgnoredDir(dirPath: string): Promise<boolean> {
   return ignored;
 }
 
+/**
+ * Drop the directory-reading modes that touch the `.ts` folder.
+ *
+ * `io-fsclient.listDirectoryPromise` loads the folder metadata when the mode
+ * contains `loadMeta` or `extractThumbPath`, and that load *creates* `.ts` when
+ * it is missing (`listMetaDirectoryPromise` -> `ensureDirSync`). Nothing is
+ * read from or written to `.ts` in a marked directory anyway, so removing those
+ * modes keeps the tree clean while the remaining modes (e.g. text extraction)
+ * keep working.
+ *
+ * `undefined` collapses to `[]` on purpose: the readers treat a missing mode as
+ * "use my default", which includes `extractThumbPath`, so passing `undefined`
+ * through would make this guard a no-op.
+ */
+export function stripMetaLoadModes(mode?: string[]): string[] {
+  if (!Array.isArray(mode)) {
+    return [];
+  }
+  return mode.filter(
+    (dirMode) => dirMode !== 'loadMeta' && dirMode !== 'extractThumbPath',
+  );
+}
+
 /** Clear the TTL caches — used by unit tests that mutate the filesystem. */
 export function clearMetaIgnoreCaches(): void {
   scanCache.clear();
