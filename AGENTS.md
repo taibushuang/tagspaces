@@ -211,7 +211,7 @@
 - `src/renderer/components/chat/OpenAIClient.ts` — `chatOpenAICompletion()` 返回 `{ content, toolCalls }`（流式/非流式均支持 tool_calls）
 - `src/renderer/hooks/LocationIndexContextProvider.tsx` — `agentSearch()`：无 UI 副作用的搜索（不写 redux、不弹通知），直接返回结果
 
-**护栏（勿回退）**：不提供删除工具；move_file 目标已存在时不覆盖；打标签可逆；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。
+**护栏（勿回退）**：删除仅限 `delete_files`（≤50/批）/`delete_folder`（仅限空文件夹），**只进系统回收站**（`shell.trashItem`，代码中无永久删除通道），按文件夹授权（`utils/agentDelete.ts`：确认弹窗列清单 + 可记住授权 `tsAgentDeleteAuth`；location 根/`.ts`/隐藏系统文件/授权外路径硬拒绝）；定时任务无人值守 run 恒拒绝确认（仅复用已记住授权）；move_file 目标已存在时不覆盖；打标签可逆；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。详见 `DESIGN-ai-agent.md` §7.7。
 
 **模型供给决策（2026-09-28）**：内网网关（OpenAI 兼容）为**唯一通道**，本地 Ollama 冻结——`OllamaClient.ts` 保留不删但不再投入，离线 AI 场景放弃。分层汇总等高调用量功能全部走网关计费，增量缓存为硬性要求。
 

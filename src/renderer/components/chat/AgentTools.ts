@@ -18,8 +18,11 @@
 
 /**
  * Tool set exposed to the AI agent. Read-only operations plus reversible tag
- * edits and non-destructive moves/copies — deliberately NO delete or rename
- * tools (see DESIGN-ai-agent.md §4).
+ * edits and non-destructive moves/copies. Deletion is the one destructive
+ * capability and is heavily guarded (see DESIGN-ai-agent.md §4): it only ever
+ * moves entries to the SYSTEM TRASH, is gated by the per-folder authorization
+ * in `-/utils/agentDelete` (confirmation dialog per folder unless the user
+ * remembered a grant) and refuses protected paths outright.
  *
  * The factory pattern keeps this module context-free: ChatProvider wires the
  * actual TagSpaces capabilities (search, tagging, IO) into `deps` so tools
@@ -62,6 +65,15 @@ import {
   updateOrganizeRecord,
 } from '-/utils/organizeHistory';
 import type { OrganizeItem, OrganizeRecord } from '-/utils/organizeHistory';
+import {
+  DELETE_BATCH_LIMIT,
+  appendDeleteRecord,
+  grantDelete,
+  isDeleteGranted,
+  parentFolderPath,
+  validateDeletePlan,
+} from '-/utils/agentDelete';
+import type { DeletePlanItem } from '-/utils/agentDelete';
 import { markInboxOrganized } from '-/utils/inboxOrganize';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import AppConfig from '-/AppConfig';
@@ -173,6 +185,25 @@ export type AgentToolDeps = {
       isReadOnly?: boolean;
     },
   ) => Promise<{ ok: boolean; name: string; path: string }>;
+  /**
+   * Move entries to the SYSTEM TRASH (recoverable) — one result per item;
+   * never falls back to a permanent delete. Wired by ChatProvider via
+   * CommonLocation.deleteFilePromise / deleteDirectoryPromise(useTrash=true).
+   */
+  deleteEntries: (
+    items: Array<{ path: string; isFile: boolean }>,
+  ) => Promise<Array<{ path: string; ok: boolean; error?: string }>>;
+  /**
+   * Per-folder delete confirmation dialog (lists the file names). Resolves
+   * true only when the user approved THIS batch. Called by the delete tools
+   * for every folder without a remembered grant — the authorization gate is
+   * enforced here, never left to the model's judgement.
+   */
+  requestDeleteConfirmation: (payload: {
+    folderPath: string;
+    items: Array<{ name: string; size?: number }>;
+    reason?: string;
+  }) => Promise<boolean>;
 };
 
 const SEARCH_RESULT_LIMIT = 50;
@@ -1532,6 +1563,250 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           status: r.status,
           movedCount: r.items.filter((i) => i.state === 'moved').length,
         }));
+      },
+    },
+    {
+      name: 'delete_files',
+      description:
+        'Move a batch of FILES to the system trash (recoverable, never a ' +
+        'permanent delete). Per-folder authorization: every folder without a ' +
+        'remembered grant triggers a confirmation dialog listing the files — ' +
+        'if the user denies, the batch is skipped (do NOT retry it). Pass a ' +
+        'short reason for the confirmation dialog. Protected paths (location ' +
+        'roots, .ts metadata, hidden/system files) are refused outright. ' +
+        'Only delete after the user agreed to the cleanup — propose first ' +
+        '(list files + reasons), then delete.',
+      parameters: {
+        type: 'object',
+        properties: {
+          paths: {
+            type: 'array',
+            items: { type: 'string' },
+            description: `absolute file paths to trash (max ${DELETE_BATCH_LIMIT} per call)`,
+          },
+          reason: {
+            type: 'string',
+            description:
+              'short cleanup reason shown in the confirmation dialog ' +
+              '(e.g. "temp/lock files", "old version -v1")',
+          },
+        },
+        required: ['paths'],
+      },
+      execute: async (args) => {
+        const paths = Array.isArray(args?.paths)
+          ? args.paths.map((p: any) => String(p || '').trim()).filter(Boolean)
+          : [];
+        if (paths.length === 0) {
+          return { error: 'paths array is empty' };
+        }
+        if (paths.length > DELETE_BATCH_LIMIT) {
+          return {
+            error: `too many paths (${paths.length}) — delete at most ${DELETE_BATCH_LIMIT} per call`,
+          };
+        }
+        const reason =
+          typeof args?.reason === 'string' && args.reason.trim()
+            ? args.reason.trim()
+            : undefined;
+        const locationPaths = deps.listLocations().map((l) => l.path);
+        const resolved: DeletePlanItem[] = [];
+        const invalid: Array<{ path: string; reason: string }> = [];
+        for (const path of paths) {
+          const entry = await deps.findEntry(path);
+          if (!entry) {
+            invalid.push({
+              path,
+              reason:
+                'not found in the location index (re-run list_folder/search_files and use a path from its results)',
+            });
+          } else {
+            resolved.push({
+              path: entry.path,
+              name: entry.name,
+              isFile: true,
+              size: entry.size,
+            });
+          }
+        }
+        const plan = validateDeletePlan(resolved, locationPaths, true);
+        invalid.push(...plan.invalid);
+        if (plan.valid.length === 0) {
+          return { error: 'nothing deletable in this batch', invalid };
+        }
+        // Authorization gate: one confirmation per containing folder.
+        const denied: Array<{ path: string; reason: string }> = [];
+        const approved: DeletePlanItem[] = [];
+        const byFolder = new Map<string, DeletePlanItem[]>();
+        for (const item of plan.valid) {
+          const folder = parentFolderPath(item.path);
+          const group = byFolder.get(folder) || [];
+          group.push(item);
+          byFolder.set(folder, group);
+        }
+        for (const [folder, group] of byFolder) {
+          if (isDeleteGranted(folder)) {
+            approved.push(...group);
+            continue;
+          }
+          let confirmed = false;
+          try {
+            confirmed = await deps.requestDeleteConfirmation({
+              folderPath: folder,
+              items: group.map((i) => ({ name: i.name, size: i.size })),
+              reason,
+            });
+          } catch (e) {
+            confirmed = false;
+          }
+          if (confirmed) {
+            grantDelete(folder);
+            approved.push(...group);
+          } else {
+            group.forEach((i) =>
+              denied.push({
+                path: i.path,
+                reason: 'user denied delete permission for this folder',
+              }),
+            );
+          }
+        }
+        if (approved.length === 0) {
+          return {
+            error:
+              'all deletions were denied by the user — do not retry the same batch',
+            denied,
+            invalid,
+          };
+        }
+        const results = await deps.deleteEntries(
+          approved.map((i) => ({ path: i.path, isFile: true })),
+        );
+        const deleted: Array<{ path: string; name: string }> = [];
+        const failed: Array<{ path: string; error: string }> = [];
+        for (const res of results) {
+          const item = approved.find((i) => i.path === res.path);
+          if (res.ok) {
+            deleted.push({ path: res.path, name: item?.name || res.path });
+          } else {
+            failed.push({
+              path: res.path,
+              error: res.error || 'delete failed',
+            });
+          }
+        }
+        appendDeleteRecord({
+          id: getUuid(),
+          items: results.map((res) => {
+            const item = approved.find((i) => i.path === res.path);
+            return {
+              path: res.path,
+              name: item?.name || res.path,
+              isFile: true,
+              ok: res.ok,
+              ...(res.error ? { error: res.error } : {}),
+            };
+          }),
+        });
+        return {
+          ok: deleted.length > 0,
+          deleted,
+          failed,
+          denied,
+          invalid,
+          note: 'files were moved to the system trash and are recoverable from there',
+        };
+      },
+    },
+    {
+      name: 'delete_folder',
+      description:
+        'Move an EMPTY folder to the system trash (recoverable). The folder ' +
+        'must have no children — delete or move its contents first. Same ' +
+        'per-folder confirmation dialog and protected-path guardrails as ' +
+        'delete_files. Recursive deletion of a non-empty folder is not ' +
+        'supported.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'absolute path of the (empty) folder to trash',
+          },
+        },
+        required: ['path'],
+      },
+      execute: async (args) => {
+        const path = requireString(args, 'path');
+        const entry = await deps.findEntry(path);
+        if (!entry) {
+          return {
+            error:
+              'folder not found in the location index (re-run list_folder and use a path from its results)',
+          };
+        }
+        if (entry.isFile) {
+          return { error: 'path is a file — use delete_files instead' };
+        }
+        const plan = validateDeletePlan(
+          [{ path: entry.path, isFile: false, name: entry.name }],
+          deps.listLocations().map((l) => l.path),
+          false,
+        );
+        if (plan.valid.length === 0) {
+          return {
+            error: plan.invalid[0]?.reason || 'folder is protected',
+            invalid: plan.invalid,
+          };
+        }
+        let children: TS.FileSystemEntry[] = [];
+        try {
+          children = await deps.listChildren(entry.path);
+        } catch (e) {
+          children = [];
+        }
+        if (children.length > 0) {
+          return {
+            error: `folder is not empty (${children.length} entries) — file or delete its contents first; recursive deletion is not supported`,
+            children: children.slice(0, 20).map((c) => c.name),
+          };
+        }
+        const folder = parentFolderPath(entry.path);
+        let confirmed = false;
+        try {
+          confirmed = await deps.requestDeleteConfirmation({
+            folderPath: folder,
+            items: [{ name: entry.name }],
+            reason: 'delete empty folder',
+          });
+        } catch (e) {
+          confirmed = false;
+        }
+        if (!confirmed) {
+          return {
+            error:
+              'user denied delete permission for this folder — do not retry',
+          };
+        }
+        grantDelete(folder);
+        const results = await deps.deleteEntries([
+          { path: entry.path, isFile: false },
+        ]);
+        const res = results[0];
+        if (!res?.ok) {
+          return { error: res?.error || 'delete failed' };
+        }
+        appendDeleteRecord({
+          id: getUuid(),
+          items: [
+            { path: entry.path, name: entry.name, isFile: false, ok: true },
+          ],
+        });
+        return {
+          ok: true,
+          deleted: entry.path,
+          note: 'the empty folder was moved to the system trash and is recoverable from there',
+        };
       },
     },
     {

@@ -137,7 +137,8 @@ AgentTools（注册表）                        ← 新增
 
 ## 4. 安全与护栏
 
-1. **无破坏性工具**：本期不提供 rename/move/delete 工具；打标签可逆（可 remove）。
+1. **破坏性能力最小化**：move/copy 永不覆盖；**删除仅进系统回收站**（可
+   恢复），且按文件夹授权（见 §7.7）；打标签可逆（可 remove）。
 2. **结果截断**：搜索 ≤50 条、文件读取 ≤20000 字符，防提示词注入与上下文爆炸。
 3. **取消**：abortSignal 贯穿循环与 fetch，沿用现有取消按钮。
 4. **无遥测**：对话与工具结果只发往用户配置的 baseURL。
@@ -215,3 +216,29 @@ AgentTools（注册表）                        ← 新增
   `OllamaClient.ts` 保留不删（避免上游合并冲突）但不再投入。
 - 连带影响：tool-calling 能力探测（§3.1）从「友好提示」升级为硬门槛；
   分层汇总等高调用量功能的成本全部走网关计费，增量缓存为硬性要求。
+
+### 7.7 删除能力（2026-10-19，放开"不提供删除工具"护栏）
+
+清理文件夹是 Agent 的核心场景，删除能力按「**回收站 + 按文件夹授权**」
+设计，护栏全部做在工具层（确定性检查），不依赖提示词约束：
+
+- **工具**：`delete_files`（显式路径清单，≤50/批）、`delete_folder`（仅限
+  **空文件夹**，无递归删除）。二者只走系统回收站
+  （`CommonLocation.deleteFilePromise/deleteDirectoryPromise(useTrash=true)`
+  → 主进程 `shell.trashItem`），**代码里没有永久删除通道**。
+- **按文件夹授权**（`utils/agentDelete.ts`）：每条删除由其**所在文件夹**
+  授权。无授权记录时弹确认框（`ConfirmDialog`，列出文件名 + 删除原因，
+  经 `AgentToolDeps.requestDeleteConfirmation`）；用户同意后该文件夹授权
+  被记住（localStorage `tsAgentDeleteAuth`，上限 100 条，可 `revokeDelete`
+  撤销），之后同文件夹删除免确认。
+- **硬拒绝护栏**（`deletionGuardReason` 纯函数）：location 根、`.ts`
+  元数据目录（含嵌套）、隐藏/系统名（`.` 开头、desktop.ini、thumbs.db、
+  .DS_Store）、location 外路径一律拒绝，不弹窗、不可授权。
+- **交互约束**：提示词要求先列清单给用户过目并征得同意再删；用户在确认框
+  拒绝的批次不得重试。删除结果写历史（localStorage
+  `tsAgentDeleteHistory`，上限 20 条）供追溯。
+- **定时任务（无人值守）**：`AgentSessionsContextProvider` 的
+  `requestDeleteConfirmation` 恒返回 false——无人值守 run 不能弹窗，
+  仅能使用用户交互时已记住授权的文件夹；其余一律拒绝。
+- 单测：`tests/unit/agentDelete.test.js`（护栏/授权/历史纯函数）+
+  `tests/unit/deleteTools.test.js`（mock deps 全链：拒绝→确认→授权记忆）。

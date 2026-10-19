@@ -215,7 +215,7 @@ export type GenerationSettings = {
 
 export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const { t } = useTranslation();
-  const { showNotification } = useNotificationContext();
+  const { showNotification, openConfirmDialog } = useNotificationContext();
   const {
     deleteDirectory,
     setDescriptionChange,
@@ -1273,6 +1273,61 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         }
         return copyFiles([sourcePath], targetFolderPath, tgtLoc.uuid);
       },
+      deleteEntries: async (items) => {
+        const results: Array<{
+          path: string;
+          ok: boolean;
+          error?: string;
+        }> = [];
+        for (const item of items) {
+          const loc = locationForPath(item.path);
+          if (!loc) {
+            results.push({
+              path: item.path,
+              ok: false,
+              error: 'path is not inside any connected location',
+            });
+            continue;
+          }
+          try {
+            const ok = await (item.isFile
+              ? loc.deleteFilePromise(item.path, true)
+              : loc.deleteDirectoryPromise(item.path, true));
+            results.push({ path: item.path, ok: ok !== false });
+          } catch (e: any) {
+            results.push({
+              path: item.path,
+              ok: false,
+              error: e?.message || String(e),
+            });
+          }
+        }
+        return results;
+      },
+      requestDeleteConfirmation: ({ folderPath, items, reason }) =>
+        new Promise<boolean>((resolve) => {
+          openConfirmDialog(
+            'Allow the AI Agent to delete?',
+            [
+              `Move ${items.length} item(s) from this folder to the system trash (recoverable):`,
+              folderPath,
+              ...(reason ? [`Reason: ${reason}`] : []),
+            ].join('\n'),
+            (result) => resolve(!!result),
+            'agentDeleteCancelButton',
+            'agentDeleteConfirmButton',
+            'agentDeleteDialogContentTID',
+            items.map((i) =>
+              typeof i.size === 'number' && i.size >= 0
+                ? `${i.name} (${i.size} bytes)`
+                : i.name,
+            ),
+            undefined,
+            undefined,
+            'Delete (to trash)',
+            'Cancel',
+          );
+        }),
       loadTextFile: (path: string) => {
         const loc = locationForPath(path);
         if (!loc) {

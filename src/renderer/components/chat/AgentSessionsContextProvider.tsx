@@ -445,6 +445,41 @@ export function AgentSessionsContextProvider(props: {
           }
           return copyFiles([sourcePath], targetFolderPath, tgtLoc.uuid);
         },
+        deleteEntries: async (items) => {
+          const results: Array<{
+            path: string;
+            ok: boolean;
+            error?: string;
+          }> = [];
+          for (const item of items) {
+            const loc = locationForPath(item.path);
+            if (!loc) {
+              results.push({
+                path: item.path,
+                ok: false,
+                error: 'path is not inside any connected location',
+              });
+              continue;
+            }
+            try {
+              const ok = await (item.isFile
+                ? loc.deleteFilePromise(item.path, true)
+                : loc.deleteDirectoryPromise(item.path, true));
+              results.push({ path: item.path, ok: ok !== false });
+            } catch (e: any) {
+              results.push({
+                path: item.path,
+                ok: false,
+                error: e?.message || String(e),
+              });
+            }
+          }
+          return results;
+        },
+        // Unattended (scheduled-task) runs have nobody to answer a dialog:
+        // deletion is only allowed in folders the user granted interactively
+        // (isDeleteGranted bypasses this callback); everything else denies.
+        requestDeleteConfirmation: () => Promise.resolve(false),
         moveToPath: (sourcePath: string, targetPath: string) => {
           const srcLoc = locationForPath(sourcePath);
           const tgtLoc = locationForPath(targetPath);
