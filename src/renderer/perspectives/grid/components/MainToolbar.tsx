@@ -26,6 +26,7 @@ import {
   DragOnIcon,
   EntryPropertiesIcon,
   ExportIcon,
+  FeedbackIcon,
   ParentFolderIcon,
   PerspectiveSettingsIcon,
   SelectedIcon,
@@ -43,6 +44,7 @@ import { useAiAgentDialogContext } from '-/components/dialogs/hooks/AiAgentDialo
 import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
 import { useFileVersionCleanupDialogContext } from '-/components/dialogs/hooks/useFileVersionCleanupDialogContext';
 import { useTodoListContext } from '-/components/todo/TodoListContextProvider';
+import { useIssueListContext } from '-/components/issues/IssueListContextProvider';
 import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
@@ -108,6 +110,11 @@ function MainToolbar(props: Props) {
     useDeleteMultipleEntriesDialogContext();
   const { openFileVersionCleanupDialog } = useFileVersionCleanupDialogContext();
   const { isTodoOpen, toggleTodoList, pendingCount } = useTodoListContext();
+  const {
+    isIssuesOpen,
+    openCount: issueOpenCount,
+    toggleIssues,
+  } = useIssueListContext();
 
   function showProperties() {
     if (openedEntry?.path === currentDirectoryPath) {
@@ -373,6 +380,28 @@ function MainToolbar(props: Props) {
             onClick={() => toggleTodoList()}
           >
             <TodoIcon color={isTodoOpen ? 'primary' : 'inherit'} />
+          </TsToolbarButton>
+        </Badge>
+        <Badge
+          badgeContent={issueOpenCount}
+          color="warning"
+          overlap="circular"
+          invisible={issueOpenCount === 0}
+          sx={{
+            '& .MuiBadge-badge': {
+              fontSize: 10,
+              minWidth: 16,
+              height: 16,
+            },
+          }}
+        >
+          <TsToolbarButton
+            tooltip={t('core:issueTitle')}
+            title={t('core:issueTitle')}
+            data-tid={`${prefixDataTID}PerspectiveIssues`}
+            onClick={() => toggleIssues()}
+          >
+            <FeedbackIcon color={isIssuesOpen ? 'primary' : 'inherit'} />
           </TsToolbarButton>
         </Badge>
         <TsToolbarButton

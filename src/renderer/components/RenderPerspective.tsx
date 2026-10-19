@@ -33,7 +33,9 @@ import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { useTodoListContext } from '-/components/todo/TodoListContextProvider';
+import { useIssueListContext } from '-/components/issues/IssueListContextProvider';
 import TodoListPanel from '-/components/todo/TodoListPanel';
+import IssueListPanel from '-/components/issues/IssueListPanel';
 import {
   AvailablePerspectives,
   hasExternalPerspectiveComponent,
@@ -262,6 +264,7 @@ function WelcomePanelAsync(props) {
 interface Props {}
 
 function RenderPerspective(props: Props) {
+  const { showNotification } = useNotificationContext();
   const { currentLocationId } = useCurrentLocationContext();
   const { currentPerspective, currentDirectory, isSearchMode } =
     useDirectoryContentContext();
@@ -282,6 +285,21 @@ function RenderPerspective(props: Props) {
     exportMarkdown,
     toggleTodoList,
   } = useTodoListContext();
+  const {
+    isIssuesOpen,
+    items: issueItems,
+    stats: issueStats,
+    loading: issueLoading,
+    error: issueError,
+    dataPath: issueDataPath,
+    appInfo,
+    createIssue,
+    updateIssue,
+    updateManyIssues,
+    removeIssue,
+    exportMarkdown: exportIssuesMarkdown,
+    toggleIssues,
+  } = useIssueListContext();
 
   // Auto-open the perspective's onboarding dialog the first time the user
   // switches into it. Only runs for perspectives that ship an
@@ -363,6 +381,27 @@ function RenderPerspective(props: Props) {
         removeTodo={removeTodo}
         exportMarkdown={exportMarkdown}
         onClose={toggleTodoList}
+      />
+    );
+  }
+
+  // 需求与缺陷收集"挤占式"展示（同待办面板模式）。
+  if (isIssuesOpen) {
+    return (
+      <IssueListPanel
+        items={issueItems}
+        stats={issueStats}
+        loading={issueLoading}
+        error={issueError}
+        dataPath={issueDataPath}
+        appInfo={appInfo}
+        createIssue={createIssue}
+        updateIssue={updateIssue}
+        updateManyIssues={updateManyIssues}
+        removeIssue={removeIssue}
+        exportMarkdown={exportIssuesMarkdown}
+        showNotification={showNotification}
+        onClose={toggleIssues}
       />
     );
   }

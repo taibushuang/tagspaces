@@ -50,6 +50,38 @@ export type AgentEvent =
 export type AgentMessage = Record<string, any>;
 
 /**
+ * Defect-evidence snapshot: the most recent failed agent tool call (either a
+ * thrown error or a result carrying { error }). report_issue attaches it to
+ * bug reports as environment context for developers. Kept module-level — it
+ * survives across runs and is best-effort (never blocks the loop).
+ */
+export type FailedToolCall = {
+  tool: string;
+  args?: string;
+  error: string;
+  at: number;
+};
+
+let lastFailedToolCall: FailedToolCall | undefined;
+
+export function getLastFailedToolCall(): FailedToolCall | undefined {
+  return lastFailedToolCall;
+}
+
+function recordFailedToolCall(
+  toolName: string,
+  args: string | undefined,
+  error: string,
+): void {
+  lastFailedToolCall = {
+    tool: toolName,
+    ...(args && { args: args.slice(0, 500) }),
+    error: String(error).slice(0, 1000),
+    at: Date.now(),
+  };
+}
+
+/**
  * Shared channel for step-boundary injection. The renderer pushes user
  * messages typed while the agent is running into `pending`; `runAgent`
  * drains them into the conversation at each step boundary (right before the
@@ -164,14 +196,26 @@ async function executeToolCall(
       args = JSON.parse(rawArgs);
     }
     const result = await tool.execute(args);
-    return truncate(
+    const serialized = truncate(
       JSON.stringify(result ?? { ok: true }),
       TOOL_RESULT_CHAR_LIMIT,
     );
+    // A result carrying { error } is a soft failure — record it too, so a
+    // subsequent report_issue can attach the evidence automatically.
+    try {
+      const parsed = JSON.parse(serialized);
+      if (parsed && typeof parsed === 'object' && parsed.error) {
+        recordFailedToolCall(tool.name, rawArgs, parsed.error);
+      }
+    } catch {
+      // non-JSON result — nothing to record
+    }
+    return serialized;
   } catch (e) {
     // Tool errors go back to the model so it can explain/recover instead of
     // crashing the whole run.
     console.error(`agent tool ${tool.name} failed`, e);
+    recordFailedToolCall(tool.name, rawArgs, e?.message || String(e));
     return JSON.stringify({ error: e?.message || String(e) });
   }
 }

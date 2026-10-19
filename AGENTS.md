@@ -319,6 +319,24 @@ run 后启动的窗口由 MenuItem disabled 兜住），`handleNewSession`/
 
 **注意事项**：受影响的 e2e 测试（`changeThumbnailTID`、`saveTagInLocationTID`、`templatesDialogTID` 等）均带 `_pro` 平台标签，只在 Pro 构建下运行，本部署不跑，故未改动。
 
+### 需求与缺陷收集（Issue Collection，2026-10-19 落地）
+
+内置"待开发功能/待修复缺陷"收集清单，入口：主工具栏右侧 **Feedback 按钮**
+（带待处理数 Badge，挤占式面板 `IssueListPanel`，模式同待办面板）。
+双来源：面板手动新建（`source: ui`）+ AI Agent 上报（`report_issue` 工具，
+`source: agent`，自动携带 location/folder 上下文 + appVersion/platform）。
+
+**核心文件**：
+- `src/main/issueStore.ts` — `IssueDatabase` 纯逻辑（无 electron 依赖，可单测）：校验（type bug/feature、severity、title ≤200、description 截断 5000、context 字段裁剪 1024）/ list 过滤排序（newest-first）/ 生命周期（done 写 resolvedAt、source 不可变、context 可补写）/ `renderIssuesMarkdown` 导出。数据文件 `app.getPath('userData')/issues/issues.json`（原子写 tmp→rename + 10 份轮转备份 + 损坏自动回滚），与 Todo 同款哲学
+- `src/main/issueStoreIpc.ts` — `initIssueStore()`（mainEvents 的 `loadMainEvents` 里接线，不碰 main.ts）：`issue:list/create/update/remove/exportMarkdown/getPath` 六个 handle；`getPath` 附带 `app.getVersion()`/`process.platform` 供上下文快照
+- `src/renderer/components/issues/` — `IssueListContextProvider`（isIssuesOpen + toggleIssues，挂 DialogsRoot）/ `IssueListPanel`（类型/状态双 tab 过滤 + 搜索 + 编辑/删除/标记处理）/ `IssueEditDialog` / `issueService.ts` / `issueTypes.ts`
+- `RenderPerspective.tsx` — `isIssuesOpen` 时渲染面板替代文件夹内容
+- Agent 工具：`report_issue`（查重提示 + **开发级环境快照**：appVersion/platform/osVersion/appLanguage + location/folder + 选中文件 selectedEntries（≤10 条）+ 最近失败工具调用 lastToolError（AgentService 模块级记录，含 tool/args/error）+ 结构化复现字段 expected/observed/steps/relatedPaths 拼进 description；创建后二次 update 补环境信息）、`list_issues`（≤50 条）；`agentPrompt.ts` 有上报指引（工具异常像缺陷才上报，参数用错应自查重试）
+- 单测 `tests/unit/issueStore.test.js`（校验/生命周期/原子写/备份恢复/md 导出）+ `tests/unit/issueTools.test.js`（mock IPC 全链）
+- **导出为交付文档**：`issue:exportMarkdown`（面板"导出"按钮，存到用户选的 .md）。`renderIssuesMarkdown` 输出开发/AI 可直接消费的全量文档：头部统计、每条 `### [{机器码}-BUG-001] 标题`（分组内 newest-first 编号 + 机器码前缀，可在对话中按编号引用）、状态/严重程度/来源/上报与处理时间、环境快照（版本/平台+OS/语言）、场景（位置/文件夹）、详情原文（含结构化复现信息）、相关文件清单、最近工具错误现场（工具/参数/错误/时间），条目间 `---` 分隔
+- **机器标识**：`ensureMachineTag(dir)` 生成 4 位机器码（无易混淆字符表，无 I/O/0/1），优先级：已有 `machine.tag` 文件 > 硬件机器 id 哈希（macOS IOPlatformUUID / Windows MachineGuid / Linux machine-id，SHA-256 后映射，确定性、跨目录一致，不泄露原始 UUID）> 随机回退。**惰性计算**（首次 issue:getPath/export/create 才探测，不拖慢启动）。**编号（ref）在 create 时分配并落库**（格式 `{机器码}-BUG-001`，计数器取同类型历史最大值+1，删除不复用；update 不可改写 ref；legacy 无 ref 条目 load 时按 newest-first 回填）——面板、导出文档、Agent `list_issues` 三处引用同一落库编号，永不错位/顺移；克隆 userData 会连 tag 文件一起带走（有意识接受的取舍：编号稳定性优先，删 machine.tag 可强制重派生）
+- **批量标记**：面板每条带复选框，选中后出现批量操作栏（标记已处理/重新打开），走 `issue:updateMany` IPC（`IssueDatabase.updateMany`：内部 applyUpdate 不落盘、最后统一 persist 一次；id 去重、未知 id 进 missing，返回 `{updated, missing}`）——导出 md 处理完后回客户端按编号勾选批量销账
+
 ### 打包注意事项（2026-09-25 起：无原生依赖）
 
 - koffi 及其 `install-koffi-*` 步骤已全部移除（package.json 脚本、`scripts/install-koffi-platform.js`、CI 校验）。

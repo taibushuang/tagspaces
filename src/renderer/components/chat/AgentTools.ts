@@ -80,7 +80,10 @@ import AppConfig from '-/AppConfig';
 import { TS } from '-/tagspaces.namespace';
 import todoApi from '-/components/todo/todoService';
 import { TodoItem } from '-/components/todo/todoTypes';
+import issueApi from '-/components/issues/issueService';
+import { ISSUE_TYPES, ISSUE_SEVERITIES } from '-/components/issues/issueTypes';
 import { describeSchedule } from '-/utils/agentSchedule';
+import { getLastFailedToolCall } from '-/components/chat/AgentService';
 import type { AgentScheduledTask } from '-/utils/agentSchedule';
 
 /** Direct children of `path` may not exceed this when planning an organize. */
@@ -266,6 +269,8 @@ const TODO_UNAVAILABLE =
   'todo tools are only available in the desktop app (todo data is stored on the main process)';
 const SCHEDULED_TASK_UNAVAILABLE =
   'scheduled task tools are only available in the desktop app (task data is stored on the main process)';
+const ISSUE_UNAVAILABLE =
+  'issue tools are only available in the desktop app (issue data is stored on the main process)';
 
 function isTodoAvailable(): boolean {
   return typeof window !== 'undefined' && !!(window as any).electronIO;
@@ -1976,6 +1981,255 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
             status,
           });
           return { ok: true, todo: todoToSummary(item) };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'report_issue',
+      description:
+        'File a feature request or bug report into the built-in collection ' +
+        'list (需求与缺陷收集). Use it when the user reports a problem, ' +
+        'something works unexpectedly, or asks for a new capability — also ' +
+        'when one of your tools fails in a way that looks like an app defect ' +
+        '(report the error text). A developer-grade environment snapshot is ' +
+        'captured automatically: app version, OS, language, current ' +
+        'location/folder, selected files and the last failed tool call. For ' +
+        'bugs fill the structured repro fields (expected/observed/steps/' +
+        'relatedPaths) — they are appended to the report so a developer can ' +
+        'reproduce it. After filing, tell the user it was recorded. Do NOT ' +
+        'file duplicates — check list_issues first.',
+      parameters: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            enum: ISSUE_TYPES,
+            description:
+              'bug (something broken) or feature (a new capability); default bug',
+          },
+          title: {
+            type: 'string',
+            description: 'short one-line summary of the request or problem',
+          },
+          description: {
+            type: 'string',
+            description:
+              'free-form details (user quote, background, what was tried)',
+          },
+          severity: {
+            type: 'string',
+            enum: ISSUE_SEVERITIES,
+            description:
+              'how badly the user is blocked (bugs only; default medium)',
+          },
+          expected: {
+            type: 'string',
+            description: 'bugs only: what SHOULD happen (expected behavior)',
+          },
+          observed: {
+            type: 'string',
+            description:
+              'bugs only: what ACTUALLY happens, including exact error text',
+          },
+          steps: {
+            type: 'string',
+            description:
+              'bugs only: minimal numbered steps to reproduce (files/folders ' +
+              'involved, which tool or UI action)',
+          },
+          relatedPaths: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'absolute paths of files/folders involved (max 10) — the ' +
+              'current selection is captured automatically as well',
+          },
+        },
+        required: ['title'],
+      },
+      execute: async (args) => {
+        if (!isElectron()) return { error: ISSUE_UNAVAILABLE };
+        const type = args?.type === 'feature' ? 'feature' : 'bug';
+        if (type === 'feature' && args?.severity) {
+          return {
+            error:
+              'severity only applies to bug reports — omit it for features',
+          };
+        }
+        if (
+          type === 'feature' &&
+          (args?.expected || args?.observed || args?.steps)
+        ) {
+          return {
+            error:
+              'expected/observed/steps are bug-repro fields — omit them for feature requests',
+          };
+        }
+        const severity =
+          args?.severity && ISSUE_SEVERITIES.includes(args.severity)
+            ? args.severity
+            : 'medium';
+        // Structured repro information appended to the description so the
+        // report is self-contained for a developer.
+        const reproSections: string[] = [];
+        if (args?.steps && String(args.steps).trim()) {
+          reproSections.push(`复现步骤:\n${String(args.steps).trim()}`);
+        }
+        if (args?.expected && String(args.expected).trim()) {
+          reproSections.push(`期望行为:\n${String(args.expected).trim()}`);
+        }
+        if (args?.observed && String(args.observed).trim()) {
+          reproSections.push(`实际行为:\n${String(args.observed).trim()}`);
+        }
+        const relatedPaths = Array.isArray(args?.relatedPaths)
+          ? args.relatedPaths
+              .map((p: any) => String(p || '').trim())
+              .filter(Boolean)
+              .slice(0, 10)
+          : [];
+        if (relatedPaths.length > 0) {
+          reproSections.push(
+            `相关文件:\n${relatedPaths.map((p: string) => `- ${p}`).join('\n')}`,
+          );
+        }
+        let description =
+          typeof args?.description === 'string' && args.description.trim()
+            ? args.description.trim().slice(0, 5000)
+            : undefined;
+        if (reproSections.length > 0) {
+          description = [
+            ...(description ? [description] : []),
+            '--- structured repro info ---',
+            ...reproSections,
+          ]
+            .join('\n')
+            .slice(0, 5000);
+        }
+        // Environment snapshot: location/folder/selection from the run deps,
+        // app version + OS + language from the main process, plus the most
+        // recent failed tool call as defect evidence.
+        const lastToolError = getLastFailedToolCall();
+        const selectionPaths = Array.from(
+          new Set([
+            ...relatedPaths,
+            ...(deps.selectedEntries || []).map((e) => e.path).slice(0, 10),
+          ]),
+        ).slice(0, 10);
+        const context: Record<string, any> = {
+          ...(deps.currentLocationName && {
+            locationName: deps.currentLocationName,
+          }),
+          ...(deps.currentLocationPath && {
+            locationPath: deps.currentLocationPath,
+          }),
+          ...(deps.currentDirectoryPath && {
+            folderPath: deps.currentDirectoryPath,
+          }),
+          ...(selectionPaths.length > 0 && {
+            selectedEntries: selectionPaths,
+          }),
+          ...(lastToolError && { lastToolError }),
+        };
+        try {
+          const item = await issueApi.create({
+            title: requireString(args, 'title'),
+            description,
+            type,
+            severity,
+            source: 'agent',
+            context,
+          });
+          // enrich with app version/platform/OS/language on a best-effort basis
+          try {
+            const info = await issueApi.getPath();
+            if (info?.version || info?.platform || info?.osVersion) {
+              await issueApi.update(item.id, {
+                context: {
+                  ...(item.context || {}),
+                  ...(info.version && { appVersion: info.version }),
+                  ...(info.platform && { platform: info.platform }),
+                  ...(info.osVersion && { osVersion: info.osVersion }),
+                  ...(info.appLanguage && { appLanguage: info.appLanguage }),
+                },
+              });
+            }
+          } catch (e) {
+            // context enrichment is optional
+          }
+          return {
+            ok: true,
+            id: item.id,
+            type: item.type,
+            title: item.title,
+            ...(reproSections.length > 0 && { withReproInfo: true }),
+            note: 'recorded into the built-in request/issue collection list with an environment snapshot — tell the user it was filed',
+          };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'list_issues',
+      description:
+        'List entries from the built-in request/issue collection list ' +
+        '(需求与缺陷收集). Use it before report_issue to avoid duplicates, ' +
+        'and when the user asks what problems or requests have been collected.',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: {
+            type: 'string',
+            enum: ['open', 'done'],
+            description: 'filter by status; omit for all',
+          },
+          type: {
+            type: 'string',
+            enum: ISSUE_TYPES,
+            description: 'filter by type; omit for all',
+          },
+          keyword: {
+            type: 'string',
+            description: 'text to search in title/description',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        if (!isElectron()) return { error: ISSUE_UNAVAILABLE };
+        try {
+          const [result, info] = await Promise.all([
+            issueApi.list({
+              ...(args?.status && { status: args.status }),
+              ...(args?.type && { type: args.type }),
+              ...(typeof args?.keyword === 'string' &&
+                args.keyword.trim() && { keyword: args.keyword.trim() }),
+            }),
+            issueApi.getPath().catch(() => undefined),
+          ]);
+          return {
+            stats: result.stats,
+            ...(info?.machineTag && { machineTag: info.machineTag }),
+            items: result.items.slice(0, SEARCH_RESULT_LIMIT).map((i) => ({
+              id: i.id,
+              ref: i.ref,
+              type: i.type,
+              title: i.title,
+              status: i.status,
+              severity: i.severity,
+              source: i.source,
+              ...(i.context?.appVersion && {
+                appVersion: i.context.appVersion,
+              }),
+              ...(i.context?.osVersion && { osVersion: i.context.osVersion }),
+              ...(i.context?.locationName && {
+                locationName: i.context.locationName,
+              }),
+              createdAt: i.createdAt.slice(0, 10),
+            })),
+          };
         } catch (e: any) {
           return { error: e?.message || String(e) };
         }

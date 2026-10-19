@@ -46,6 +46,7 @@ import {
 import { readMacOSTags } from './macUserTags';
 import registerSecureStorageEvents from './secureStorage';
 import initTodoStore from './todoStoreIpc';
+import initIssueStore from './issueStoreIpc';
 import initAgentScheduler from './agentSchedulerIpc';
 import { searchWeb, fetchWeb } from './openWebSearch';
 import {
@@ -98,6 +99,7 @@ function isSafePath(filePath) {
 export default function loadMainEvents() {
   registerSecureStorageEvents();
   initTodoStore();
+  initIssueStore();
   initAgentScheduler();
 
   ipcMain.on('reloadWindow', () => {

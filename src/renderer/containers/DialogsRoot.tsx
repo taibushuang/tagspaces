@@ -30,6 +30,7 @@ import { FilePickerDialogContextProvider } from '-/components/dialogs/hooks/File
 import { LinkDialogContextProvider } from '-/components/dialogs/hooks/LinkDialogContextProvider';
 import { FileVersionCleanupDialogContextProvider } from '-/components/dialogs/hooks/FileVersionCleanupDialogContextProvider';
 import { TodoListContextProvider } from '-/components/todo/TodoListContextProvider';
+import { IssueListContextProvider } from '-/components/issues/IssueListContextProvider';
 import { MenuContextProvider } from '-/components/dialogs/hooks/MenuContextProvider';
 import { NewAudioDialogContextProvider } from '-/components/dialogs/hooks/NewAudioDialogContextProvider';
 import { NewFileDialogContextProvider } from '-/components/dialogs/hooks/NewFileDialogContextProvider';
@@ -104,6 +105,7 @@ const providers = [
   ImportMacTagDialogContextProvider,
   FileVersionCleanupDialogContextProvider,
   TodoListContextProvider,
+  IssueListContextProvider,
   MenuContextProvider,
 ];
 

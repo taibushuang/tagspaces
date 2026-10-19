@@ -395,6 +395,8 @@ export { default as VersionCleanupIcon } from '@mui/icons-material/CleaningServi
 
 export { default as TodoIcon } from '@mui/icons-material/Checklist';
 
+export { default as FeedbackIcon } from '@mui/icons-material/FeedbackOutlined';
+
 export const OllamaIcon = (props) => (
   <SvgIcon {...props}>
     <svg
