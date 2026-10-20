@@ -53,6 +53,7 @@ import DeleteIcon from '@mui/icons-material/DeleteOutlineOutlined';
 import EditIcon from '@mui/icons-material/EditOutlined';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import ImportSkillsDialog from '-/components/chat/ImportSkillsDialog';
 
 /** One-shot tool metadata for the catalog (execute is never invoked). */
 function getBuiltinToolMetas(): Array<{
@@ -127,6 +128,7 @@ function AiCapabilitiesPanel(props: Props) {
   const [headersText, setHeadersText] = useState('');
   // skill editor state
   const [skillEditor, setSkillEditor] = useState<CustomSkillDef | null>(null);
+  const [skillImportOpen, setSkillImportOpen] = useState(false);
 
   // Cheap catalog data — recomputed on every render (version bump forces it).
   const builtinTools = getBuiltinToolMetas();
@@ -467,16 +469,31 @@ function AiCapabilitiesPanel(props: Props) {
 
         {tab === 'skills' && (
           <Box>
-            <Button
-              data-tid="aiCapabilitiesAddSkillTID"
-              variant="outlined"
-              size="small"
-              onClick={() =>
-                setSkillEditor({ enabled: true } as CustomSkillDef)
-              }
-            >
-              {t('core:aiCapAddSkill')}
-            </Button>
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button
+                data-tid="aiCapabilitiesAddSkillTID"
+                variant="outlined"
+                size="small"
+                onClick={() =>
+                  setSkillEditor({ enabled: true } as CustomSkillDef)
+                }
+              >
+                {t('core:aiCapAddSkill')}
+              </Button>
+              <Button
+                data-tid="aiCapabilitiesImportSkillsTID"
+                variant="outlined"
+                size="small"
+                onClick={() => setSkillImportOpen(true)}
+              >
+                {t('core:skillImportButton')}
+              </Button>
+            </Box>
+            <ImportSkillsDialog
+              open={skillImportOpen}
+              onClose={() => setSkillImportOpen(false)}
+              onImported={bump}
+            />
             <Typography variant="subtitle2" sx={{ marginTop: 1 }}>
               {t('core:aiCapCustomSkills')}
             </Typography>
@@ -500,6 +517,19 @@ function AiCapabilitiesPanel(props: Props) {
                 () => setSkillEditor(def),
                 () => {
                   deleteCustomSkill(def.id);
+                  // clean up the copied supporting files of imported skills
+                  if (
+                    def.sourceDir &&
+                    typeof window !== 'undefined' &&
+                    window.electronIO
+                  ) {
+                    window.electronIO.ipcRenderer
+                      .invoke('skillsDeleteCopy', {
+                        name: def.name,
+                        sourceDir: def.sourceDir,
+                      })
+                      .catch(() => {});
+                  }
                   bump();
                 },
                 skillCounts[def.id],

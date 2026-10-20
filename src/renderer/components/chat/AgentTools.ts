@@ -82,6 +82,11 @@ import todoApi from '-/components/todo/todoService';
 import { TodoItem } from '-/components/todo/todoTypes';
 import issueApi from '-/components/issues/issueService';
 import { ISSUE_TYPES, ISSUE_SEVERITIES } from '-/components/issues/issueTypes';
+import {
+  getCustomSkills,
+  importedSkillId,
+  saveCustomSkill,
+} from '-/components/chat/agentCapabilities';
 import { describeSchedule } from '-/utils/agentSchedule';
 import { getLastFailedToolCall } from '-/components/chat/AgentService';
 import type { AgentScheduledTask } from '-/utils/agentSchedule';
@@ -207,6 +212,59 @@ export type AgentToolDeps = {
     items: Array<{ name: string; size?: number }>;
     reason?: string;
   }) => Promise<boolean>;
+  /**
+   * Main-process authorization gate for exec (two-tier: simple lines by
+   * remembered prefix, compound lines by exact line, elevation always
+   * prompts). The renderer NEVER decides authorization — it only relays the
+   * confirmation dialog.
+   */
+  execAuthorize: (command: string) => Promise<{
+    status: 'granted' | 'needs-confirmation' | 'denied';
+    prefix: string;
+    rememberKey: string;
+    canRemember: boolean;
+    reason?: string;
+    token?: string;
+  }>;
+  /**
+   * After user approval: records the remembered grant (when remember=true)
+   * and always returns a single-use execution token (consumed by execRun).
+   */
+  execGrant: (params: {
+    rememberKey: string;
+    remember: boolean;
+  }) => Promise<{ token: string }>;
+  /**
+   * Execute a shell command line in the main process (full platform shell —
+   * pipes/&& work; capture with output caps; hard timeout with tree-kill).
+   * Requires the single-use token from execAuthorize/execGrant.
+   */
+  execRun: (params: {
+    command: string;
+    cwd?: string;
+    timeoutMs?: number;
+    env?: Record<string, string>;
+    token: string;
+  }) => Promise<{
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    truncated: boolean;
+    timedOut: boolean;
+    durationMs: number;
+    cwd: string;
+  }>;
+  /**
+   * Per-run exec confirmation dialog (shows the FULL command line + cwd).
+   * The "remember" decision is returned so the tool layer relays it to
+   * execGrant — the renderer never writes grants itself.
+   */
+  requestExecConfirmation: (payload: {
+    command: string;
+    cwd?: string;
+    prefix: string;
+    canRemember: boolean;
+  }) => Promise<{ approved: boolean; remember: boolean }>;
 };
 
 const SEARCH_RESULT_LIMIT = 50;
@@ -271,6 +329,8 @@ const SCHEDULED_TASK_UNAVAILABLE =
   'scheduled task tools are only available in the desktop app (task data is stored on the main process)';
 const ISSUE_UNAVAILABLE =
   'issue tools are only available in the desktop app (issue data is stored on the main process)';
+/** Hard cap for run_command — mirrors execRunner.EXEC_TIMEOUT_MAX_MS. */
+const EXEC_TIMEOUT_MAX_MS = 600_000;
 
 function isTodoAvailable(): boolean {
   return typeof window !== 'undefined' && !!(window as any).electronIO;
@@ -2229,6 +2289,282 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
               }),
               createdAt: i.createdAt.slice(0, 10),
             })),
+          };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'run_command',
+      description:
+        'Execute a shell command line (desktop app, personal machine). ' +
+        'The FULL line is passed to the platform shell — pipes (|), ' +
+        'chaining (&&), redirection all work. Use it for CLI tools the ' +
+        'built-in tools cannot cover (e.g. arkcli, scripts, system queries). ' +
+        'Authorization is by command prefix (the first token): the first run ' +
+        'of a new prefix pops a confirmation dialog showing the exact ' +
+        'command — if the user denies, do NOT retry it; remembered prefixes ' +
+        'run without asking. Captured stdout/stderr are capped at ~200KB ' +
+        'each (truncated=true). There is NO interactive stdin — commands ' +
+        'must not require mid-run user input. Prefer a generous ' +
+        'timeoutSeconds for slow commands instead of re-running.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: 'the full shell command line to execute',
+          },
+          cwd: {
+            type: 'string',
+            description:
+              'working directory; defaults to the current TagSpaces folder',
+          },
+          timeoutSeconds: {
+            type: 'number',
+            description:
+              'kill the process tree after this long (1-600, default 60)',
+          },
+          env: {
+            type: 'object',
+            description:
+              'extra environment variables merged over the process env',
+            additionalProperties: { type: 'string' },
+          },
+        },
+        required: ['command'],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return {
+            error:
+              'run_command is only available in the desktop app (shell access lives in the main process)',
+          };
+        }
+        const command = requireString(args, 'command');
+        const cwd =
+          typeof args?.cwd === 'string' && args.cwd.trim()
+            ? args.cwd.trim()
+            : deps.currentDirectoryPath ||
+              deps.currentLocationPath ||
+              undefined;
+        const timeoutMs = Math.max(
+          1000,
+          Math.min(
+            EXEC_TIMEOUT_MAX_MS,
+            Math.round((Number(args?.timeoutSeconds) || 60) * 1000),
+          ),
+        );
+        const env =
+          args?.env && typeof args.env === 'object' && !Array.isArray(args.env)
+            ? (Object.fromEntries(
+                Object.entries(args.env).map(([k, v]) => [k, String(v)]),
+              ) as Record<string, string>)
+            : undefined;
+        // Authorization lives in the MAIN process (two-tier: simple lines by
+        // remembered prefix, compound lines per exact line, elevation always
+        // prompts). The renderer only relays the confirmation dialog.
+        let auth;
+        try {
+          auth = await deps.execAuthorize(command);
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+        if (auth.status === 'denied') {
+          return { error: auth.reason || 'command denied' };
+        }
+        let token = auth.token;
+        if (!token) {
+          let decision;
+          try {
+            decision = await deps.requestExecConfirmation({
+              command,
+              cwd,
+              prefix: auth.prefix,
+              canRemember: auth.canRemember,
+            });
+          } catch (e) {
+            decision = { approved: false, remember: false };
+          }
+          if (!decision.approved) {
+            return {
+              error: `user denied execution of "${auth.prefix}" commands — do not retry without asking first`,
+            };
+          }
+          try {
+            const granted = await deps.execGrant({
+              rememberKey: auth.rememberKey,
+              remember: decision.remember && auth.canRemember,
+            });
+            token = granted.token;
+          } catch (e: any) {
+            return { error: e?.message || String(e) };
+          }
+        }
+        try {
+          const result = await deps.execRun({
+            command,
+            cwd,
+            timeoutMs,
+            env,
+            token,
+          });
+          return {
+            ok: result.exitCode === 0,
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            truncated: result.truncated,
+            timedOut: result.timedOut,
+            durationMs: result.durationMs,
+            cwd: result.cwd,
+            ...(result.timedOut && {
+              error: `timed out after ${Math.round(timeoutMs / 1000)}s (process tree killed)`,
+            }),
+          };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'scan_importable_skills',
+      description:
+        'Scan this machine for skills installed by other agent clients ' +
+        '(Qwenpaw / Claude Code / arkcli-connect — SKILL.md folders in ' +
+        '~/.agents/skills, ~/.claude/skills, ~/.qwenpaw/skills, … plus ' +
+        'user-registered extra directories), plus their tool/MCP-server ' +
+        'configs (listed for reference — MCP mounting is not supported yet). ' +
+        'Use it when the user asks to bring their existing skills into ' +
+        'TagSpaces. Pair with import_skills to import. ' +
+        'Pass addDir to register an additional directory to scan (e.g. when ' +
+        'the user says where their skills live) — it persists for future scans.',
+      parameters: {
+        type: 'object',
+        properties: {
+          addDir: {
+            type: 'string',
+            description:
+              'absolute path of an additional skills directory to register and scan',
+          },
+          removeDir: {
+            type: 'string',
+            description:
+              'absolute path of a registered extra directory to remove',
+          },
+        },
+        required: [],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return {
+            error: 'skill scanning is only available in the desktop app',
+          };
+        }
+        try {
+          const result = await (window as any).electronIO.ipcRenderer.invoke(
+            'skillsScan',
+            {
+              addDirs: args?.addDir ? [String(args.addDir)] : undefined,
+              removeDir: args?.removeDir ? String(args.removeDir) : undefined,
+            },
+          );
+          return {
+            scannedDirs: {
+              defaults: result.defaultDirs,
+              extra: result.extraDirs,
+            },
+            count: result.skills.length,
+            skills: result.skills.map((s: any) => ({
+              dir: s.dir,
+              name: s.name,
+              description: s.description,
+              truncated: s.truncated,
+              sizeBytes: s.sizeBytes,
+            })),
+            toolServers: (result.toolServers || []).map((t: any) => ({
+              name: t.name,
+              transport: t.transport,
+              sourceFile: t.sourceFile,
+              detail: t.detail,
+            })),
+            toolServersNote:
+              'tool/MCP-server configs are LISTED ONLY — mounting them needs an MCP client which TagSpaces does not have yet; the CLI tools they wrap can already be used via run_command.',
+          };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'import_skills',
+      description:
+        'Import scanned external skills into TagSpaces as prompt skills ' +
+        '(enabled immediately, visible in the AI capabilities panel). Pass ' +
+        'the skill folder paths from scan_importable_skills (max 20 per ' +
+        'call). Re-importing the same skill updates it — safe to re-run.',
+      parameters: {
+        type: 'object',
+        properties: {
+          dirs: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'skill folder paths to import (from scan results)',
+          },
+        },
+        required: ['dirs'],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return {
+            error: 'skill import is only available in the desktop app',
+          };
+        }
+        const dirs = Array.isArray(args?.dirs)
+          ? args.dirs.map((d: any) => String(d || '').trim()).filter(Boolean)
+          : [];
+        if (dirs.length === 0) {
+          return { error: 'dirs array is empty' };
+        }
+        if (dirs.length > 20) {
+          return { error: 'import at most 20 skills per call' };
+        }
+        try {
+          const imported: Array<{
+            dir: string;
+            name: string;
+            updated: boolean;
+          }> = [];
+          const failed: Array<{ dir: string; error: string }> = [];
+          for (const dir of dirs) {
+            try {
+              // Main process copies the WHOLE skill folder (scripts/templates
+              // ride along) and returns the transformed draft with a note
+              // pointing at the copied location.
+              const skill = await (window as any).electronIO.ipcRenderer.invoke(
+                'skillsImportDir',
+                dir,
+              );
+              const id = importedSkillId(skill.name, dir);
+              const updated = getCustomSkills().some((s) => s.id === id);
+              saveCustomSkill({
+                id,
+                name: skill.name,
+                instruction: skill.instruction,
+                enabled: true,
+                sourceDir: dir,
+              });
+              imported.push({ dir, name: skill.name, updated });
+            } catch (e: any) {
+              failed.push({ dir, error: e?.message || String(e) });
+            }
+          }
+          return {
+            ok: imported.length > 0,
+            imported,
+            failed,
+            note: 'skills are now visible in the AI capabilities panel and injected into the agent system prompt; supporting files were copied alongside (paths noted in each skill)',
           };
         } catch (e: any) {
           return { error: e?.message || String(e) };

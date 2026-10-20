@@ -1444,5 +1444,17 @@
   "issueBatchMarkOpen": "重新打开",
   "issueBatchClear": "取消选择",
   "issueBatchResult": "已更新 {{updated}} 条",
-  "issueBatchMissing": "{{missing}} 条未找到（可能已被删除）"
+  "issueBatchMissing": "{{missing}} 条未找到（可能已被删除）",
+  "skillImportButton": "从本机导入",
+  "skillImportTitle": "从其他 Agent 客户端导入技能",
+  "skillImportHint": "扫描 Qwenpaw / Claude Code / arkcli-connect 等安装在默认目录和你注册的额外目录中的 SKILL.md 技能文件夹。导入后成为自定义技能（工具引用已映射为 TagSpaces 工具）。",
+  "skillImportAddDirPlaceholder": "额外的技能目录（绝对路径）",
+  "skillImportAddDir": "添加并扫描",
+  "skillImportExtraDirs": "已注册的额外目录：",
+  "skillImportDefaultDirs": "默认扫描目录：",
+  "skillImportScanning": "扫描中…",
+  "skillImportEmpty": "未发现技能——请添加技能所在的目录。",
+  "skillImportConfirm": "导入 {{count}} 个技能",
+  "skillImportToolsTitle": "工具 / MCP 服务器配置（仅列出）",
+  "skillImportToolsHint": "来自客户端配置文件。MCP 挂载暂不支持——这些配置包装的 CLI 工具已可通过 run_command 使用。"
 }

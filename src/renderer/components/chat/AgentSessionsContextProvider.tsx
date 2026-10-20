@@ -480,6 +480,24 @@ export function AgentSessionsContextProvider(props: {
         // deletion is only allowed in folders the user granted interactively
         // (isDeleteGranted bypasses this callback); everything else denies.
         requestDeleteConfirmation: () => Promise.resolve(false),
+        execAuthorize: (command: string) =>
+          window.electronIO.ipcRenderer.invoke('execAuthorize', command),
+        execGrant: (params: { rememberKey: string; remember: boolean }) =>
+          window.electronIO.ipcRenderer.invoke(
+            'execGrant',
+            params.rememberKey,
+            params.remember,
+          ),
+        execRun: (params: any) =>
+          window.electronIO.ipcRenderer.invoke('execRun', {
+            ...params,
+            origin: 'scheduled',
+          }),
+        // Unattended exec: only main-process-remembered prefixes/lines
+        // auto-authorize (execAuthorize handles it); anything new is denied —
+        // a scheduled run must not pop dialogs.
+        requestExecConfirmation: () =>
+          Promise.resolve({ approved: false, remember: false }),
         moveToPath: (sourcePath: string, targetPath: string) => {
           const srcLoc = locationForPath(sourcePath);
           const tgtLoc = locationForPath(targetPath);

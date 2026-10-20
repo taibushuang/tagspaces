@@ -203,7 +203,7 @@
 
 **单对话入口（2026-10-04 合并）**：AI 弹窗原 `chat`/`agent` 两个 tab 已合并 —— `AiAgentDialog` 默认且仅渲染 `AgentPanel`；系统提示词统一走 `agentPrompt.ts` 的共享 `buildAgentSystemPrompt`（ChatProvider 内的重复版本已删除）；`ChatProvider.agentMode`/`setAgentMode`（localStorage `tsAiAgentMode`）为死代码已删除，`ChatView` 直接调 `newAgentMessage`。
 
-**AI 技能与工具页面（2026-10-02 起"挤占式"）**：`AiCapabilitiesPanel.tsx`（浏览/搜索工具与技能、开关内置工具、自定义 HTTP 工具与 prompt 技能）不再是从 AI 弹窗里弹出的嵌套 Dialog，而是遵循通用"挤占式"原则——`AiCapabilitiesContextProvider`（isAiCapabilitiesOpen + toggleAiCapabilities）由 `RenderPerspective` 在内容区渲染面板替代文件夹内容。入口：AI Agent 弹窗右上角扩展按钮（Extension 图标，点击后关闭 AI 弹窗并打开内容区面板）、面板右上角 ✕ 关闭。旧 `AiCapabilitiesDialog.tsx` 已删除。
+**AI 技能与工具页面（2026-10-02 起"挤占式"）**：`AiCapabilitiesPanel.tsx`（浏览/搜索工具与技能、开关内置工具、自定义 HTTP 工具与 prompt 技能）不再是从 AI 弹窗里弹出的嵌套 Dialog，而是遵循通用"挤占式"原则——`AiCapabilitiesContextProvider`（isAiCapabilitiesOpen + toggleAiCapabilities）由 `RenderPerspective` 在内容区渲染面板替代文件夹内容。入口：AI Agent 弹窗右上角扩展按钮（Extension 图标，点击后关闭 AI 弹窗并打开内容区面板）、面板右上角 ✕ 关闭。旧 `AiCapabilitiesDialog.tsx` 已删除。**外部技能导入（2026-10-19）**：技能 tab 新增"从本机导入"——主进程 `skillScanner.ts` 扫描默认目录（`~/.agents/skills`、`~/.claude/skills`、`~/.qwenpaw/skills` 等）+ 用户/Agent 注册的额外目录（持久化 `userData/skillImport/scan-dirs.json`），把 SKILL.md 转换为自定义技能（剥 frontmatter、工具引用映射 Bash→run_command/Read→read_file_text/Web→web_search 等、12KB 截断），`ImportSkillsDialog` 勾选导入；**整目录导入**：`skillsImportDir` 把 SKILL.md 之外的支撑文件（scripts/模板/参考文档）复制到 `userData/skillImport/imported/<slug>/`，指令尾部附 destDir 注记让相对路径可解析；ref id 用 `importedSkillId`（agentCapabilities 共享 util，**按技能名派生**，源目录搬家重导仍是更新，`sourceDir` 字段记录来源）；Agent 侧配套 `scan_importable_skills`（含 addDir/removeDir）与 `import_skills`（≤20/批，同目录重导=更新）。
 
 **核心文件**：
 - `src/renderer/components/chat/AgentService.ts` — `runAgent()` 工具循环（maxSteps=8、流式 delta、tool_calls 增量拼装、abort、错误转 tool 结果）
@@ -211,7 +211,7 @@
 - `src/renderer/components/chat/OpenAIClient.ts` — `chatOpenAICompletion()` 返回 `{ content, toolCalls }`（流式/非流式均支持 tool_calls）
 - `src/renderer/hooks/LocationIndexContextProvider.tsx` — `agentSearch()`：无 UI 副作用的搜索（不写 redux、不弹通知），直接返回结果
 
-**护栏（勿回退）**：删除仅限 `delete_files`（≤50/批）/`delete_folder`（仅限空文件夹），**只进系统回收站**（`shell.trashItem`，代码中无永久删除通道），按文件夹授权（`utils/agentDelete.ts`：确认弹窗列清单 + 可记住授权 `tsAgentDeleteAuth`；location 根/`.ts`/隐藏系统文件/授权外路径硬拒绝）；定时任务无人值守 run 恒拒绝确认（仅复用已记住授权）；move_file 目标已存在时不覆盖；打标签可逆；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。详见 `DESIGN-ai-agent.md` §7.7。
+**护栏（勿回退）**：删除仅限 `delete_files`（≤50/批）/`delete_folder`（仅限空文件夹），**只进系统回收站**（`shell.trashItem`，代码中无永久删除通道），按文件夹授权（`utils/agentDelete.ts`：确认弹窗列清单 + 可记住授权 `tsAgentDeleteAuth`；location 根/`.ts`/隐藏系统文件/授权外路径硬拒绝）；**`run_command` 受控 shell**（2026-10-19，授权闸门整体在主进程 `src/main/execAuth.ts`，渲染层只负责确认弹窗——`execAuthorize` 两档规则：简单行（无 shell 元字符）按记住的前缀静默放行、复合行（含 `& | ; < > \` $( 等）**按整行记忆、内容一变重弹**（防 `arkcli && 恶意命令` 绕过）、提权前缀（sudo/su/doas）永远弹窗且不可记忆；执行需一次性令牌（`execRun` 无令牌拒绝）；env 禁覆盖 PATH/HOME/USERPROFILE（防 shim 顶替）；超时树杀 ≤600s、输出 200KB/流截断、审计日志 `userData/exec/history.jsonl`（含 origin 来源）；授权持久化 `userData/exec/grants.json`（删除即全部撤销）；无交互 stdin，个人机器工具，术语为"按前缀/整行 opt-in 动态放行"而非固定白名单）；定时任务无人值守 run 恒拒绝删除/新增 exec 确认（仅复用已记住授权）；move_file 目标已存在时不覆盖；打标签可逆；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。详见 `DESIGN-ai-agent.md` §7.7。
 
 **模型供给决策（2026-09-28）**：内网网关（OpenAI 兼容）为**唯一通道**，本地 Ollama 冻结——`OllamaClient.ts` 保留不删但不再投入，离线 AI 场景放弃。分层汇总等高调用量功能全部走网关计费，增量缓存为硬性要求。
 

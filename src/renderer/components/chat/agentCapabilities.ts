@@ -53,6 +53,8 @@ export type CustomSkillDef = {
   name: string;
   instruction: string;
   enabled: boolean;
+  /** Set for skills imported from external agent clients (source SKILL.md folder). */
+  sourceDir?: string;
 };
 
 const CUSTOM_TOOLS_KEY = 'tsAiCustomTools';
@@ -119,6 +121,35 @@ export function saveCustomSkill(def: CustomSkillDef): void {
   const skills = getCustomSkills().filter((s) => s.id !== def.id);
   skills.push(def);
   writeJson(CUSTOM_SKILLS_KEY, skills);
+}
+
+/** Deterministic short hash of the source directory (same algorithm as the
+ * main-process skillScanner — keep in sync) so same-name skills from
+ * different sources don't collide. */
+export function sourceDirHash(sourceDir?: string): string {
+  const norm = String(sourceDir || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .toLowerCase();
+  if (!norm) return '';
+  let h = 5381;
+  for (let i = 0; i < norm.length; i += 1) {
+    h = ((h * 33) ^ norm.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(36).slice(0, 7);
+}
+
+/** Stable custom-skill id for an imported skill: skill name + short hash of
+ * the source directory. Same source re-import → same id (update in place);
+ * a different source's same-name skill → its own entry (no silent overwrite). */
+export function importedSkillId(name: string, sourceDir?: string): string {
+  const slug = String(name || '')
+    .toLowerCase()
+    .replace(/[^\w-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  const h = sourceDirHash(sourceDir);
+  return `imported-${slug}${h ? `-${h}` : ''}`;
 }
 
 export function deleteCustomSkill(id: string): void {

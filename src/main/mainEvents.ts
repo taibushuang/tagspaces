@@ -47,6 +47,9 @@ import { readMacOSTags } from './macUserTags';
 import registerSecureStorageEvents from './secureStorage';
 import initTodoStore from './todoStoreIpc';
 import initIssueStore from './issueStoreIpc';
+import initSkillImport from './skillImportIpc';
+import { appendExecAudit, runCommand } from './execRunner';
+import { ExecAuthorizer } from './execAuth';
 import initAgentScheduler from './agentSchedulerIpc';
 import { searchWeb, fetchWeb } from './openWebSearch';
 import {
@@ -100,7 +103,50 @@ export default function loadMainEvents() {
   registerSecureStorageEvents();
   initTodoStore();
   initIssueStore();
+  initSkillImport();
   initAgentScheduler();
+
+  // Agent run_command: shell execution gated ENTIRELY in the main process —
+  // execAuthorize applies the two-tier rule (simple lines by remembered
+  // prefix, compound lines by exact line, elevation always prompts) and
+  // issues a single-use token; execRun refuses calls without one. The
+  // renderer only orchestrates the confirmation dialog.
+  // Audit trail in userData/exec/history.jsonl (command, cwd, exit, timing).
+  const execDir = path.join(app.getPath('userData'), 'exec');
+  const execAuthorizer = new ExecAuthorizer(execDir);
+  ipcMain.handle('execAuthorize', async (_event, command) =>
+    execAuthorizer.authorize(String(command || '')),
+  );
+  ipcMain.handle('execGrant', async (_event, rememberKey, remember) =>
+    execAuthorizer.grant(String(rememberKey || ''), Boolean(remember)),
+  );
+  ipcMain.handle('execRun', async (_event, params) => {
+    if (!execAuthorizer.consumeToken(String(params?.token || ''))) {
+      return {
+        exitCode: -1,
+        stdout: '',
+        stderr: 'unauthorized: missing or expired exec token',
+        truncated: false,
+        timedOut: false,
+        durationMs: 0,
+        cwd: String(params?.cwd || ''),
+        error: 'unauthorized: missing or expired exec token',
+      };
+    }
+    const result = await runCommand(params || {});
+    appendExecAudit(execDir, {
+      command: params?.command,
+      origin: params?.origin || 'chat',
+      cwd: result.cwd,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      truncated: result.truncated,
+      durationMs: result.durationMs,
+      stdoutHead: String(result.stdout || '').slice(0, 500),
+      stderrHead: String(result.stderr || '').slice(0, 500),
+    });
+    return result;
+  });
 
   ipcMain.on('reloadWindow', () => {
     const mainWindow = BrowserWindow.getAllWindows();

@@ -1451,5 +1451,17 @@
   "issueBatchMarkOpen": "Reopen",
   "issueBatchClear": "Clear selection",
   "issueBatchResult": "{{updated}} entries updated",
-  "issueBatchMissing": "{{missing}} not found (already deleted?)"
+  "issueBatchMissing": "{{missing}} not found (already deleted?)",
+  "skillImportButton": "Import from this machine",
+  "skillImportTitle": "Import skills from other agent clients",
+  "skillImportHint": "Scans SKILL.md skill folders installed by Qwenpaw / Claude Code / arkcli-connect in the default directories plus your registered extra directories. Imported skills appear as custom skills (mapped to TagSpaces tools).",
+  "skillImportAddDirPlaceholder": "Additional skills directory (absolute path)",
+  "skillImportAddDir": "Add & scan",
+  "skillImportExtraDirs": "Registered extra directories:",
+  "skillImportDefaultDirs": "Default scan directories: ",
+  "skillImportScanning": "Scanning…",
+  "skillImportEmpty": "No skills found — add the directory where your skills are installed.",
+  "skillImportConfirm": "Import {{count}} skill(s)",
+  "skillImportToolsTitle": "Tool / MCP-server configs (reference only)",
+  "skillImportToolsHint": "Found in client config files. MCP mounting is not supported yet — the CLI tools these wrap can already be used via run_command."
 }
