@@ -2429,6 +2429,67 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
       },
     },
     {
+      name: 'wiztree_scan',
+      description:
+        'Analyze disk or folder space usage on Windows with WizTree, which ' +
+        'reads the NTFS MFT directly (a whole drive takes seconds). Returns ' +
+        'the largest folders (and optionally files) by size plus totals. ' +
+        'Use it when the user asks what is filling up the disk or where the ' +
+        'largest files/folders are. Windows only — other platforms return ' +
+        'an error. When WizTree is not installed the result carries ' +
+        'installHint — relay it to the user (winget or the download page) ' +
+        'instead of retrying.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description:
+              'drive or folder to analyze, e.g. "C:" or "C:\\Users\\me\\Downloads"',
+          },
+          topN: {
+            type: 'number',
+            description:
+              'how many entries to return per list, 1-200 (default 20)',
+          },
+          includeFiles: {
+            type: 'boolean',
+            description:
+              'also return the largest files (bigger export, slower)',
+          },
+          filter: {
+            type: 'string',
+            description:
+              'only count files matching this WizTree filter, e.g. "*.mp4|*.mkv"',
+          },
+          admin: {
+            type: 'boolean',
+            description:
+              'use the elevated MFT scan (default true, shows a UAC prompt). ' +
+              'Set false to retry with a slower non-elevated scan after the ' +
+              'UAC prompt was declined',
+          },
+        },
+        required: ['path'],
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return {
+            error:
+              'wiztree_scan is only available in the desktop app (WizTree runs in the main process)',
+          };
+        }
+        try {
+          return await (window as any).electronIO.ipcRenderer.invoke(
+            'wiztreeScan',
+            args || {},
+          );
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
       name: 'scan_importable_skills',
       description:
         'Scan this machine for skills installed by other agent clients ' +

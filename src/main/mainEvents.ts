@@ -986,6 +986,27 @@ export default function loadMainEvents() {
     }));
   }
 
+  // WizTree disk-usage analysis — Windows-only, external command-line tool
+  // (export CSV + parse; WizTree has no library interface).
+  if (process.platform === 'win32') {
+    ipcMain.handle('wiztreeScan', async (_event, args) => {
+      try {
+        const { wiztreeScan } = require('./wiztree');
+        return await wiztreeScan(args || {});
+      } catch (err: any) {
+        return {
+          available: false,
+          error: `WizTree scan error: ${err.message}`,
+        };
+      }
+    });
+  } else {
+    ipcMain.handle('wiztreeScan', async () => ({
+      available: false,
+      error: 'WizTree is only available on Windows.',
+    }));
+  }
+
   // Opens the OS privacy settings page where the user grants this app access
   // to protected folders (macOS TCC: Desktop/Downloads/Documents).
   ipcMain.handle('openPrivacySettings', async () => {

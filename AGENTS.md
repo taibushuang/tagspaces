@@ -256,6 +256,16 @@ run 后启动的窗口由 MenuItem disabled 兜住），`handleNewSession`/
 - 移动实现：`AgentToolDeps.moveToPath(sourcePath, targetPath)`（ChatProvider 用 `moveFilesPromise` 精确目标移动：自动创建目标父目录、目标已存在即拒绝），比 `moveFile`（只能按原文件名移入文件夹）多出"改名保留两份"能力，供 undo 使用。
 - 流程护栏（system prompt 引导）：先 `organize_preview` 展示分类去向并**征得用户同意**再 `organize_apply`；可只整理部分；误整理用 `organize_undo`。与 disk-organize 的下一轮"收件箱自动归类"衔接（`list_folder` Downloads → 依规则 `organize_apply`）。单测 `tests/unit/fileOrganizer.test.js`。
 
+**WizTree 磁盘空间分析（Windows only，2026-10-21 落地，同日晚评审加固）**：`wiztree_scan` 工具调用外部 WizTree（直读 NTFS MFT，整盘秒级）分析磁盘/文件夹占用。
+- 参数：`path`（必填，`C:` 等盘符或目录；非盘符路径必须 `stat().isDirectory()`，文件路径明确报错）、`topN`（1-200，默认 20）、`includeFiles`（是否返回最大文件）、`filter`（WizTree 文件过滤，如 `*.mp4|*.mkv`）、`admin`（默认 true 走 MFT 快扫并弹 UAC；UAC 被拒后模型可设 false 用较慢的非提权重试）。结果：`totalFiles`/`totalFolders`/`totalSize`/`totalAllocated`/`driveSize`（尽力而为）+ `topFolders`/`topFiles`（含 `size` 逻辑大小与 `allocated` 实际占用）。
+- `src/main/wiztree.ts` — exe 探测（`WIZTREE_PATH` → 默认安装目录 → InnoSetup `Uninstall\WizTree_is1` 的 `InstallLocation` → `App Paths\WizTree64.exe`；同一目录同时存在 32/64 位时永远优先 `WizTree64.exe`。注册表读取走 PowerShell + UTF-8，避免中文安装路径被 OEM/GBK 代码页读乱，模式同 `everythingSdk.ts`）+ 命令行导出 CSV（`/export=`、`/admin=0|1`、`/sortby=1`、`/exportfolders=1`、`/exportfiles=0|1`、可选 `/filter=`）+ 自写引号 CSV 流式解析（readline，无需新依赖）。
+- **完成判定（评审加固）**：WizTree 没有导出后自动退出参数。CSV 非空且大小连续 3 秒不变后，还需头部 4KB 已出现表头 + 扫描根行才完成（防大块写入批间停顿造成截断；根行最多再等 30s，超时按现状接受）；进程已 close 则跳过该交叉校验。**提权重启宽限**：`/admin=1` 时原进程可能先退出、由 UAC 提权的新实例写 CSV——close 且 CSV 为空时进入 60s 宽限继续轮询，宽限内出现 CSV 按正常稳定路径继续，耗尽仍无 CSV 才报错（提示 UAC 被拒/取消，可改 `admin=false`）。完成后 `taskkill /T /F` 杀进程树（成功/超时/异常终态都杀），180s 总超时。CSV 解析有 60s 超时（错误含已解析行数）。
+- **硬链接**：官方 CSV 中 Allocated 带前导 0 表示硬链接（不额外占空间）——行级输出 `isHardLink: true`，`allocated` 字段保留原数值供展示，但 `totalAllocated` 按 0 计入；文件夹行同规则。
+- **并发**：模块级 Promise 串行队列（`createSerialTaskQueue`），连续调用排队执行，避免双 UAC/双实例。临时目录 finally 清理。
+- `src/main/mainEvents.ts` — `ipcMain.handle('wiztreeScan')`（win32 懒加载 `wiztree.ts`；非 Windows 返回 `{ available: false, error: 'WizTree is only available on Windows.' }`）；`preload.ts` 的 `Channels` 加 `'wiztreeScan'`。未安装时返回 `{ available: false, error, installHint }`（`winget install --id AntibodySoftware.WizTree -e` 或 https://www.diskanalyzer.com/download ，免费版仅个人使用）。
+- `AgentTools.ts` — `wiztree_scan`（web_search 同款直接 IPC，不走 deps；`isElectron()` 守卫）；`agentPrompt.ts` — `WIZTREE_SCAN` 指引块（何时选用、size vs allocated 与硬链接解读、UAC 被拒后仅重试一次 `admin=false`、未安装转述安装提示、扫描后删除仍需用户确认）。
+- 单测 `tests/unit/wiztree.test.js`（主进程纯逻辑：参数构造、CSV 解析/硬链接/topN 堆、头部探测、完成判定 5 种路径含宽限与交叉校验、串行队列、path 校验、exe 候选顺序）+ `tests/unit/wiztreeTool.test.js`（渲染层包装：非 Electron / 参数透传 / ipc 异常转 `{ error }`）。仅 Windows 实机可用，macOS 开发机不执行真实扫描。
+
 **已知限制**：自签名证书的内网网关会被渲染层 Chromium 网络栈拒绝（需装企业 CA 或后续加主进程代理）；`/v1/models` 列表不可用的端点（如方舟套餐）需在设置里手动添加模型。CORS 已解决：主进程窗口 `webSecurity: false`（main.ts），因为方舟等网关的 CORS 预检不放行 `Authorization` 且 Electron webRequest 拦不到预检，聊天/Agent/验证直连才能通（2026-09-27，已在真实应用内实测 200）。
 
 **内置技能 `disk-organize`（2026-10-03 落地）**：面向新用户的全局初始化——先一次性访谈（≤3 轮问完职业画像/频繁任务/领域隔离/现有目录习惯/同步需求）→ `init_scan` 定向扫描磁盘 → `write_deliverable` 出《归类方案》+ `write_knowledge_entry` 存收件箱归类映射规则 → 用户批准后 `create_location` 实施。收件箱默认建议复用系统 Downloads，**必须在方案阶段交给用户确认**。幂等：localStorage `tsDiskInitState`（`finish_disk_init` 工具写标记），未执行过时 AgentPanel 持续展示引导卡片与 CTA。隐私：只读、不上传、跳过敏感目录（.ssh/钥匙串/浏览器数据/聊天记录等）。

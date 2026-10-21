@@ -196,6 +196,40 @@ Unattended-task guidance:
 - The application must be running for a task to fire; missed runs are offered
   for manual catch-up on the next start.`;
 
+/**
+ * Built-in guidance for the Windows-only WizTree disk-usage tool.
+ */
+const WIZTREE_SCAN = `### WizTree disk-usage analysis (wiztree_scan, Windows only)
+
+Use wiztree_scan when the user asks what is filling up a disk or where the
+largest folders/files are. It reads the NTFS MFT directly, so scanning a whole
+drive takes seconds.
+
+- Pick the target: a drive ("C:") for a full-disk overview, or a folder path
+  when the user already narrowed it down. Start with the drive/folder the user
+  named; do not scan every drive unprompted.
+- The result lists the largest folders (topFolders) and, with
+  includeFiles=true, the largest files (topFiles), plus totals (totalSize is
+  logical size, totalAllocated is disk space actually used). If the list is
+  dominated by a folder, drill down by scanning that folder before proposing a
+  cleanup.
+- Read size vs allocated: size is the logical file size, allocated is the real
+  space on disk (small files can waste space in clusters; compressed or
+  sparse files can be smaller on disk; entries flagged isHardLink share their
+  clusters with another path and use no extra space). Quote both when they
+  differ notably.
+- The scan runs with admin=true by default and shows a UAC prompt. If the user
+  declines it (the tool reports a UAC/grace error), retry ONCE with
+  admin=false for a slower non-elevated scan; do not keep re-prompting.
+- On macOS/Linux the tool returns an error — say the analysis is Windows-only
+  and offer the regular folder tools instead.
+- If WizTree is not installed the result carries installHint: relay it to the
+  user ("winget install --id AntibodySoftware.WizTree -e" or
+  https://www.diskanalyzer.com/download — free for personal use, commercial
+  use needs a license). Do not retry until the user installed it.
+- Never delete anything based on a scan alone: list the candidates with
+  sizes and reasons, and get the user's approval first.`;
+
 export type AgentPromptContext = {
   locationName: string;
   currentDirectoryPath: string;
@@ -366,6 +400,7 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
     DISK_ORGANIZE_SKILL,
     DISTILL_USER_WORK,
     SCHEDULE_TASK,
+    WIZTREE_SCAN,
     selected ? `\nCurrently selected entries:\n${selected}` : '',
   ]
     .filter(Boolean)

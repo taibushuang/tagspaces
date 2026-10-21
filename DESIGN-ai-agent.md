@@ -208,6 +208,23 @@ AgentTools（注册表）                        ← 新增
   `AGENTS.md` 注入 system prompt（`9bf2bb979`）。
 - 分层汇总前置：`list_folder` recursive + 结果携带描述、`get_description`
   （`e61dcd463`、`1454bf51e`）。
+- 磁盘占用分析：`wiztree_scan`（2026-10-21，Windows only）调用外部
+  WizTree 命令行导出 CSV 并解析最大文件夹/文件。参数 `path` / `topN` /
+  `includeFiles` / `filter` / `admin`；未安装时返回 `installHint`（winget
+  或官网下载页），Agent 转述给用户；非 Windows 直接返回不可用错误。
+  主进程 `src/main/wiztree.ts`（PowerShell UTF-8 读注册表做 exe 探测、
+  `/export=` 导出、引号 CSV 流解析、进程树清理），IPC `wiztreeScan`
+  （mainEvents / preload），提示词 `agentPrompt.ts` 的 `WIZTREE_SCAN` 块。
+  - **完成判定**：CSV 大小稳定 3s 后交叉校验头部表头 + 扫描根行（最多再等
+    30s；进程已 close 则跳过），防写入批间停顿截断；`/admin=1` 提权重启
+    场景下原进程 close 且 CSV 为空时进入 **60s 宽限**等提权实例写文件，
+    耗尽才报 UAC 相关错误。
+  - **CSV 语义**：Allocated 前导 0 = 硬链接（行级 `isHardLink: true`，
+    `totalAllocated` 按 0 计）；解析用有界 min-heap 取 topN，60s 解析超时。
+  - **护栏**：非盘符路径必须 `isDirectory()`；模块级串行队列避免双 UAC；
+    32/64 位同目录时固定选 `WizTree64.exe`。单测
+    `tests/unit/wiztree.test.js`（主进程逻辑）+ `wiztreeTool.test.js`
+    （渲染层包装）。
 
 ### 7.6 Ollama 冻结决策（2026-09-28）
 

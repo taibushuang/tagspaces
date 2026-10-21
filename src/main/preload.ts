@@ -13,6 +13,7 @@ export type Channels =
   | 'getEverythingDebugInfo'
   | 'everythingEnsureRunning'
   | 'installEverything'
+  | 'wiztreeScan'
   | 'initScan'
   | 'isWorkerAvailable'
   | 'webSearch'
