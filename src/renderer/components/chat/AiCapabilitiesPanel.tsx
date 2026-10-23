@@ -23,6 +23,7 @@
  * while open (rendered by RenderPerspective), same pattern as TodoListPanel.
  */
 import { createAgentTools } from '-/components/chat/AgentTools';
+import { typedInvoke } from '-/services/ipcTyped';
 import {
   CustomSkillDef,
   CustomToolDef,
@@ -410,6 +411,97 @@ function AiCapabilitiesPanel(props: Props) {
             >
               {t('core:aiCapAddTool')}
             </Button>
+            {toolEditor && (
+              <Box
+                data-tid="aiCapabilitiesToolEditorTID"
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 1,
+                  marginTop: 1,
+                  padding: 1,
+                  border: '1px solid',
+                  borderColor: 'divider',
+                }}
+              >
+                <TextField
+                  size="small"
+                  label={t('core:aiCapToolDisplayName')}
+                  value={toolEditor.displayName || ''}
+                  onChange={(e) =>
+                    setToolEditor({
+                      ...toolEditor,
+                      displayName: e.target.value,
+                      name: toolEditor.id
+                        ? toolEditor.name
+                        : sanitizeToolFunctionName(e.target.value),
+                    })
+                  }
+                />
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  {t('core:aiCapFunctionName')}: {toolEditor.name || '—'}
+                </Typography>
+                <TextField
+                  size="small"
+                  label={t('core:aiCapToolDesc')}
+                  value={toolEditor.description || ''}
+                  onChange={(e) =>
+                    setToolEditor({
+                      ...toolEditor,
+                      description: e.target.value,
+                    })
+                  }
+                />
+                <TextField
+                  size="small"
+                  label={t('core:aiCapToolUrl')}
+                  value={toolEditor.endpoint?.url || ''}
+                  onChange={(e) =>
+                    setToolEditor({
+                      ...toolEditor,
+                      endpoint: {
+                        ...(toolEditor.endpoint || {}),
+                        url: e.target.value,
+                      },
+                    })
+                  }
+                />
+                <TextField
+                  size="small"
+                  multiline
+                  minRows={3}
+                  label={t('core:aiCapToolParams')}
+                  value={paramsText}
+                  onChange={(e) => setParamsText(e.target.value)}
+                />
+                <TextField
+                  size="small"
+                  multiline
+                  minRows={1}
+                  label={t('core:aiCapToolHeaders')}
+                  value={headersText}
+                  onChange={(e) => setHeadersText(e.target.value)}
+                />
+                <Box
+                  sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}
+                >
+                  <Button size="small" onClick={testTool}>
+                    {t('core:aiCapTest')}
+                  </Button>
+                  <Button size="small" onClick={() => setToolEditor(null)}>
+                    {t('core:aiCapCancel')}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={saveTool}
+                    data-tid="aiCapabilitiesSaveToolTID"
+                  >
+                    {t('core:aiCapSave')}
+                  </Button>
+                </Box>
+              </Box>
+            )}
             <Typography variant="subtitle2" sx={{ marginTop: 1 }}>
               {t('core:aiCapCustomTools')}
             </Typography>
@@ -494,6 +586,57 @@ function AiCapabilitiesPanel(props: Props) {
               onClose={() => setSkillImportOpen(false)}
               onImported={bump}
             />
+            {skillEditor && (
+              <Box
+                data-tid="aiCapabilitiesSkillEditorTID"
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 1,
+                  marginTop: 1,
+                  padding: 1,
+                  border: '1px solid',
+                  borderColor: 'divider',
+                }}
+              >
+                <TextField
+                  size="small"
+                  label={t('core:aiCapSkillName')}
+                  value={skillEditor.name || ''}
+                  onChange={(e) =>
+                    setSkillEditor({ ...skillEditor, name: e.target.value })
+                  }
+                />
+                <TextField
+                  size="small"
+                  multiline
+                  minRows={4}
+                  label={t('core:aiCapSkillInstruction')}
+                  value={skillEditor.instruction || ''}
+                  onChange={(e) =>
+                    setSkillEditor({
+                      ...skillEditor,
+                      instruction: e.target.value,
+                    })
+                  }
+                />
+                <Box
+                  sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}
+                >
+                  <Button size="small" onClick={() => setSkillEditor(null)}>
+                    {t('core:aiCapCancel')}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={saveSkill}
+                    data-tid="aiCapabilitiesSaveSkillTID"
+                  >
+                    {t('core:aiCapSave')}
+                  </Button>
+                </Box>
+              </Box>
+            )}
             <Typography variant="subtitle2" sx={{ marginTop: 1 }}>
               {t('core:aiCapCustomSkills')}
             </Typography>
@@ -523,12 +666,10 @@ function AiCapabilitiesPanel(props: Props) {
                     typeof window !== 'undefined' &&
                     window.electronIO
                   ) {
-                    window.electronIO.ipcRenderer
-                      .invoke('skillsDeleteCopy', {
-                        name: def.name,
-                        sourceDir: def.sourceDir,
-                      })
-                      .catch(() => {});
+                    typedInvoke('skillsDeleteCopy', {
+                      name: def.name,
+                      sourceDir: def.sourceDir,
+                    }).catch(() => {});
                   }
                   bump();
                 },
@@ -573,140 +714,6 @@ function AiCapabilitiesPanel(props: Props) {
                 </Typography>
               </Box>
             ))}
-          </Box>
-        )}
-
-        {tab === 'tools' && toolEditor && (
-          <Box
-            data-tid="aiCapabilitiesToolEditorTID"
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 1,
-              marginTop: 1,
-              padding: 1,
-              border: '1px solid',
-              borderColor: 'divider',
-            }}
-          >
-            <TextField
-              size="small"
-              label={t('core:aiCapToolDisplayName')}
-              value={toolEditor.displayName || ''}
-              onChange={(e) =>
-                setToolEditor({
-                  ...toolEditor,
-                  displayName: e.target.value,
-                  name: toolEditor.id
-                    ? toolEditor.name
-                    : sanitizeToolFunctionName(e.target.value),
-                })
-              }
-            />
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-              {t('core:aiCapFunctionName')}: {toolEditor.name || '—'}
-            </Typography>
-            <TextField
-              size="small"
-              label={t('core:aiCapToolDesc')}
-              value={toolEditor.description || ''}
-              onChange={(e) =>
-                setToolEditor({ ...toolEditor, description: e.target.value })
-              }
-            />
-            <TextField
-              size="small"
-              label={t('core:aiCapToolUrl')}
-              value={toolEditor.endpoint?.url || ''}
-              onChange={(e) =>
-                setToolEditor({
-                  ...toolEditor,
-                  endpoint: {
-                    ...(toolEditor.endpoint || {}),
-                    url: e.target.value,
-                  },
-                })
-              }
-            />
-            <TextField
-              size="small"
-              multiline
-              minRows={3}
-              label={t('core:aiCapToolParams')}
-              value={paramsText}
-              onChange={(e) => setParamsText(e.target.value)}
-            />
-            <TextField
-              size="small"
-              multiline
-              minRows={1}
-              label={t('core:aiCapToolHeaders')}
-              value={headersText}
-              onChange={(e) => setHeadersText(e.target.value)}
-            />
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-              <Button size="small" onClick={testTool}>
-                {t('core:aiCapTest')}
-              </Button>
-              <Button size="small" onClick={() => setToolEditor(null)}>
-                {t('core:aiCapCancel')}
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                onClick={saveTool}
-                data-tid="aiCapabilitiesSaveToolTID"
-              >
-                {t('core:aiCapSave')}
-              </Button>
-            </Box>
-          </Box>
-        )}
-
-        {tab === 'skills' && skillEditor && (
-          <Box
-            data-tid="aiCapabilitiesSkillEditorTID"
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 1,
-              marginTop: 1,
-              padding: 1,
-              border: '1px solid',
-              borderColor: 'divider',
-            }}
-          >
-            <TextField
-              size="small"
-              label={t('core:aiCapSkillName')}
-              value={skillEditor.name || ''}
-              onChange={(e) =>
-                setSkillEditor({ ...skillEditor, name: e.target.value })
-              }
-            />
-            <TextField
-              size="small"
-              multiline
-              minRows={4}
-              label={t('core:aiCapSkillInstruction')}
-              value={skillEditor.instruction || ''}
-              onChange={(e) =>
-                setSkillEditor({ ...skillEditor, instruction: e.target.value })
-              }
-            />
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-              <Button size="small" onClick={() => setSkillEditor(null)}>
-                {t('core:aiCapCancel')}
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                onClick={saveSkill}
-                data-tid="aiCapabilitiesSaveSkillTID"
-              >
-                {t('core:aiCapSave')}
-              </Button>
-            </Box>
           </Box>
         )}
       </Box>

@@ -27,15 +27,13 @@ import {
   importedSkillId,
   saveCustomSkill,
 } from '-/components/chat/agentCapabilities';
-
-type ScannedSkill = {
-  dir: string;
-  name: string;
-  description: string;
-  instruction: string;
-  truncated: boolean;
-  sizeBytes: number;
-};
+import { typedInvoke } from '-/services/ipcTyped';
+import type {
+  PreparedSkillImport,
+  ScannedSkill,
+  ScannedToolServer,
+  SkillScanRequest,
+} from '../../../main/ipcContracts';
 
 interface Props {
   open: boolean;
@@ -52,23 +50,13 @@ function ImportSkillsDialog({ open, onClose, onImported }: Props) {
   const [newDir, setNewDir] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toolServers, setToolServers] = useState<
-    Array<{
-      name: string;
-      transport: string;
-      sourceFile: string;
-      detail: string;
-    }>
-  >([]);
+  const [toolServers, setToolServers] = useState<ScannedToolServer[]>([]);
 
-  async function scan(options: { addDir?: string; removeDir?: string } = {}) {
+  async function scan(options: SkillScanRequest = {}) {
     setLoading(true);
     setError(null);
     try {
-      const result = await window.electronIO.ipcRenderer.invoke(
-        'skillsScan',
-        options,
-      );
+      const result = await typedInvoke('skillsScan', options);
       setSkills(result.skills || []);
       setExtraDirs(result.extraDirs || []);
       setDefaultDirs(result.defaultDirs || []);
@@ -108,7 +96,7 @@ function ImportSkillsDialog({ open, onClose, onImported }: Props) {
       try {
         // Main process copies the WHOLE skill folder and returns the
         // transformed draft (with the supporting-files note attached).
-        const skill = await window.electronIO.ipcRenderer.invoke(
+        const skill: PreparedSkillImport = await typedInvoke(
           'skillsImportDir',
           dir,
         );
@@ -160,7 +148,7 @@ function ImportSkillsDialog({ open, onClose, onImported }: Props) {
             size="small"
             disabled={!newDir.trim()}
             onClick={() => {
-              scan({ addDir: newDir.trim() });
+              scan({ addDirs: [newDir.trim()] });
               setNewDir('');
             }}
             data-tid="skillImportAddDirButton"

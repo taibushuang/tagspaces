@@ -15,6 +15,19 @@
 import fs from 'fs-extra';
 import os from 'os';
 import path from 'path';
+import type {
+  PreparedSkillImport,
+  ScannedSkill,
+  ScannedToolServer,
+} from './ipcContracts';
+
+// Canonical type definitions live in ipcContracts.ts (shared with the
+// renderer side of the IPC boundary); re-exported here for compatibility.
+export type {
+  PreparedSkillImport,
+  ScannedSkill,
+  ScannedToolServer,
+} from './ipcContracts';
 
 export const SKILL_FILE = 'SKILL.md';
 /** Instruction cap — prompt skills are injected into the system prompt. */
@@ -32,16 +45,6 @@ export function defaultScanDirs(home = os.homedir()): string[] {
     path.join(home, '.codex', 'skills'),
   ];
 }
-
-export type ScannedSkill = {
-  /** Absolute folder path — the stable handle for import. */
-  dir: string;
-  name: string;
-  description: string;
-  instruction: string;
-  truncated: boolean;
-  sizeBytes: number;
-};
 
 /** Strip YAML frontmatter, harvesting name/description. */
 function stripFrontmatter(raw: string): {
@@ -184,13 +187,7 @@ function sourceDirHash(sourceDir: string): string {
 export function prepareSkillImport(
   srcDir: string,
   importedRoot: string,
-): {
-  name: string;
-  description: string;
-  instruction: string;
-  truncated: boolean;
-  destDir: string;
-} {
+): PreparedSkillImport {
   const src = String(srcDir || '').trim();
   const skillFile = path.join(src, SKILL_FILE);
   if (!fs.existsSync(skillFile)) {
@@ -279,7 +276,7 @@ export function saveExtraDirs(dir: string, extraDirs: string[]): void {
 
 export function scanAll(
   storageDir: string,
-  options: { addDirs?: string[]; removeDir?: string } = {},
+  options: { addDirs?: string[]; addDir?: string; removeDir?: string } = {},
 ): {
   defaultDirs: string[];
   extraDirs: string[];
@@ -287,10 +284,17 @@ export function scanAll(
   toolServers: ScannedToolServer[];
 } {
   let extraDirs = loadExtraDirs(storageDir);
-  if (Array.isArray(options.addDirs)) {
-    for (const d of options.addDirs
-      .map((x) => String(x || '').trim())
-      .filter(Boolean)) {
+  // Accept both the canonical array form (addDirs) and the singular string
+  // form (addDir) — the IPC boundary is where such mismatches have slipped
+  // through before.
+  const adds = [
+    ...(Array.isArray(options.addDirs) ? options.addDirs : []),
+    ...(typeof options.addDir === 'string' && options.addDir.trim()
+      ? [options.addDir]
+      : []),
+  ];
+  if (adds.length > 0) {
+    for (const d of adds.map((x) => String(x || '').trim()).filter(Boolean)) {
       if (!extraDirs.includes(d)) extraDirs.push(d);
     }
     saveExtraDirs(storageDir, extraDirs);
@@ -320,16 +324,6 @@ export function scanAll(
 
 // --- tool / MCP-server config discovery (list-only: mounting needs an MCP
 // client, which TagSpaces does not have yet) ---
-
-export type ScannedToolServer = {
-  name: string;
-  /** stdio = local command, http/sse = remote endpoint, unknown */
-  transport: 'stdio' | 'http' | 'sse' | 'unknown';
-  /** Config file the entry was found in. */
-  sourceFile: string;
-  /** command + args (stdio) or url (http/sse) for reference. */
-  detail: string;
-};
 
 const TOOL_CONFIG_KEYS = ['mcpServers', 'mcp_servers', 'servers', 'tools'];
 

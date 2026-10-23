@@ -125,6 +125,20 @@ describe('scanSkillsDir / scanAll', () => {
     expect(after.skills.some((s) => s.name === 'custom')).toBe(false);
     void home;
   });
+
+  test('scanAll：兼容单数 addDir（IPC 边界回归，导入对话框曾误传该形态）', () => {
+    const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-scanstore2-'));
+    const extra = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-scanextra2-'));
+    writeSkill(extra, 'dialog-skill', '---\nname: dialog\n---\nbody');
+
+    const res = scanAll(storage, { addDir: extra });
+    expect(res.skills.some((s) => s.name === 'dialog')).toBe(true);
+    expect(res.extraDirs).toContain(extra);
+    // 已持久化，重扫（不带 addDir）仍能找到该目录的技能
+    expect(loadExtraDirs(storage)).toContain(extra);
+    const again = scanAll(storage, {});
+    expect(again.skills.some((s) => s.name === 'dialog')).toBe(true);
+  });
 });
 
 describe('工具 / MCP 配置发现', () => {

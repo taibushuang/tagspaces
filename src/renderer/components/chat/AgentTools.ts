@@ -41,6 +41,7 @@ import {
   isSummaryStale,
 } from '-/components/chat/agentDescription';
 import { parseSearchOperators } from '-/components/chat/searchQueryParser';
+import { typedInvoke } from '-/services/ipcTyped';
 import { extractPDFcontent } from '-/services/thumbsgenerator';
 import {
   extractOfficeText,
@@ -2524,27 +2525,24 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           };
         }
         try {
-          const result = await (window as any).electronIO.ipcRenderer.invoke(
-            'skillsScan',
-            {
-              addDirs: args?.addDir ? [String(args.addDir)] : undefined,
-              removeDir: args?.removeDir ? String(args.removeDir) : undefined,
-            },
-          );
+          const result = await typedInvoke('skillsScan', {
+            addDirs: args?.addDir ? [String(args.addDir)] : undefined,
+            removeDir: args?.removeDir ? String(args.removeDir) : undefined,
+          });
           return {
             scannedDirs: {
               defaults: result.defaultDirs,
               extra: result.extraDirs,
             },
             count: result.skills.length,
-            skills: result.skills.map((s: any) => ({
+            skills: result.skills.map((s) => ({
               dir: s.dir,
               name: s.name,
               description: s.description,
               truncated: s.truncated,
               sizeBytes: s.sizeBytes,
             })),
-            toolServers: (result.toolServers || []).map((t: any) => ({
+            toolServers: result.toolServers.map((t) => ({
               name: t.name,
               transport: t.transport,
               sourceFile: t.sourceFile,
@@ -2603,10 +2601,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
               // Main process copies the WHOLE skill folder (scripts/templates
               // ride along) and returns the transformed draft with a note
               // pointing at the copied location.
-              const skill = await (window as any).electronIO.ipcRenderer.invoke(
-                'skillsImportDir',
-                dir,
-              );
+              const skill = await typedInvoke('skillsImportDir', dir);
               const id = importedSkillId(skill.name, dir);
               const updated = getCustomSkills().some((s) => s.id === id);
               saveCustomSkill({

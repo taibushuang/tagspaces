@@ -25,6 +25,10 @@
 - **思考过程和讨论交流一律使用中文**（包括内部分析、计划、解释和总结）。代码、注释、commit message、i18n 英文文案仍用英文。
 - **commit 即 push（2026-10-16 定）**：用户说「commit / 提交」时，完成 commit 后**默认顺便 push 到远程**（除非用户明确说先不推）；push 失败时报告原因，不要静默放弃。
 
+- **IPC 边界必须有类型契约（2026-10-23 定，同日落地）**：`preload.ts` 的 `invoke(command: Channels, ...args: unknown[])` 对参数**零校验**，渲染层与主进程各写一份"各自自洽"的类型（如曾发生的渲染层发 `addDir`、主进程只认 `addDirs`）会骗过 tsc、单测和运行时（多余键被静默忽略）。因此：新增/修改 IPC 通道时，参数与返回值类型必须定义在 **`src/main/ipcContracts.ts`**（按通道登记 `args`/`result` 到 `IpcContracts`），渲染层经 **`src/renderer/services/ipcTyped.ts` 的 `typedInvoke()`** 调用，主进程 handler 参数注解同一契约类型（范例见 `skillImportIpc.ts`），禁止两侧各自手写结构体；给存量通道修 bug 或顺手改动时必须同步迁入契约（skill import 三通道 2026-10-23 已迁，其余存量通道逐步迁移）。涉及跨边界调用的 bug 复查时，必须对照读调用方与被调方两侧的参数形态，不能只看单侧。
+
+- **UI 改动必须真机驱动验证（2026-10-23 定）**：凡涉及按钮/面板/弹窗/布局/渲染位置的改动，`tsc + 单测全绿`**不算验证通过**——单测和类型检查对布局类 bug（元素渲染了但滚动到视口外、z-index 遮挡等）检出能力为零（案例：技能编辑器渲染在滚动区底部，代码全绿但用户点按钮毫无反应）。必须用 Playwright 或 CDP（dev 构建自带 `remote-debugging-port=9222`，直接连 `http://localhost:9222/json` 驱动运行中的应用）实际点击触发，断言目标元素**出现且在可视区内**；无 UI 测试条件时，明确告知用户"仅做了代码级验证，需人工点一遍"。
+
 - **主功能界面一律"挤占式"（2026-10-02 定）**：凡需要"展示一个完整功能面板"的页面（待办列表、AI 技能与工具等），**不用弹窗/对话框承载主内容**，而是在内容区组件 `src/renderer/components/RenderPerspective.tsx` 用 inline 面板**替换原文件夹内容区域**展示。统一模式：
   1. 全局 Context 持有 `isXxxOpen` + `toggleXxx()`（如 `TodoListContextProvider`、`AiCapabilitiesContextProvider`），入口（工具栏按钮/其他弹窗内按钮）调 `toggleXxx`；
   2. 面板组件（`XxxPanel.tsx`）为纯 props 组件（数据/回调由内容区展开传入），**不自己 useContext**，保持 import 图无环；
