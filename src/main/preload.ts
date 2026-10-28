@@ -126,6 +126,8 @@ export type Channels =
   | 'execAuthorize'
   | 'execGrant'
   | 'execRun'
+  | 'execGrantStatus'
+  | 'execRevokeAll'
   | 'scheduledTask:list'
   | 'scheduledTask:create'
   | 'scheduledTask:update'

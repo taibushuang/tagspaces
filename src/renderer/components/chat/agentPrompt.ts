@@ -288,6 +288,7 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
     '- run_command passes the FULL line to the platform shell (pipes, &&, redirection work) — use it for CLI tools and tasks the built-in tools cannot cover;',
     '- authorization is opt-in per run, enforced in the main process: simple lines (no shell metacharacters) are remembered by their PREFIX (first token); compound lines (with & | ; < > ` $( …) are remembered by the EXACT line — any change to a compound line re-prompts; elevated prefixes (sudo/su/doas) always prompt and are never remembered;',
     '- if the user denies a run, do NOT retry it; keep compound-command payloads identical to the approved line, otherwise you will prompt again;',
+    '- if the user verbally authorizes a previously denied/new command, retry the run_command — the confirmation dialog pops again (there is no persistent denial state); to review or clear remembered grants use exec_grants (list / revoke-all) — after revoke-all every command prompts again;',
     '- there is NO interactive stdin: never run commands that need mid-run input (use flags/env for credentials); prefer a generous timeoutSeconds (up to 600) over re-running;',
     '- before running something destructive or state-changing outside TagSpaces locations, SAY what it will do and get consent in chat first;',
     '- keep stdout in mind: output is capped at ~200KB per stream — for huge outputs write to a file and read the relevant part with read_file_text.',

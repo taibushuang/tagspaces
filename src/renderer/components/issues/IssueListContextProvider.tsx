@@ -22,6 +22,7 @@ import {
   IssueStats,
   IssueUpdateInput,
   IssueUpdateManyResult,
+  ISSUES_CHANGED_EVENT,
 } from './issueTypes';
 
 type IssueListContextData = {
@@ -115,6 +116,24 @@ export function IssueListContextProvider({
         setAppInfo({ version: p.version, platform: p.platform });
       })
       .catch(() => {});
+  }, [refresh]);
+
+  // Re-fetch whenever the panel opens, so entries filed while it was closed
+  // (e.g. by the AI Agent's report_issue) show up right away.
+  useEffect(() => {
+    if (isIssuesOpen) {
+      refresh();
+    }
+  }, [isIssuesOpen, refresh]);
+
+  // The AI Agent runs in the same renderer; refresh immediately when it files
+  // a new issue via report_issue (keeps the Feedback badge in sync too).
+  useEffect(() => {
+    const handler = () => {
+      refresh();
+    };
+    window.addEventListener(ISSUES_CHANGED_EVENT, handler);
+    return () => window.removeEventListener(ISSUES_CHANGED_EVENT, handler);
   }, [refresh]);
 
   const createIssue = useCallback(

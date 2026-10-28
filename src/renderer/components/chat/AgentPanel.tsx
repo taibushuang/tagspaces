@@ -67,6 +67,7 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import ListItemIcon from '@mui/material/ListItemIcon';
@@ -166,8 +167,19 @@ function AgentPanel() {
   const [renameValue, setRenameValue] = useState<string>('');
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
+  const [showReasoning, setShowReasoning] = useState<boolean>(
+    () => localStorage.getItem('tsAiAgentShowReasoning') === '1',
+  );
   const listRef = useRef<HTMLDivElement>(null);
   const detailListRef = useRef<HTMLDivElement>(null);
+
+  const toggleShowReasoning = useCallback(() => {
+    setShowReasoning((prev) => {
+      const next = !prev;
+      localStorage.setItem('tsAiAgentShowReasoning', next ? '1' : '0');
+      return next;
+    });
+  }, []);
 
   // refresh the disk-init marker whenever an agent run finishes so the
   // intro card and its CTA chip disappear once the skill has run
@@ -499,6 +511,38 @@ function AgentPanel() {
             </AccordionDetails>
           </Accordion>
         ))}
+        {showReasoning && message.reasoning && message.reasoning.trim() ? (
+          <Accordion
+            defaultExpanded={false}
+            sx={{
+              marginBottom: 0.5,
+              border: '1px solid ' + theme.palette.divider,
+            }}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon fontSize="small" />}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <PsychologyIcon fontSize="small" />
+                <Box sx={{ fontWeight: 500 }}>
+                  {t('core:aiAgentShowReasoning')}
+                </Box>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails sx={{ paddingTop: 0 }}>
+              <Box
+                sx={{
+                  fontSize: '0.8rem',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  color: 'text.secondary',
+                  maxHeight: 240,
+                  overflowY: 'auto',
+                }}
+              >
+                {message.reasoning}
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+        ) : null}
         {message.content && (
           <Box
             sx={{
@@ -1027,6 +1071,18 @@ function AgentPanel() {
             </MenuItem>
           ))}
         </Menu>
+        <TsIconButton
+          tooltip={t('core:aiAgentShowReasoning')}
+          onClick={toggleShowReasoning}
+          data-tid="agentShowReasoningButton"
+          sx={
+            showReasoning
+              ? { color: 'primary.main', bgcolor: 'action.selected' }
+              : undefined
+          }
+        >
+          <PsychologyIcon />
+        </TsIconButton>
         {isExecutor && (
           <TsIconButton
             tooltip={t('core:aiAgentScheduledTitle')}

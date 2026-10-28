@@ -298,6 +298,7 @@ function RenderPerspective(props: Props) {
     updateManyIssues,
     removeIssue,
     exportMarkdown: exportIssuesMarkdown,
+    refresh: refreshIssues,
     toggleIssues,
   } = useIssueListContext();
 
@@ -400,6 +401,7 @@ function RenderPerspective(props: Props) {
         updateManyIssues={updateManyIssues}
         removeIssue={removeIssue}
         exportMarkdown={exportIssuesMarkdown}
+        refresh={refreshIssues}
         showNotification={showNotification}
         onClose={toggleIssues}
       />

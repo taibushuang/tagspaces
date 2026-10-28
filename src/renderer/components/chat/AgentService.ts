@@ -39,6 +39,9 @@ export type AgentTool = {
 
 export type AgentEvent =
   | { type: 'text'; delta: string }
+  // Chain-of-thought deltas (e.g. DeepSeek reasoning_content) — streamed so
+  // the panel can render a "thinking" section when the user enables it.
+  | { type: 'reasoning'; delta: string }
   | { type: 'tool_call'; name: string; args: string }
   | { type: 'tool_result'; name: string; result: string }
   | { type: 'error'; message: string }
@@ -299,6 +302,7 @@ export async function runAgent(
       (delta) => onEvent({ type: 'text', delta }),
       authKey,
       signal,
+      (delta) => onEvent({ type: 'reasoning', delta }),
     );
     if (result === undefined) {
       aborted = !!signal?.aborted;

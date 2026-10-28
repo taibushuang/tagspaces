@@ -36,6 +36,10 @@ import {
   runAgent,
 } from '-/components/chat/AgentService';
 import {
+  requestDeleteConfirmationDialog,
+  requestExecConfirmationDialog,
+} from '-/components/chat/agentConfirm';
+import {
   createAgentTools,
   isElectron,
   readDiskInitState,
@@ -86,7 +90,13 @@ export type AgentToolStep = {
 
 export type AgentChatMessage =
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; steps: AgentToolStep[] };
+  | {
+      role: 'assistant';
+      content: string;
+      steps: AgentToolStep[];
+      /** Streamed chain-of-thought (reasoning_content) — shown on demand. */
+      reasoning?: string;
+    };
 
 export type AgentSession = {
   id: string;
@@ -108,6 +118,12 @@ export type AgentStartRunOptions = {
   sessionId: string;
   text: string;
   skipUserBubble?: boolean;
+  /**
+   * Unattended (scheduled-task) runs have nobody to answer confirmation
+   * dialogs, so they must not pop them. Interactive runs (default) show the
+   * exec/delete confirmation dialogs in the renderer.
+   */
+  unattended?: boolean;
   /**
    * Context snapshot override. Scheduled runs execute against the location
    * they were created for, not whatever the UI currently shows. Omitted for
@@ -231,9 +247,16 @@ export function transcriptToMarkdown(
           return parts.join('\n\n');
         })
         .join('\n\n');
+      const reasoning =
+        message.reasoning && message.reasoning.trim()
+          ? `> 🧠 ${t('core:aiAgentRoleThinking')}\n>\n> ${message.reasoning
+              .split('\n')
+              .map((line) => `> ${line}`)
+              .join('\n')}\n\n`
+          : '';
       return `### ${t('core:aiAgentRoleAssistant')}\n\n${
-        steps ? steps + '\n\n' : ''
-      }${message.content}`;
+        reasoning
+      }${steps ? steps + '\n\n' : ''}${message.content}`;
     })
     .join('\n\n---\n\n');
 }
@@ -247,7 +270,7 @@ export function AgentSessionsContextProvider(props: {
   children: React.ReactNode;
 }) {
   const { t } = useTranslation();
-  const { showNotification } = useNotificationContext();
+  const { showNotification, openConfirmDialog } = useNotificationContext();
   const { currentModel } = useChatContext();
   const defaultAiProvider = useSelector(getDefaultAIProvider);
   const interfaceLanguage = useSelector(getCurrentLanguage);
@@ -354,6 +377,7 @@ export function AgentSessionsContextProvider(props: {
     sessionId: string;
     texts: string[];
     locationOverride: boolean;
+    unattended: boolean;
   } | null>(null);
   // Last error surfaced by a run, used by the scheduled executor to report a
   // useful failure detail.
@@ -372,7 +396,7 @@ export function AgentSessionsContextProvider(props: {
   >(async () => {});
 
   const buildTools = useCallback(
-    (location: CommonLocation | undefined) => {
+    (location: CommonLocation | undefined, unattended: boolean) => {
       const locationForPath = (path: string) =>
         findLocationByPath(path) || location || undefined;
       return createAgentTools({
@@ -479,7 +503,11 @@ export function AgentSessionsContextProvider(props: {
         // Unattended (scheduled-task) runs have nobody to answer a dialog:
         // deletion is only allowed in folders the user granted interactively
         // (isDeleteGranted bypasses this callback); everything else denies.
-        requestDeleteConfirmation: () => Promise.resolve(false),
+        // Interactive runs show the confirmation dialog (shared helper).
+        requestDeleteConfirmation: unattended
+          ? () => Promise.resolve(false)
+          : (payload) =>
+              requestDeleteConfirmationDialog(openConfirmDialog, payload),
         execAuthorize: (command: string) =>
           window.electronIO.ipcRenderer.invoke('execAuthorize', command),
         execGrant: (params: { rememberKey: string; remember: boolean }) =>
@@ -491,13 +519,16 @@ export function AgentSessionsContextProvider(props: {
         execRun: (params: any) =>
           window.electronIO.ipcRenderer.invoke('execRun', {
             ...params,
-            origin: 'scheduled',
+            origin: unattended ? 'scheduled' : 'chat',
           }),
         // Unattended exec: only main-process-remembered prefixes/lines
         // auto-authorize (execAuthorize handles it); anything new is denied —
-        // a scheduled run must not pop dialogs.
-        requestExecConfirmation: () =>
-          Promise.resolve({ approved: false, remember: false }),
+        // a scheduled run must not pop dialogs. Interactive runs show the
+        // two-step confirmation dialog (shared helper).
+        requestExecConfirmation: unattended
+          ? () => Promise.resolve({ approved: false, remember: false })
+          : (payload) =>
+              requestExecConfirmationDialog(openConfirmDialog, payload),
         moveToPath: (sourcePath: string, targetPath: string) => {
           const srcLoc = locationForPath(sourcePath);
           const tgtLoc = locationForPath(targetPath);
@@ -621,6 +652,7 @@ export function AgentSessionsContextProvider(props: {
       moveFiles,
       copyFiles,
       moveFilesPromise,
+      openConfirmDialog,
     ],
   );
 
@@ -821,13 +853,22 @@ export function AgentSessionsContextProvider(props: {
             // only appended to session.apiMessages via the run result below.
             { role: 'user', content: text },
           ],
-          tools: buildTools(location),
+          tools: buildTools(location, !!opts.unattended),
           signal: abortController.signal,
           interruptQueue: queue,
           onEvent: (event: AgentEvent) => {
             if (event.type === 'text') {
               patchAssistant((msg) => {
                 msg.content += event.delta;
+              });
+            } else if (event.type === 'reasoning') {
+              // Streamed chain-of-thought; capped so long reasoning traces
+              // cannot grow a session unboundedly.
+              patchAssistant((msg) => {
+                const MAX_REASONING_CHARS = 30000;
+                msg.reasoning = (msg.reasoning || '')
+                  .concat(event.delta)
+                  .slice(0, MAX_REASONING_CHARS);
               });
             } else if (event.type === 'tool_call') {
               incrementToolCallCount(event.name);
@@ -903,6 +944,7 @@ export function AgentSessionsContextProvider(props: {
               sessionId,
               texts: leftover,
               locationOverride: !!overrideLocationId,
+              unattended: !!opts.unattended,
             };
           }
         }
@@ -929,7 +971,7 @@ export function AgentSessionsContextProvider(props: {
     if (isRunning || !resumeRef.current) {
       return;
     }
-    const { locationId, sessionId, texts, locationOverride } =
+    const { locationId, sessionId, texts, locationOverride, unattended } =
       resumeRef.current;
     resumeRef.current = null;
     const canResume = locationOverride
@@ -942,6 +984,7 @@ export function AgentSessionsContextProvider(props: {
         sessionId,
         text: texts.join('\n\n'),
         skipUserBubble: true,
+        unattended,
         ...(locationOverride ? { locationId } : {}),
       });
     } else {
@@ -1162,6 +1205,7 @@ export function AgentSessionsContextProvider(props: {
           sessionId,
           text: task.prompt,
           locationId: task.locationId,
+          unattended: true,
         });
       } catch (e: any) {
         lastRunErrorRef.current = e?.message || String(e);

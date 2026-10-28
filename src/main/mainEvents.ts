@@ -120,6 +120,11 @@ export default function loadMainEvents() {
   ipcMain.handle('execGrant', async (_event, rememberKey, remember) =>
     execAuthorizer.grant(String(rememberKey || ''), Boolean(remember)),
   );
+  // Grant inspection/revocation — the reset mechanism for a wrongly remembered
+  // prefix: after revoke-all every command falls back to the confirmation
+  // dialog (equivalent to deleting grants.json).
+  ipcMain.handle('execGrantStatus', async () => execAuthorizer.grantsSummary());
+  ipcMain.handle('execRevokeAll', async () => execAuthorizer.revokeAll());
   ipcMain.handle('execRun', async (_event, params) => {
     if (!execAuthorizer.consumeToken(String(params?.token || ''))) {
       return {

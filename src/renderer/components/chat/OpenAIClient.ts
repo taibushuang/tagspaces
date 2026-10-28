@@ -207,6 +207,8 @@ export type OpenAIToolCall = {
 export type OpenAIResult = {
   content?: string;
   toolCalls?: OpenAIToolCall[];
+  /** Chain-of-thought/reasoning text (e.g. DeepSeek reasoning_content). */
+  reasoning?: string;
 };
 
 /**
@@ -292,7 +294,9 @@ function accumulateToolCalls(
  * Send one /chat/completions round and return both text content and tool
  * calls. When `msg.stream` is true the response is parsed as SSE: text deltas
  * go to `chatMessageHandler` live, tool-call fragments are accumulated by
- * index and returned complete at the end.
+ * index and returned complete at the end. Reasoning deltas (DeepSeek-style
+ * `reasoning_content`) go to `reasoningHandler` live and are also returned in
+ * `reasoning`.
  */
 export async function chatOpenAICompletion(
   url: string,
@@ -300,6 +304,7 @@ export async function chatOpenAICompletion(
   chatMessageHandler?: (msgContent: string) => void,
   authKey?: string,
   signal?: AbortSignal,
+  reasoningHandler?: (reasoningDelta: string) => void,
 ): Promise<OpenAIResult | undefined> {
   if (!url) {
     return undefined;
@@ -327,6 +332,7 @@ export async function chatOpenAICompletion(
       const decoder = new TextDecoder();
       let buffer = '';
       let content = '';
+      let reasoning = '';
       const toolCallAcc: Record<number, OpenAIToolCall> = {};
       // eslint-disable-next-line no-constant-condition
       while (true) {
@@ -359,6 +365,12 @@ export async function chatOpenAICompletion(
                 chatMessageHandler(delta.content);
               }
             }
+            if (delta.reasoning_content) {
+              reasoning += delta.reasoning_content;
+              if (reasoningHandler) {
+                reasoningHandler(delta.reasoning_content);
+              }
+            }
             if (Array.isArray(delta.tool_calls)) {
               accumulateToolCalls(toolCallAcc, delta.tool_calls);
             }
@@ -374,6 +386,7 @@ export async function chatOpenAICompletion(
         .filter((c) => c.function.name);
       return {
         ...(content ? { content } : {}),
+        ...(reasoning ? { reasoning } : {}),
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
       };
     }
@@ -385,6 +398,9 @@ export async function chatOpenAICompletion(
       : [];
     return {
       ...(message?.content ? { content: message.content } : {}),
+      ...(message?.reasoning_content
+        ? { reasoning: message.reasoning_content }
+        : {}),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   } catch (e) {

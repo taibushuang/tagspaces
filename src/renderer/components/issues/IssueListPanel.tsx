@@ -17,6 +17,7 @@ import DoneAllOutlinedIcon from '@mui/icons-material/DoneAllOutlined';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import DeleteOutlineOutlinedIcon from '@mui/icons-material/DeleteOutlineOutlined';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined';
 import Box from '@mui/material/Box';
 import Checkbox from '@mui/material/Checkbox';
@@ -60,6 +61,8 @@ interface Props {
   ) => Promise<IssueUpdateManyResult>;
   removeIssue: (id: string) => Promise<number>;
   exportMarkdown: () => void;
+  /** Re-fetch the issue list from the main process. */
+  refresh: () => void;
   /** Notification sink injected from RenderPerspective (panel stays prop-pure). */
   showNotification?: (
     text: string,
@@ -86,6 +89,7 @@ function IssueListPanel({
   updateManyIssues,
   removeIssue,
   exportMarkdown,
+  refresh,
   showNotification,
   onClose,
 }: Props) {
@@ -418,6 +422,16 @@ function IssueListPanel({
         >
           {t('core:issueExport')}
         </TsButton>
+        <Tooltip title={t('core:issueRefresh')}>
+          <IconButton
+            size="small"
+            onClick={() => refresh()}
+            disabled={loading}
+            data-tid="issueRefresh"
+          >
+            <RefreshIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
         <Tooltip title={t('core:issueClose')}>
           <IconButton size="small" onClick={onClose} data-tid="issueClosePanel">
             <CloseIcon fontSize="small" />

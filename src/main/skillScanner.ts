@@ -318,8 +318,32 @@ export function scanAll(
     path.join(os.homedir(), '.claude'),
     path.join(os.homedir(), '.claude.json'),
   ];
-  const toolServers = scanToolConfigs(configCandidates);
+  // QwenPaw keeps per-workspace tool/MCP configs one level deeper
+  // (~/.qwenpaw/workspaces/<name>/config.json or similar) — scan those
+  // directories with an extra depth.
+  const workspaceCandidates = [
+    path.join(os.homedir(), '.qwenpaw', 'workspaces'),
+    path.join(os.homedir(), '.config', 'qwenpaw', 'workspaces'),
+  ];
+  const toolServers = dedupToolServers([
+    ...scanToolConfigs(configCandidates, 1),
+    ...scanToolConfigs(workspaceCandidates, 2),
+  ]);
   return { defaultDirs, extraDirs, skills, toolServers };
+}
+
+/** De-duplicate scanned tool servers across candidate groups by file+name. */
+function dedupToolServers(servers: ScannedToolServer[]): ScannedToolServer[] {
+  const seen = new Set<string>();
+  const out: ScannedToolServer[] = [];
+  for (const s of servers) {
+    const key = `${s.sourceFile}::${s.name}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(s);
+    }
+  }
+  return out;
 }
 
 // --- tool / MCP-server config discovery (list-only: mounting needs an MCP
@@ -406,12 +430,28 @@ export function extractToolServers(
   return out;
 }
 
+/** Directories never descended into during tool-config scans. */
+const SKIP_CONFIG_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '__pycache__',
+  '.venv',
+]);
+
 /**
  * Probe candidate locations for tool/MCP-server configs: a candidate may be
- * a JSON file (parsed directly) or a directory whose depth-1 *.json files
- * are parsed. Results are de-duplicated by sourceFile+name.
+ * a JSON file (parsed directly) or a directory whose *.json files are parsed.
+ * `maxDepth` controls how many directory levels below the candidate are
+ * walked (1 = direct files only, 2 = also one level of subdirectories, e.g.
+ * QwenPaw per-workspace configs under ~/.qwenpaw/workspaces/<name>/).
+ * Results are de-duplicated by sourceFile+name.
  */
-export function scanToolConfigs(candidates: string[]): ScannedToolServer[] {
+export function scanToolConfigs(
+  candidates: string[],
+  maxDepth = 1,
+): ScannedToolServer[] {
   const out: ScannedToolServer[] = [];
   const seen = new Set<string>();
   const parseFile = (file: string) => {
@@ -429,6 +469,35 @@ export function scanToolConfigs(candidates: string[]): ScannedToolServer[] {
       /* unreadable/invalid JSON — skip */
     }
   };
+  const walkDir = (dir: string, depth: number) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    // per-directory cap keeps the scan bounded on huge config homes
+    const jsonFiles = entries
+      .filter(
+        (e) =>
+          e.isFile() &&
+          e.name.toLowerCase().endsWith('.json') &&
+          !e.name.startsWith('.'),
+      )
+      .slice(0, 20);
+    for (const f of jsonFiles) parseFile(path.join(dir, f.name));
+    if (depth < maxDepth) {
+      for (const e of entries) {
+        if (
+          e.isDirectory() &&
+          !e.name.startsWith('.') &&
+          !SKIP_CONFIG_DIRS.has(e.name)
+        ) {
+          walkDir(path.join(dir, e.name), depth + 1);
+        }
+      }
+    }
+  };
   for (const candidate of candidates || []) {
     const c = String(candidate || '').trim();
     if (!c || !fs.existsSync(c)) continue;
@@ -436,16 +505,7 @@ export function scanToolConfigs(candidates: string[]): ScannedToolServer[] {
       if (fs.statSync(c).isFile()) {
         parseFile(c);
       } else {
-        const files = fs
-          .readdirSync(c, { withFileTypes: true })
-          .filter(
-            (e) =>
-              e.isFile() &&
-              e.name.toLowerCase().endsWith('.json') &&
-              !e.name.startsWith('.'),
-          )
-          .slice(0, 20);
-        for (const f of files) parseFile(path.join(c, f.name));
+        walkDir(c, 1);
       }
     } catch {
       /* skip unreadable candidate */

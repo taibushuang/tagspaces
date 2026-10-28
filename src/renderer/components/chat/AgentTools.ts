@@ -82,7 +82,11 @@ import { TS } from '-/tagspaces.namespace';
 import todoApi from '-/components/todo/todoService';
 import { TodoItem } from '-/components/todo/todoTypes';
 import issueApi from '-/components/issues/issueService';
-import { ISSUE_TYPES, ISSUE_SEVERITIES } from '-/components/issues/issueTypes';
+import {
+  ISSUE_TYPES,
+  ISSUE_SEVERITIES,
+  ISSUES_CHANGED_EVENT,
+} from '-/components/issues/issueTypes';
 import {
   getCustomSkills,
   importedSkillId,
@@ -2219,6 +2223,15 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           } catch (e) {
             // context enrichment is optional
           }
+          // Notify the issue panel/badge (same renderer) so newly filed
+          // entries show up without reopening the panel. Guarded for
+          // non-browser (unit-test/web) environments without dispatchEvent.
+          if (
+            typeof window !== 'undefined' &&
+            typeof window.dispatchEvent === 'function'
+          ) {
+            window.dispatchEvent(new CustomEvent(ISSUES_CHANGED_EVENT));
+          }
           return {
             ok: true,
             id: item.id,
@@ -2422,6 +2435,56 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
             cwd: result.cwd,
             ...(result.timedOut && {
               error: `timed out after ${Math.round(timeoutMs / 1000)}s (process tree killed)`,
+            }),
+          };
+        } catch (e: any) {
+          return { error: e?.message || String(e) };
+        }
+      },
+    },
+    {
+      name: 'exec_grants',
+      description:
+        'Inspect or revoke the remembered run_command authorizations ' +
+        '(grants). Use it when the user asks what commands are currently ' +
+        'allowed without asking, or wants to reset the authorization state ' +
+        'so commands prompt again (after a wrongly remembered prefix or a ' +
+        'denied run that should be re-prompted). action=list returns the ' +
+        'remembered prefixes/lines; action=revoke-all clears ALL grants — ' +
+        'every command then pops the confirmation dialog again.',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['list', 'revoke-all'],
+            description:
+              "'list' (default) shows the remembered prefixes/lines; 'revoke-all' clears every grant",
+          },
+        },
+      },
+      execute: async (args) => {
+        if (!isElectron()) {
+          return {
+            error:
+              'exec_grants is only available in the desktop app (grants live in the main process)',
+          };
+        }
+        const action = args?.action === 'revoke-all' ? 'revoke-all' : 'list';
+        try {
+          const status =
+            action === 'revoke-all'
+              ? await typedInvoke('execRevokeAll')
+              : await typedInvoke('execGrantStatus');
+          return {
+            ok: true,
+            action,
+            count: status.prefixes.length + status.lines.length,
+            prefixes: status.prefixes,
+            lines: status.lines,
+            file: status.file,
+            ...(action === 'revoke-all' && {
+              note: 'all run_command grants revoked — commands will ask for confirmation again',
             }),
           };
         } catch (e: any) {

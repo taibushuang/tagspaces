@@ -194,4 +194,24 @@ export class ExecAuthorizer {
     }
     return true;
   }
+
+  /** Snapshot of currently remembered grants (prefixes + exact lines). */
+  grantsSummary(): { prefixes: string[]; lines: string[]; file: string } {
+    return {
+      prefixes: Object.keys(this.grants.prefixes).sort(),
+      lines: Object.keys(this.grants.lines).sort(),
+      file: this.file,
+    };
+  }
+
+  /**
+   * Revoke ALL remembered grants — the reset mechanism requested after a
+   * wrongly remembered/denied prefix: afterwards every command falls back to
+   * the confirmation dialog. Equivalent to deleting grants.json.
+   */
+  revokeAll(): { prefixes: string[]; lines: string[]; file: string } {
+    this.grants = { prefixes: {}, lines: {} };
+    this.save();
+    return this.grantsSummary();
+  }
 }

@@ -65,6 +65,16 @@ export type SkillDeleteCopyRequest = {
   sourceDir: string;
 };
 
+/** Snapshot of remembered run_command grants (prefixes + exact lines). */
+export type ExecGrantStatusResult = {
+  /** Remembered simple-line prefixes (lowercased first tokens). */
+  prefixes: string[];
+  /** Remembered compound lines (shell metacharacters, matched verbatim). */
+  lines: string[];
+  /** grants.json path (revoking is equivalent to deleting this file). */
+  file: string;
+};
+
 export type IpcContracts = {
   skillsScan: {
     args: [options?: SkillScanRequest];
@@ -77,5 +87,13 @@ export type IpcContracts = {
   skillsDeleteCopy: {
     args: [request: SkillDeleteCopyRequest];
     result: { removed: boolean };
+  };
+  execGrantStatus: {
+    args: [];
+    result: ExecGrantStatusResult;
+  };
+  execRevokeAll: {
+    args: [];
+    result: ExecGrantStatusResult;
   };
 };

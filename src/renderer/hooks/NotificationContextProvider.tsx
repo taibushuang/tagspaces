@@ -34,19 +34,20 @@ type NotificationStatus = {
   autohide: boolean;
 };
 
-type NotificationContextData = {
+export type NotificationContextData = {
   openConfirmDialog: (
     title: string,
     description: string,
     callback?: (result: boolean | string) => void,
     cancelTID?: string,
     confirmTID?: string,
-    confirmContentTID?: string,
+    confirmDialogContentTID?: string,
     list?: string[],
     prompt?: string,
     help?: string,
     customConfirmText?: string,
     customCancelText?: string,
+    onDismiss?: () => void,
   ) => void;
   closeConfirmDialog: () => void;
   notificationStatus: NotificationStatus;
@@ -93,6 +94,8 @@ export const NotificationContextProvider = ({
   const help = useRef<string>(undefined);
   const customConfirmText = useRef<string>(undefined);
   const customCancelText = useRef<string>(undefined);
+  /** Caller-provided dismissal handler for the currently open dialog. */
+  const dismissHandlerRef = useRef<(() => void) | undefined>(undefined);
   const [notificationStatus, setNotificationStatus] = useState<any>({
     visible: false,
     text: null,
@@ -113,6 +116,7 @@ export const NotificationContextProvider = ({
     helpTxt: string = undefined,
     confirmText: string = undefined,
     cancelText: string = undefined,
+    onDismiss = undefined,
   ) {
     confirmTitle.current = title;
     confirmDescription.current = description;
@@ -125,7 +129,20 @@ export const NotificationContextProvider = ({
     customConfirmText.current = confirmText;
     customCancelText.current = cancelText;
     help.current = helpTxt;
+    dismissHandlerRef.current = onDismiss;
     setConfirmDialogOpened(true);
+  }
+
+  // Dismissal (Esc / ✕ / backdrop) fires no button callback — invoke the
+  // caller's onDismiss so async callers (e.g. agent exec authorization) never
+  // hang, then close. Consumed once per open.
+  function handleConfirmDismiss() {
+    const handler = dismissHandlerRef.current;
+    dismissHandlerRef.current = undefined;
+    if (handler) {
+      handler();
+    }
+    setConfirmDialogOpened(false);
   }
 
   function closeConfirmDialog() {
@@ -195,6 +212,7 @@ export const NotificationContextProvider = ({
       <ConfirmDialog
         open={isConfirmDialogOpened}
         onClose={() => setConfirmDialogOpened(false)}
+        onDismiss={handleConfirmDismiss}
         title={confirmTitle.current}
         content={confirmDescription.current}
         confirmCallback={confirmCallback.current}

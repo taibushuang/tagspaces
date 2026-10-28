@@ -41,6 +41,9 @@ import {
   setToolEnabled,
 } from '-/components/chat/agentCapabilities';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { getCurrentLanguage } from '-/reducers/settings';
+import { localizeToolDescription } from '-/components/chat/toolDescriptionsZh';
+import { useSelector } from 'react-redux';
 import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import Switch from '@mui/material/Switch';
@@ -115,6 +118,10 @@ function AiCapabilitiesPanel(props: Props) {
   const { t } = useTranslation();
   const { onClose, initialTab, hideTabs } = props;
   const { showNotification } = useNotificationContext();
+  // UI language drives display-only localization of built-in tool
+  // descriptions (the LLM-facing tool definitions stay English — see
+  // toolDescriptionsZh.ts).
+  const uiLanguage = useSelector(getCurrentLanguage);
   const [tab, setTab] = useState<'tools' | 'skills'>(initialTab || 'tools');
   const [search, setSearch] = useState('');
   // re-render trigger after storage mutations
@@ -144,7 +151,10 @@ function AiCapabilitiesPanel(props: Props) {
     !query || text.toLowerCase().includes(query);
 
   const builtinFiltered = builtinTools.filter(
-    (tool) => matches(tool.name) || matches(tool.description),
+    (tool) =>
+      matches(tool.name) ||
+      matches(tool.description) ||
+      matches(localizeToolDescription(tool.name, tool.description, uiLanguage)),
   );
   const customToolsFiltered = customTools.filter(
     (tool) =>
@@ -544,7 +554,7 @@ function AiCapabilitiesPanel(props: Props) {
                 t2.name,
                 t2.name,
                 t2.name,
-                t2.description,
+                localizeToolDescription(t2.name, t2.description, uiLanguage),
                 Object.keys(t2.parameters?.properties || {}),
                 !disabledTools.has(t2.name),
                 (enabled) => {

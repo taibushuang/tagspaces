@@ -191,6 +191,30 @@ describe('工具 / MCP 配置发现', () => {
     expect(again).toHaveLength(1);
   });
 
+  test('scanToolConfigs：maxDepth=2 覆盖 QwenPaw workspace 嵌套配置', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-toolcfg-ws-'));
+    const ws = path.join(root, 'ws-name');
+    fs.ensureDirSync(ws);
+    fs.writeJsonSync(path.join(ws, 'config.json'), {
+      tools: { 'my-tool': { command: 'my-cmd' } },
+    });
+    // 默认深度 1：只扫根目录直接文件，找不到嵌套配置
+    expect(scanToolConfigs([root], 1)).toHaveLength(0);
+    // 深度 2：进入子目录发现 workspace 配置
+    const found = scanToolConfigs([root], 2);
+    expect(found).toHaveLength(1);
+    expect(found[0].name).toBe('my-tool');
+    expect(found[0].sourceFile).toContain('config.json');
+    // node_modules 等目录被跳过
+    fs.ensureDirSync(path.join(root, 'ws2', 'node_modules'));
+    fs.writeJsonSync(
+      path.join(root, 'ws2', 'node_modules', 'deep.json'),
+      { mcpServers: { sneaky: { command: 'x' } } },
+    );
+    const bounded = scanToolConfigs([root], 2);
+    expect(bounded.some((t) => t.name === 'sneaky')).toBe(false);
+  });
+
   test('scanAll 返回 toolServers', () => {
     const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-scanstore2-'));
     const cfgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts-scanhome2-'));

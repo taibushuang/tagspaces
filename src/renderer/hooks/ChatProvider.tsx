@@ -19,6 +19,10 @@
 import AppConfig from '-/AppConfig';
 import { AgentEvent, runAgent } from '-/components/chat/AgentService';
 import {
+  requestDeleteConfirmationDialog,
+  requestExecConfirmationDialog,
+} from '-/components/chat/agentConfirm';
+import {
   createAgentTools,
   readDiskInitState,
 } from '-/components/chat/AgentTools';
@@ -1304,30 +1308,8 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         }
         return results;
       },
-      requestDeleteConfirmation: ({ folderPath, items, reason }) =>
-        new Promise<boolean>((resolve) => {
-          openConfirmDialog(
-            'Allow the AI Agent to delete?',
-            [
-              `Move ${items.length} item(s) from this folder to the system trash (recoverable):`,
-              folderPath,
-              ...(reason ? [`Reason: ${reason}`] : []),
-            ].join('\n'),
-            (result) => resolve(!!result),
-            'agentDeleteCancelButton',
-            'agentDeleteConfirmButton',
-            'agentDeleteDialogContentTID',
-            items.map((i) =>
-              typeof i.size === 'number' && i.size >= 0
-                ? `${i.name} (${i.size} bytes)`
-                : i.name,
-            ),
-            undefined,
-            undefined,
-            'Delete (to trash)',
-            'Cancel',
-          );
-        }),
+      requestDeleteConfirmation: (payload) =>
+        requestDeleteConfirmationDialog(openConfirmDialog, payload),
       execAuthorize: (command: string) =>
         window.electronIO.ipcRenderer.invoke('execAuthorize', command),
       execGrant: (params: { rememberKey: string; remember: boolean }) =>
@@ -1341,57 +1323,8 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
           ...params,
           origin: 'chat',
         }),
-      requestExecConfirmation: ({ command, cwd, prefix, canRemember }) =>
-        new Promise<{ approved: boolean; remember: boolean }>((resolve) => {
-          openConfirmDialog(
-            'Allow the AI Agent to run this command?',
-            [
-              'The agent requests to execute the following shell command:',
-              command,
-              ...(cwd ? [`Working directory: ${cwd}`] : []),
-              `Prefix: "${prefix}"`,
-              ...(canRemember
-                ? []
-                : ['(elevated-privilege commands are never remembered)']),
-            ].join('\n'),
-            (result) => {
-              if (!result) {
-                resolve({ approved: false, remember: false });
-                return;
-              }
-              // Second dialog — SAFE DEFAULT: the right/confirm button is
-              // "Ask every time"; remembering is the explicit left choice.
-              openConfirmDialog(
-                'Remember for future runs?',
-                canRemember
-                  ? `Remember = "${prefix}"-style authorization; future matching commands run WITHOUT asking. Compound lines are always re-confirmed when their content changes. Grants persist in userData/exec/grants.json (delete the file to revoke all).`
-                  : 'This command cannot be remembered.',
-                (rememberResult) => {
-                  resolve({
-                    approved: true,
-                    remember: canRemember && !rememberResult,
-                  });
-                },
-                'agentExecRememberButton',
-                'agentExecAskButton',
-                'agentExecRememberContentTID',
-                undefined,
-                undefined,
-                undefined,
-                'Ask every time',
-                'Remember prefix',
-              );
-            },
-            'agentExecCancelButton',
-            'agentExecConfirmButton',
-            'agentExecDialogContentTID',
-            undefined,
-            undefined,
-            undefined,
-            'Run once',
-            'Deny',
-          );
-        }),
+      requestExecConfirmation: (payload) =>
+        requestExecConfirmationDialog(openConfirmDialog, payload),
       loadTextFile: (path: string) => {
         const loc = locationForPath(path);
         if (!loc) {

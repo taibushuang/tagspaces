@@ -108,6 +108,12 @@ export const ISSUE_STATUSES: IssueStatus[] = ['open', 'done'];
 export const ISSUE_SEVERITIES: IssueSeverity[] = ['high', 'medium', 'low'];
 
 /**
+ * Custom window event dispatched after the AI Agent files an issue via
+ * report_issue, so the issue panel/badge can refresh without reopening.
+ */
+export const ISSUES_CHANGED_EVENT = 'ts-issues-changed';
+
+/**
  * Reference-id lookup ([machineTag-]BUG-001) — refs are assigned once at
  * create time by the main process and stored on each item, so this is a pure
  * read (no numbering logic here; the rule lives only in issueStore.ts).

@@ -51,12 +51,21 @@ interface Props {
   entriesList?: TS.FileSystemEntry[];
   confirmCallback: (result: boolean | string) => void;
   onClose: () => void;
+  /**
+   * Called when the dialog is dismissed WITHOUT a button click (Esc / ✕ /
+   * backdrop). Defaults to onClose when omitted. Dialog callers that resolve
+   * an async operation from confirmCallback (e.g. agent authorization
+   * promises) MUST provide this — otherwise the promise hangs forever on
+   * dismissal.
+   */
+  onDismiss?: () => void;
 }
 
 function ConfirmDialog(props: Props) {
   const {
     open,
     onClose,
+    onDismiss,
     title,
     content,
     confirmCallback,
@@ -78,19 +87,29 @@ function ConfirmDialog(props: Props) {
     onClose();
   }
 
+  // Esc / ✕ / backdrop: no button was pressed. Route to onDismiss when the
+  // caller needs to observe dismissal (else the async caller hangs).
+  function handleDismiss() {
+    if (onDismiss) {
+      onDismiss();
+    } else {
+      onClose();
+    }
+  }
+
   return (
     <Dialog
       aria-labelledby="draggable-dialog-title"
       PaperComponent={DraggablePaper}
       open={open}
-      onClose={onClose}
+      onClose={handleDismiss}
       keepMounted
       scroll="paper"
       sx={{ zIndex: 1301 }}
     >
       <DialogTitle sx={{ cursor: 'move' }} id="draggable-dialog-title">
         {title}
-        <DialogCloseButton testId="closeConfirmTID" onClose={onClose} />
+        <DialogCloseButton testId="closeConfirmTID" onClose={handleDismiss} />
       </DialogTitle>
       <DialogContent>
         <DialogContentText data-tid={confirmDialogContentTID} component="span">
