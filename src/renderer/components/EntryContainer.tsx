@@ -22,6 +22,7 @@ import EntryContainerTabs from '-/components/EntryContainerTabs';
 import EntryContainerTitle from '-/components/EntryContainerTitle';
 import { ErrorBoundary } from '-/components/ErrorBoundary';
 import FileView from '-/components/FileView';
+import OpenedFileTabs from '-/components/OpenedFileTabs';
 import { Splitter } from '-/components/Splitter';
 import { useFilePickerDialogContext } from '-/components/dialogs/hooks/useFilePickerDialogContext';
 import { useResolveConflictContext } from '-/components/dialogs/hooks/useResolveConflictContext';
@@ -49,6 +50,8 @@ import { useMediaQuery } from '@mui/material';
 import Box from '@mui/material/Box';
 import { useTheme } from '@mui/material/styles';
 import { extractContainingDirectoryPath } from '@tagspaces/tagspaces-common/paths';
+import { findNeighborTab, OpenedFileTab, tabKey } from '-/utils/openedFileTabs';
+import { clearViewerScroll, saveViewerScroll } from '-/utils/mdViewerScroll';
 import React, {
   MutableRefObject,
   useEffect,
@@ -71,6 +74,9 @@ function EntryContainer() {
     isEntryInFullWidth,
     fileChanged,
     setFileChanged,
+    openedFileTabs,
+    removeOpenedFileTabByKey,
+    openEntryTab,
   } = useOpenedEntryContext();
   const { setActions } = usePerspectiveActionsContext();
   const { toggleFullScreen } = useFullScreenContext();
@@ -496,8 +502,81 @@ function EntryContainer() {
     }
   };
 
+  // Mirror of the context's fileChanged for callbacks that outlive a render
+  // (the save-then-switch poll below reads the latest value, not a snapshot).
+  const fileChangedRef = useRef(fileChanged);
+  fileChangedRef.current = fileChanged;
+
+  /**
+   * Activates a document tab. Opening goes through openEntryTab so the tab's
+   * own locationID is honored — a tab from another location must never be
+   * resolved against the current location. With unsaved editor changes the
+   * existing open-file guard would just refuse; offer save/discard first and
+   * switch once the save has landed (the crepe editor saves asynchronously —
+   * switching before the write completes would kill the in-flight save).
+   * Dead tabs (file or location gone) are dropped from the strip.
+   */
+  const activateTab = (tab: OpenedFileTab) => {
+    if (!openedEntry || tabKey(tab) === tabKey(openedEntry)) {
+      return;
+    }
+    const openIt = () => {
+      saveViewerScroll(fileViewer.current, openedEntry);
+      openEntryTab(tab).then((ok) => {
+        if (!ok && !fileChangedRef.current) {
+          removeOpenedFileTabByKey(tabKey(tab));
+          clearViewerScroll(tab);
+        }
+      });
+    };
+    if (isEditMode && fileChangedRef.current) {
+      openConfirmDialog(
+        t('core:confirm'),
+        t('core:saveFileBeforeClosingFile'),
+        (result) => {
+          if (result) {
+            startSavingFile();
+            const waitSavedAndOpen = (tries = 0) => {
+              if (!fileChangedRef.current || tries > 50) {
+                setFileChanged(false);
+                openIt();
+              } else {
+                setTimeout(() => waitSavedAndOpen(tries + 1), 100);
+              }
+            };
+            waitSavedAndOpen();
+          } else {
+            setFileChanged(false);
+            openIt();
+          }
+        },
+        'cancelSwitchDocDialog',
+        'confirmSwitchDocDialog',
+        'confirmDialogContent',
+      );
+    } else {
+      openIt();
+    }
+  };
+
   const closeFile = () => {
-    closeOpenedEntries();
+    // Editor-style tab behavior: closing a document activates its neighbor
+    // instead of dropping back to an empty viewer, so the remaining tabs stay
+    // reachable (the tab strip only renders while the viewer is open).
+    const neighbor = findNeighborTab(openedFileTabs, tabKey(openedEntry));
+    clearViewerScroll(openedEntry);
+    // False means an "unsaved description" confirm dialog was raised instead
+    // and the viewer stays on this file — switching now would race it.
+    const closed = closeOpenedEntries();
+    if (closed && neighbor && tabKey(neighbor) !== tabKey(openedEntry)) {
+      setFileChanged(false);
+      openEntryTab(neighbor).then((ok) => {
+        if (!ok && !fileChangedRef.current) {
+          removeOpenedFileTabByKey(tabKey(neighbor));
+          clearViewerScroll(neighbor);
+        }
+      });
+    }
   };
 
   const startSavingFile = () => {
@@ -615,6 +694,9 @@ function EntryContainer() {
       }}
     >
       {(() => {
+        // The strip only makes sense while a *file* is viewed (a directory
+        // entry never matches a tab, so nothing would be highlighted).
+        const docTabsVisible = openedFileTabs.length > 1 && openedEntry.isFile;
         const topPane = (
           <Box
             sx={{
@@ -626,6 +708,21 @@ function EntryContainer() {
               overflow: 'hidden',
             }}
           >
+            {docTabsVisible && (
+              <OpenedFileTabs
+                tabs={openedFileTabs}
+                activeKey={tabKey(openedEntry)}
+                onSelect={activateTab}
+                onClose={(tab) => {
+                  if (tabKey(tab) === tabKey(openedEntry)) {
+                    startClosingEntry(undefined);
+                  } else {
+                    removeOpenedFileTabByKey(tabKey(tab));
+                    clearViewerScroll(tab);
+                  }
+                }}
+              />
+            )}
             <Box
               sx={{
                 paddingLeft: 0,
@@ -693,14 +790,27 @@ function EntryContainer() {
         // and tab strip and disable dragging; the file content (size,
         // scroll, in-flight loads) survives the toggle untouched.
         const CLOSED_TOP_PANE_HEIGHT = 108; // title (48) + tab strip (60)
+        // The document tab strip (35px) sits inside the top pane; compensate
+        // the splitter size so the strip never eats into the properties
+        // area. The persisted propsSize stores the strip-less height —
+        // subtract it back in onChange so dragging doesn't write the
+        // compensation into the persisted value.
+        const DOC_TAB_STRIP_HEIGHT = 35;
+        const closedTopPaneHeight =
+          CLOSED_TOP_PANE_HEIGHT + (docTabsVisible ? DOC_TAB_STRIP_HEIGHT : 0);
+        const openTopPaneExtra = docTabsVisible ? DOC_TAB_STRIP_HEIGHT : 0;
         return (
           <Box sx={{ height: '100%' }}>
             <Splitter
               direction="horizontal"
-              size={isPanelOpened ? propsSize : CLOSED_TOP_PANE_HEIGHT}
-              min={150}
+              size={
+                isPanelOpened
+                  ? propsSize + openTopPaneExtra
+                  : closedTopPaneHeight
+              }
+              min={150 + openTopPaneExtra}
               defaultSize={200}
-              onChange={setPropsSize}
+              onChange={(size) => setPropsSize(size - openTopPaneExtra)}
               disabled={!isPanelOpened}
               ariaLabel={t('core:togglePreviewSize')}
             >

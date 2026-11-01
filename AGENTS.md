@@ -174,6 +174,51 @@
 
 **迭代流程教训**：改完代码先在本地能验证的层面验证（如 koffi 行为用 mac 系统库实测、CSS 修复用 Playwright 驱动真实 Chromium 断言），再打包；打包只出 zip 绿色版，约 4 分钟。
 
+### 文档 Tab 页（多文件预览切换，2026-11-01 落地，同日按评审加固）
+
+在文件查看器（EntryContainer）顶部增加编辑器风格的**已打开文档标签条**：本会话内每打开
+一个文件自动累积一个 tab（`addToEntryContainer` 里 upsert，最多 10 个，内存态不持久化），
+点击 tab 切换，× 关闭（关闭当前 tab 自动激活相邻 tab，最后一个关闭才回文件夹视图；
+关闭 active tab 走 `startClosingEntry` 的未保存确认）。
+
+- `src/renderer/utils/openedFileTabs.ts` — 纯函数（upsert/remove/findNeighbor，cap 10）。
+  **tab 身份是 `locationID + '|' + path`（`tabKey`）**，纯 path 会跨位置互相覆盖、并被
+  错误地按当前 location 解析
+- `src/renderer/components/OpenedFileTabs.tsx` — 标签条 UI（≥2 个 tab 且当前是文件时才
+  显示；active tab 的关闭按钮常显，触屏无 hover 也能关；data-tid 带下标防同名）
+- `OpenedEntryContextProvider` 暴露 `openedFileTabs` / `removeOpenedFileTabByKey` /
+  `openEntryTab(tab)`（走 `openEntryInternal`，按 tab 自己的 locationID 解析属性，
+  **不能**用 `openEntry(path)`——它只认当前 location，跨位置必坏；location 已删时
+  提示并拒绝）；`closeOpenedEntries`（内部版）按 tabKey 移除 active tab
+- `EntryContainer.tsx`：`activateTab` 处理切换——**编辑中有未保存改动时先弹
+  保存/放弃确认，等保存落地（fileChanged 清除，轮询 ≤5s）再切**（crepe 保存是异步
+  postMessage，立即切走 iframe 会杀死在途保存）；打开失败（文件/位置没了）且非
+  fileChanged 拦截时移除死 tab
+- **关闭链返回值语义**：`FilePropertiesContextProvider.closeOpenedEntries()` 返回
+  boolean——描述有未保存改动时它只弹确认框、viewer 不关（返回 false），调用方
+  （`EntryContainer.closeFile`）不得继续切 neighbor
+- **滚动现场**：`utils/mdViewerScroll.ts` 模块级 Map 按 tabKey 记住 md viewer 的
+  `#app` scrollTop；切换前 `saveViewerScroll`，`FileView` iframe load 后
+  `restoreViewerScroll`（md 内容异步渲染，150ms 重试 ≤3s）
+- Splitter 补偿：标签条 35px 由 splitter size 补回（`propsSize + 35`，`onChange`
+  回写时减掉，持久化值不含补偿）
+- 单测 `tests/unit/openedFileTabs.test.js`
+
+### md 预览样式覆盖（标题字号 / 表格自适应，2026-11-01 落地）
+
+md-editor 扩展（`@tagspaces/extensions/md-editor`，Milkdown Crepe 主题）是 node_modules
+里的预构建产物，其 CSS 硬编码 h1=32px（另一主题 42px）对正文 16px、表格
+`table-layout:fixed; width:100%`（永远撑满、不随内容收缩），且改 node_modules 会在
+npm install 后丢失。因此由宿主 `FileView.tsx` 在 iframe load 后向同源 iframe 注入
+`src/renderer/utils/mdViewerOverrides.ts` 的覆盖样式（style id
+`ts-md-viewer-overrides`，每次导航重注入）：h1 24px … h6 14px（对齐主流阅读器比例，
+正文保持扩展默认 16px 不动——需求是缩小标题反差，不是整体缩字号），
+表格 `table-layout:auto; width:auto; max-width:100%` + `.milkdown-table-block`
+横向滚动兜底。选择器限定 `.milkdown` 作用域；**注入和滚动恢复都以
+`viewingExtensionId.includes('md-editor')` 为条件**，不碰 pdf/图片等同容器扩展。
+已按 AGENTS 规范用 CDP 真机验证：tab 条可视、跨 tab 切换/关闭自动激活、滚动位置
+恢复（141→切走→切回→141）、h1 computed 24px、表格 computed auto 且按内容收缩。
+
 ### 文件版本清理（File Version Cleanup）
 
 在全局搜索模式下，工具栏提供"版本清理"按钮，用于识别和清理同系列文件的老旧版本。

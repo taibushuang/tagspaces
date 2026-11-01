@@ -26,6 +26,11 @@ import useEventListener from '-/utils/useEventListener';
 import { Box } from '@mui/material';
 import { rgbToHex, useTheme } from '@mui/material/styles';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import {
+  MD_VIEWER_OVERRIDES_CSS,
+  MD_VIEWER_STYLE_ID,
+} from '-/utils/mdViewerOverrides';
+import { restoreViewerScroll } from '-/utils/mdViewerScroll';
 import fscreen from 'fscreen';
 import {
   MutableRefObject,
@@ -53,6 +58,30 @@ function FileView(props: Props) {
   const { searchQuery, isSearchMode } = useDirectoryContentContext();
   const { fileViewer, fileViewerContainer, height, handleMessage } = props;
   const eventID = useRef<string>(getUuid());
+
+  // Viewer extensions are same-origin iframes. The md editor's prebuilt CSS
+  // ships oversized headings and fixed-width tables; re-inject the host
+  // overrides after every navigation (each opened file reloads the iframe).
+  // Scoped to the md editor extension — other viewers (pdf, image, …) share
+  // this iframe and must not be touched.
+  const handleIframeLoad = useCallback(() => {
+    if (!openedEntry?.viewingExtensionId?.includes('md-editor')) {
+      return;
+    }
+    try {
+      const doc = fileViewer?.current?.contentDocument;
+      if (doc && doc.head && !doc.getElementById(MD_VIEWER_STYLE_ID)) {
+        const style = doc.createElement('style');
+        style.id = MD_VIEWER_STYLE_ID;
+        style.textContent = MD_VIEWER_OVERRIDES_CSS;
+        doc.head.appendChild(style);
+      }
+      // Switching tabs reloads this iframe — bring back the reading position.
+      restoreViewerScroll(fileViewer?.current, openedEntry);
+    } catch (ex) {
+      console.debug('Viewer style injection skipped:', ex);
+    }
+  }, [fileViewer, openedEntry]);
 
   useEffect(() => {
     if (AppConfig.isElectron) {
@@ -328,6 +357,7 @@ function FileView(props: Props) {
         allow="clipboard-write 'src'; fullscreen 'src'; camera 'none'; microphone 'none'; geolocation 'none'; payment 'none'"
         referrerPolicy="no-referrer"
         src={fileOpenerURL}
+        onLoad={handleIframeLoad}
         sandbox="allow-same-origin allow-scripts allow-modals allow-downloads"
         id={'FileViewer' + eventID.current}
       />

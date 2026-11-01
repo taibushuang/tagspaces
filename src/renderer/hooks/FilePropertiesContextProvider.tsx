@@ -44,7 +44,12 @@ type FilePropertiesContextData = {
   setSaveDescriptionConfirmOpened: (open: boolean) => void;
   setDescription: (description: string, changed?: boolean) => void;
   saveDescription: () => Promise<boolean>;
-  closeOpenedEntries: () => void;
+  /**
+   * Returns true when the viewer was actually closed. False means a
+   * "unsaved description" confirm dialog was raised instead — the caller
+   * must NOT proceed (e.g. must not auto-activate a neighbor document tab).
+   */
+  closeOpenedEntries: () => boolean;
 };
 
 export const FilePropertiesContext = createContext<FilePropertiesContextData>({
@@ -124,17 +129,19 @@ export const FilePropertiesContextProvider = ({
     }
   }, [openedEntry]);
 
-  function closeOpenedEntries() {
+  function closeOpenedEntries(): boolean {
     if (openedEntry) {
       if (isDescriptionChanged.current) {
         isDescriptionChanged.current = false;
         // handle not saved changes
         setSaveDescriptionConfirmOpened(true);
         //forceUpdate();
-      } else {
-        actuallyCloseFiles();
+        return false;
       }
+      actuallyCloseFiles();
+      return true;
     }
+    return true;
   }
 
   function saveDescription(): Promise<boolean> {

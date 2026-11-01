@@ -46,6 +46,12 @@ import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
 import { clearURLParam, getURLParameter, updateHistory } from '-/utils/dom';
 import { isPathEscape, parseTsLink, resolveRelativePath } from '-/utils/tsLink';
+import {
+  OpenedFileTab,
+  removeOpenedFileTab,
+  tabKey,
+  upsertOpenedFileTab,
+} from '-/utils/openedFileTabs';
 import useFirstRender from '-/utils/useFirstRender';
 import versionMeta from '-/version.json';
 import {
@@ -113,6 +119,9 @@ type OpenedEntryContextData = {
   openNextFile: (entries: TS.FileSystemEntry[]) => Promise<TS.FileSystemEntry>;
   openPrevFile: (entries: TS.FileSystemEntry[]) => Promise<TS.FileSystemEntry>;
   toggleEntryFullWidth: () => void;
+  openedFileTabs: OpenedFileTab[];
+  removeOpenedFileTabByKey: (key: string) => void;
+  openEntryTab: (tab: OpenedFileTab) => Promise<boolean>;
   openLink: (url: string, options?) => void;
   //goForward: () => void;
   //goBack: () => void;
@@ -147,6 +156,9 @@ export const OpenedEntryContext = createContext<OpenedEntryContextData>({
   openNextFile: undefined,
   openPrevFile: undefined,
   toggleEntryFullWidth: () => {},
+  openedFileTabs: [],
+  removeOpenedFileTabByKey: () => {},
+  openEntryTab: () => Promise.resolve(false),
   openLink: () => {},
   //goForward: () => {},
   //goBack: () => {},
@@ -193,6 +205,7 @@ export const OpenedEntryContextProvider = ({
   const newHTMLFileContent = useSelector(getNewHTMLFileContent);
   const currentEntry = useRef<TS.OpenedEntry>(undefined);
   const fileChanged = useRef<boolean>(false);
+  const openedFileTabs = useRef<OpenedFileTab[]>([]);
   const isEntryInFullWidth = useRef<boolean>(false);
   const sharingLink = useRef<string>(undefined);
   const sharingParentFolderLink = useRef<string>(undefined);
@@ -482,6 +495,12 @@ export const OpenedEntryContextProvider = ({
   function addToEntryContainer(fsEntry: TS.OpenedEntry) {
     setSharedLinks(fsEntry).then(() => {
       currentEntry.current = { ...fsEntry };
+      if (fsEntry.isFile && !isMeta(fsEntry.path)) {
+        openedFileTabs.current = upsertOpenedFileTab(
+          openedFileTabs.current,
+          fsEntry,
+        );
+      }
       forceUpdate();
     });
     // setOpenedEntries([fsEntry]); // [...openedEntries, fsEntry] // TODO uncomment for multiple file support
@@ -489,10 +508,31 @@ export const OpenedEntryContextProvider = ({
 
   function closeOpenedEntries() {
     setSharedLinks().then(() => {
+      if (currentEntry.current) {
+        openedFileTabs.current = removeOpenedFileTab(
+          openedFileTabs.current,
+          tabKey(currentEntry.current),
+        );
+      }
       currentEntry.current = undefined;
       fileChanged.current = false;
       forceUpdate();
     });
+  }
+
+  /**
+   * Opens a document tab respecting its own location (unlike openEntry(path),
+   * which resolves against the *current* location and breaks for tabs from
+   * another location). Returns false when the file or its location is gone —
+   * the caller should then drop the dead tab.
+   */
+  function openEntryTab(tab: OpenedFileTab): Promise<boolean> {
+    if (!findLocation(tab.locationID)) {
+      showNotification(t('core:invalidLink'), 'warning', true);
+      return Promise.resolve(false);
+    }
+    // openEntryInternal resolves properties with (path, locationID).
+    return openEntryInternal(tab as TS.FileSystemEntry);
   }
 
   function actuallyCloseFiles() {
@@ -1165,6 +1205,15 @@ ${newHTMLFileContent.split('<body></body>')[1]}`;
       openNextFile,
       openPrevFile,
       toggleEntryFullWidth,
+      openedFileTabs: openedFileTabs.current,
+      removeOpenedFileTabByKey: (key: string) => {
+        openedFileTabs.current = removeOpenedFileTab(
+          openedFileTabs.current,
+          key,
+        );
+        forceUpdate();
+      },
+      openEntryTab,
       //goForward,
       //goBack,
       openLink,
@@ -1176,6 +1225,7 @@ ${newHTMLFileContent.split('<body></body>')[1]}`;
     fileChanged.current,
     currentEntry.current,
     isEntryInFullWidth.current,
+    openedFileTabs.current,
     currentLocation,
     currentDirectoryPath,
   ]);
