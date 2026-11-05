@@ -38,6 +38,12 @@ import {
   probeOpenAIEndpoint,
   verifyOpenAIModel,
 } from '-/components/chat/OpenAIClient';
+import {
+  getGatewayModels,
+  newGatewayMessage,
+  probeGatewayEndpoint,
+  verifyGatewayModel,
+} from '-/components/chat/LlmGatewayClient';
 import { ChatRequest, ModelResponse, Ollama } from 'ollama';
 
 export interface AiClient {
@@ -75,7 +81,34 @@ export async function getAiClient(provider: AIProvider): Promise<AiClient> {
   if (!provider || !provider.url) {
     return undefined;
   }
-  if (provider.engine === 'openai-compatible') {
+  if (
+    provider.engine === 'openai-compatible' ||
+    provider.engine === 'llm-gateway'
+  ) {
+    if (provider.engine === 'llm-gateway') {
+      // CCB subsidiary gateway: custom protocol (message/session_id + SSE
+      // content frames), not OpenAI wire format.
+      let gatewayController: AbortController | undefined;
+      return {
+        engine: provider.engine,
+        list: () => getGatewayModels(provider.url, provider.authKey),
+        chat: (msg, handler) => {
+          gatewayController = new AbortController();
+          return newGatewayMessage(
+            provider.url,
+            msg,
+            handler,
+            provider.authKey,
+            gatewayController.signal,
+          );
+        },
+        abort: () => {
+          if (gatewayController) {
+            gatewayController.abort();
+          }
+        },
+      };
+    }
     let controller: AbortController | undefined;
     return {
       engine: provider.engine,
@@ -141,6 +174,9 @@ export async function verifyProviderModel(
   if (provider.engine === 'openai-compatible') {
     return verifyOpenAIModel(provider.url, provider.authKey, modelName);
   }
+  if (provider.engine === 'llm-gateway') {
+    return verifyGatewayModel(provider.url, provider.authKey, modelName);
+  }
   // Ollama: a tiny chat round-trip proves endpoint + model.
   try {
     const ollama = await getOllamaInstance(provider.url);
@@ -175,6 +211,10 @@ export async function probeProviderEndpoint(provider: AIProvider): Promise<{
   }
   if (provider.engine === 'openai-compatible') {
     const result = await probeOpenAIEndpoint(provider.url, provider.authKey);
+    return result;
+  }
+  if (provider.engine === 'llm-gateway') {
+    const result = await probeGatewayEndpoint(provider.url, provider.authKey);
     return result;
   }
   // Ollama: the SDK list doubles as the discovery probe.

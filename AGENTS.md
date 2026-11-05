@@ -325,6 +325,35 @@ run 后启动的窗口由 MenuItem disabled 兜住），`handleNewSession`/
 - `tests/unit/diskScanner.test.js` — 聚合/黑名单跳过/截断护栏/profile→扩展名映射
 - **收件箱每日自动归类闭环（2026-10-06 已实现）**：`mark_inbox_organized` 工具（确定性完成钩子，`src/renderer/utils/inboxOrganize.ts` 存每收件箱"上次整理时间"标记，localStorage `tsInboxLastOrganized`）+ AgentPanel 每日提醒卡片（disk-init 完成后，列出每个收件箱里 `lmdt` 晚于上次标记的新文件数与「整理收件箱」按钮，按钮用 `handleSend` 播种每日 pass 指令）+ 提示词把 inbox 引导收紧为「每日 inbox pass」流程（read_disk_init → list_folder → 依规则 move_file（copy 模式 keepSource）→ 无规则命中用 organize_preview/apply 类型归档兜底 → 打标签 → write_knowledge_entry 写整理记录 → mark_inbox_organized）。单测 `tests/unit/inboxOrganize.test.js` + organizeTools 集成用例。
 
+### 子公司模式 LLM 网关接入（llm-gateway 引擎，2026-11-05 落地）
+
+兼容建行子公司模式网关（`aiyunwei/monitor-qwen-final/llm_gateway/`，
+`upstream_mode: ccb_subsidiary`）。该网关**不是 OpenAI 协议**，客户端新增
+`engine: 'llm-gateway'` 专门适配：
+
+- **协议**：`POST {base}/chat-gen/conversation`，body=`{message(必填), session_id(必填,
+  ^[A-Za-z0-9_-]{1,64}$), messages?(OpenAI 格式透传), model?, stream?}`；响应为 SSE
+  `data: {"content": "..."}` … `data: [DONE]`（非 OpenAI delta 结构）；模型列表
+  `GET /chat-gen/models` → `data.models`（字符串数组）。网关侧校验 messages 每条必须
+  带 `role`+`content`（assistant 工具调用消息 content=null 会被拒）。
+- **鉴权**：provider 的 authKey 同时以 `X-Api-Key` 头和 `Cookie: access-token=` 发送
+  （新旧部署基线都覆盖）。
+- **多轮对话**：每次请求带独立随机 `job-ts<uuid>` session_id（`job-` 前缀 = 网关
+  upstream 自管模式，`messages` 全量透传），不依赖网关侧会话记忆。
+- **核心文件**：`src/renderer/components/chat/LlmGatewayClient.ts`（协议适配：URL 归一、
+  双鉴权头、content 消毒为纯文本、SSE 解析、list/probe/verify）；`AiClient.ts` 三处
+  分支；`AgentService.ts` 的 `AgentRunOptions.engine` 按 engine 分派
+  `chatGatewayCompletion`/`chatOpenAICompletion`（两个 runAgent 调用点已传 engine）；
+  `aiPresets.ts` 预设 `ccb-gateway`「CCB 子公司网关」（默认 URL 生产 nginx 前缀
+  `https://im5.ccbft.com/node3`，测试环境为 `http://<host>:8088` 直连）。
+- **能力边界（勿回退）**：该上游**无 tool-calling**——Agent 在此引擎下自动降级为纯对话
+  （tools 字段不发送，模型不会返回 tool_calls）；设置页的 tool-calling 探测
+  （`checkAgentSupport`）仅对 openai-compatible 触发，llm-gateway 天然跳过。
+- **真机验证**（2026-11-05，CDP 驱动 dev 应用 + `manual/mock-gateway-subsidiary.js`）：
+  预设菜单可见、建引擎、URL/Key/手动加模型、保存并验证、切默认引擎、Agent 面板两轮
+  对话（网关侧确认 messages 2→4 条透传多轮）全部通过；脚本
+  `manual/drive-subsidiary-verify.js`，截图 `manual/shots/subsidiary-0*.png`。
+
 ### 待办（Todo）
 
 个人轻量待办清单，展示"还有哪些代办要做"。**入口（2026-10-02 起为"挤占式"）**：主工具栏 Checklist 按钮（带未完成数 Badge，打开时图标高亮）→ 点击后**中间原显示文件夹内容的区域切换为待办面板**（`RenderPerspective` 里 `isTodoOpen` 时渲染 `TodoListPanel` 替代内容），**再次点击按钮隐藏、恢复文件夹内容**。面板内：状态 tabs / 搜索 / 排序 / 勾选完成 / 标记进行中 / 编辑 / 删除 / 导出 Markdown；新建/编辑表单（`TodoEditDialog`）和删除确认仍用弹窗。

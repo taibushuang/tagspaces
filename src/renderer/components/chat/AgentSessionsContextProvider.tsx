@@ -831,6 +831,7 @@ export function AgentSessionsContextProvider(props: {
         const result = await runAgent({
           url: defaultAiProvider.url,
           authKey: defaultAiProvider.authKey,
+          engine: defaultAiProvider.engine,
           model,
           messages: [
             {

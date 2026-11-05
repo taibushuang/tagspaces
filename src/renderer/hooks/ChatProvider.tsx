@@ -1465,6 +1465,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       const result = await runAgent({
         url: defaultAiProvider.url,
         authKey: defaultAiProvider.authKey,
+        engine: defaultAiProvider.engine,
         model,
         messages,
         tools: buildAgentTools(),

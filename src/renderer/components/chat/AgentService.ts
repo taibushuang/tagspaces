@@ -28,6 +28,8 @@
  */
 import { ChatRequest } from 'ollama';
 import { chatOpenAICompletion } from '-/components/chat/OpenAIClient';
+import { chatGatewayCompletion } from '-/components/chat/LlmGatewayClient';
+import type { AIProviders } from '-/components/chat/ChatTypes';
 
 export type AgentTool = {
   name: string;
@@ -118,6 +120,8 @@ export const TOOL_RESULT_CHAR_LIMIT = 4000;
 export type AgentRunOptions = {
   url: string;
   authKey?: string;
+  /** Provider engine — selects the wire protocol (see completionEngine). */
+  engine?: AIProviders;
   model: string;
   messages: AgentMessage[];
   tools: AgentTool[];
@@ -234,6 +238,7 @@ export async function runAgent(
   const {
     url,
     authKey,
+    engine,
     model,
     messages,
     tools,
@@ -255,6 +260,12 @@ export async function runAgent(
     stream: true,
   };
   (request as any).tools = tools.map(toOpenAITool);
+
+  // Wire-protocol dispatch: the CCB subsidiary gateway speaks its own
+  // message/session protocol and has no tool-calling support — runs on it
+  // degrade to plain chat (tool_calls never come back).
+  const completion =
+    engine === 'llm-gateway' ? chatGatewayCompletion : chatOpenAICompletion;
 
   // eslint-disable-next-line no-constant-condition -- bounded by checkpoints + abort
   while (true) {
@@ -296,7 +307,7 @@ export async function runAgent(
       });
     }
     // eslint-disable-next-line no-await-in-loop -- each round depends on the previous tool results
-    const result = await chatOpenAICompletion(
+    const result = await completion(
       url,
       { ...request, messages: conversation as any },
       (delta) => onEvent({ type: 'text', delta }),

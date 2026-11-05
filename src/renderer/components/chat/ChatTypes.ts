@@ -19,6 +19,7 @@
 export type AIProviders =
   | 'ollama'
   | 'openai-compatible'
+  | 'llm-gateway'
   | 'node-lama'
   | 'chatgpt';
 export type ChatRole = 'user' | 'system' | 'assistant' | 'tool';

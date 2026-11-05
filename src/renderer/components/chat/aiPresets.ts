@@ -95,6 +95,16 @@ export const aiPresets: AiPreset[] = [
     icon: 'ai',
   },
   {
+    key: 'ccb-gateway',
+    label: 'CCB 子公司网关',
+    engine: 'llm-gateway',
+    // Production goes through the nginx prefix; test env is a direct
+    // http://<host>:8088 gateway connection. Auth = the access-token the
+    // gateway operator assigned (saved as the provider authKey).
+    defaultUrl: 'https://im5.ccbft.com/node3',
+    icon: 'ai',
+  },
+  {
     key: 'openai-compatible',
     label: 'OpenAI-compatible',
     engine: 'openai-compatible',
