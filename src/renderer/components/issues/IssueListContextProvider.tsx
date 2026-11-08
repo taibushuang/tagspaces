@@ -15,6 +15,7 @@ import React, {
   useState,
 } from 'react';
 import issueApi from './issueService';
+import { resolveAppVersion } from '-/utils/appVersion';
 import {
   IssueCreateInput,
   IssueItem,
@@ -113,7 +114,10 @@ export function IssueListContextProvider({
       .getPath()
       .then((p: IssuePathInfo) => {
         setDataPath(p.file);
-        setAppInfo({ version: p.version, platform: p.platform });
+        setAppInfo({
+          version: resolveAppVersion(p.version),
+          platform: p.platform,
+        });
       })
       .catch(() => {});
   }, [refresh]);

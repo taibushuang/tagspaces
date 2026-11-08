@@ -226,4 +226,46 @@ describe('report_issue / list_issues 工具链（mock IPC）', () => {
     const res = await tool('report_issue').execute({ type: 'bug' });
     expect(res.error).toContain('title');
   });
+
+  test('dev 运行时 app.getVersion() 回落到 Electron 版本时改写为构建期版本', async () => {
+    // Unpackaged runs (`electron path/to/main.js`) have no loadable package.json,
+    // so the main process reports Electron's own version (42.4.0) instead of the
+    // app version. The renderer detects that via the UA string and substitutes
+    // the build-time version, so dev-filed issues do not claim a phantom release.
+    const originalNavigator = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'navigator',
+    );
+    const originalGetPath = handlers['issue:getPath'];
+    try {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: {
+          userAgent:
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/148.0 Electron/42.4.0 Safari/537.36',
+        },
+        configurable: true,
+      });
+    } catch (e) {
+      return; // navigator not overridable in this runtime
+    }
+    handlers['issue:getPath'] = () => ({
+      ...originalGetPath(),
+      version: '42.4.0',
+    });
+    try {
+      const res = await tool('report_issue').execute({
+        type: 'bug',
+        title: 'dev 版本号纠偏',
+      });
+      expect(res.ok).toBe(true);
+      const row = issueRows[issueRows.length - 1];
+      expect(row.context.appVersion).not.toBe('42.4.0');
+      expect(row.context.appVersion).toMatch(/^\d+\.\d+/);
+    } finally {
+      handlers['issue:getPath'] = originalGetPath;
+      if (originalNavigator) {
+        Object.defineProperty(globalThis, 'navigator', originalNavigator);
+      }
+    }
+  });
 });

@@ -66,6 +66,7 @@ import {
   updateOrganizeRecord,
 } from '-/utils/organizeHistory';
 import type { OrganizeItem, OrganizeRecord } from '-/utils/organizeHistory';
+import { resolveAppVersion } from '-/utils/appVersion';
 import {
   DELETE_BATCH_LIMIT,
   appendDeleteRecord,
@@ -2210,10 +2211,11 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
           try {
             const info = await issueApi.getPath();
             if (info?.version || info?.platform || info?.osVersion) {
+              const appVersion = resolveAppVersion(info?.version);
               await issueApi.update(item.id, {
                 context: {
                   ...(item.context || {}),
-                  ...(info.version && { appVersion: info.version }),
+                  ...(appVersion && { appVersion }),
                   ...(info.platform && { platform: info.platform }),
                   ...(info.osVersion && { osVersion: info.osVersion }),
                   ...(info.appLanguage && { appLanguage: info.appLanguage }),
