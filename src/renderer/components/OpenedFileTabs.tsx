@@ -30,6 +30,13 @@ interface Props {
   activeKey?: string;
   onSelect: (tab: OpenedFileTab) => void;
   onClose: (tab: OpenedFileTab) => void;
+  /**
+   * Width in px reserved on the trailing edge for `EntryContainerNav`, which is
+   * absolutely positioned in the top-right corner of the viewer pane and shares
+   * this vertical band. Without it the tabs scroll *under* the nav buttons and
+   * the covered tab's close button becomes unclickable.
+   */
+  reservedRightSpace?: number;
 }
 
 /**
@@ -39,7 +46,13 @@ interface Props {
  * list — the md/multi-document reading gap vs. other editors.
  */
 function OpenedFileTabs(props: Props) {
-  const { tabs, activeKey, onSelect, onClose } = props;
+  const {
+    tabs,
+    activeKey,
+    onSelect,
+    onClose,
+    reservedRightSpace = 170,
+  } = props;
   const theme = useTheme();
   const { t } = useTranslation();
 
@@ -51,97 +64,112 @@ function OpenedFileTabs(props: Props) {
     <Box
       data-tid="openedFileTabsTID"
       sx={{
+        // The outer box draws the divider for the full pane width; the inner
+        // box is the scroll container and is shrunk by the reserved space so
+        // its clip edge never reaches the nav buttons.
+        width: '100%',
+        minWidth: 0,
         display: 'flex',
         flexDirection: 'row',
-        alignItems: 'stretch',
-        overflowX: 'auto',
-        overflowY: 'hidden',
-        minHeight: '34px',
-        paddingLeft: '8px',
         borderStyle: 'solid',
         borderColor: theme.palette.divider,
         borderWidth: '0px',
         borderBottomWidth: '1px',
-        scrollbarWidth: 'thin',
       }}
     >
-      {tabs.map((tab, index) => {
-        const isActive = tabKey(tab) === activeKey;
-        return (
-          <Box
-            key={tabKey(tab)}
-            data-tid={`openedFileTab_${index}`}
-            onClick={() => {
-              if (!isActive) {
-                onSelect(tab);
-              }
-            }}
-            sx={{
-              display: 'flex',
-              flexDirection: 'row',
-              alignItems: 'center',
-              maxWidth: '220px',
-              minWidth: '80px',
-              paddingLeft: '10px',
-              paddingRight: '2px',
-              cursor: isActive ? 'default' : 'pointer',
-              fontSize: '13px',
-              whiteSpace: 'nowrap',
-              color: isActive
-                ? theme.palette.text.primary
-                : theme.palette.text.secondary,
-              backgroundColor: isActive
-                ? theme.palette.action.selected
-                : 'transparent',
-              borderRadius: '6px 6px 0 0',
-              borderStyle: 'solid',
-              borderColor: 'transparent',
-              borderBottomColor: isActive
-                ? theme.palette.primary.main
-                : 'transparent',
-              '&:hover': {
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'row',
+          alignItems: 'stretch',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          minHeight: '34px',
+          paddingLeft: '8px',
+          marginRight: `${reservedRightSpace}px`,
+          flexGrow: 1,
+          minWidth: 0,
+          scrollbarWidth: 'thin',
+        }}
+      >
+        {tabs.map((tab, index) => {
+          const isActive = tabKey(tab) === activeKey;
+          return (
+            <Box
+              key={tabKey(tab)}
+              data-tid={`openedFileTab_${index}`}
+              onClick={() => {
+                if (!isActive) {
+                  onSelect(tab);
+                }
+              }}
+              sx={{
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                maxWidth: '220px',
+                minWidth: '80px',
+                paddingLeft: '10px',
+                paddingRight: '2px',
+                cursor: isActive ? 'default' : 'pointer',
+                fontSize: '13px',
+                whiteSpace: 'nowrap',
+                color: isActive
+                  ? theme.palette.text.primary
+                  : theme.palette.text.secondary,
                 backgroundColor: isActive
                   ? theme.palette.action.selected
-                  : theme.palette.action.hover,
-                '& .openedFileTabClose': { opacity: 1 },
-              },
-            }}
-          >
-            <Tooltip title={tab.path}>
-              <Box
-                sx={{
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  flexGrow: 1,
-                  py: '6px',
-                }}
-              >
-                {tab.name}
-              </Box>
-            </Tooltip>
-            <Tooltip title={t('core:closeButton')}>
-              <IconButton
-                className="openedFileTabClose"
-                data-tid={`closeOpenedFileTab_${index}`}
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onClose(tab);
-                }}
-                sx={{
-                  // Always visible on the active tab: touch devices have no
-                  // hover, the button would be undiscoverable there.
-                  opacity: isActive ? 1 : 0,
-                  ml: 0.5,
-                }}
-              >
-                <CloseIcon sx={{ fontSize: '14px' }} />
-              </IconButton>
-            </Tooltip>
-          </Box>
-        );
-      })}
+                  : 'transparent',
+                borderRadius: '6px 6px 0 0',
+                borderStyle: 'solid',
+                borderColor: 'transparent',
+                borderBottomColor: isActive
+                  ? theme.palette.primary.main
+                  : 'transparent',
+                '&:hover': {
+                  backgroundColor: isActive
+                    ? theme.palette.action.selected
+                    : theme.palette.action.hover,
+                  '& .openedFileTabClose': { opacity: 1 },
+                },
+              }}
+            >
+              <Tooltip title={tab.path}>
+                <Box
+                  sx={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    flexGrow: 1,
+                    py: '6px',
+                  }}
+                >
+                  {tab.name}
+                </Box>
+              </Tooltip>
+              <Tooltip title={t('core:closeButton')}>
+                <IconButton
+                  className="openedFileTabClose"
+                  data-tid={`closeOpenedFileTab_${index}`}
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClose(tab);
+                  }}
+                  sx={{
+                    // Always visible on the active tab: touch devices have no
+                    // hover, the button would be undiscoverable there.
+                    opacity: isActive ? 1 : 0,
+                    ml: 0.5,
+                  }}
+                >
+                  <CloseIcon sx={{ fontSize: '14px' }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          );
+        })}
+      </Box>
     </Box>
   );
 }

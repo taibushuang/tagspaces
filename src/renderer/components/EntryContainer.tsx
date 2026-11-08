@@ -42,6 +42,7 @@ import {
   getEntrySplitSize,
   getKeyBindingObject,
   isDesktopMode,
+  isHideProFeatures,
 } from '-/reducers/settings';
 import { getResizedImageThumbnail } from '-/services/thumbsgenerator';
 import { TS } from '-/tagspaces.namespace';
@@ -92,6 +93,7 @@ function EntryContainer() {
   const tabIndex = useSelector(getEntryContainerTab);
   const keyBindings = useSelector(getKeyBindingObject);
   const desktopMode = useSelector(isDesktopMode);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const theme = useTheme();
   const timer = useRef<NodeJS.Timeout>(null);
   const propsSize = useSelector(getEntrySplitSize);
@@ -712,6 +714,15 @@ function EntryContainer() {
               <OpenedFileTabs
                 tabs={openedFileTabs}
                 activeKey={tabKey(openedEntry)}
+                // EntryContainerNav is absolutely positioned over this band, so
+                // the strip must keep that corner free (3 nav buttons for files
+                // + close + optional Pro bookmark, 40px each).
+                reservedRightSpace={
+                  3 * 40 +
+                  (smallScreen ? 0 : 40) +
+                  (!hideProFeatures && !smallScreen ? 40 : 0) +
+                  12
+                }
                 onSelect={activateTab}
                 onClose={(tab) => {
                   if (tabKey(tab) === tabKey(openedEntry)) {
