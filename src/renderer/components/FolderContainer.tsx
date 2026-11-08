@@ -285,7 +285,8 @@ function FolderContainer({ toggleDrawer, drawerOpened, hidden }: Props) {
       if (
         Pro ||
         perspectiveId === PerspectiveIDs.GRID ||
-        perspectiveId === PerspectiveIDs.LIST
+        perspectiveId === PerspectiveIDs.LIST ||
+        perspectiveId === PerspectiveIDs.NOTES
       ) {
         setManualDirectoryPerspective(perspectiveId);
       } else if (

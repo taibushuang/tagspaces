@@ -91,6 +91,22 @@ function ListPerspectiveAsync(props) {
   );
 }
 
+const NotesPerspective = React.lazy(
+  () =>
+    import(/* webpackChunkName: "NotesPerspective" */ '../perspectives/notes'),
+);
+function NotesPerspectiveAsync(props) {
+  return (
+    <React.Suspense fallback={<LoadingLazy />}>
+      <PerspectiveSettingsContextProvider>
+        <SortedDirContextProvider>
+          <NotesPerspective {...props} />
+        </SortedDirContextProvider>
+      </PerspectiveSettingsContextProvider>
+    </React.Suspense>
+  );
+}
+
 let GalleryPerspective = React.Fragment;
 if (Pro && Pro.Perspectives && Pro.Perspectives.GalleryPerspective) {
   // GalleryPerspective = React.lazy(() => import(/* webpackChunkName: "GalleryPerspective" */ '../node_modules/@tagspaces/pro/modules/perspectives/gallery'));
@@ -336,6 +352,9 @@ function RenderPerspective(props: Props) {
     );
     if (currentPerspective === PerspectiveIDs.LIST) {
       return wrap(PerspectiveIDs.LIST, <ListPerspectiveAsync />);
+    }
+    if (currentPerspective === PerspectiveIDs.NOTES) {
+      return wrap(PerspectiveIDs.NOTES, <NotesPerspectiveAsync />);
     }
     if (Pro && currentPerspective === PerspectiveIDs.GALLERY) {
       return wrap(PerspectiveIDs.GALLERY, <GalleryPerspectiveAsync />);

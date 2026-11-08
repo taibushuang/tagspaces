@@ -26,6 +26,7 @@ import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { PerspectiveIDs } from '-/perspectives';
 import { defaultSettings as defaultGridSettings } from '-/perspectives/grid';
 import { defaultSettings as defaultListSettings } from '-/perspectives/list';
+import { defaultSettings as defaultNotesSettings } from '-/perspectives/notes';
 import { Pro } from '-/pro';
 import {
   actions as AppActions,
@@ -661,6 +662,8 @@ export const DirectoryContentContextProvider = ({
       return defaultGridSettings;
     } else if (perspective === PerspectiveIDs.LIST) {
       return defaultListSettings;
+    } else if (perspective === PerspectiveIDs.NOTES) {
+      return defaultNotesSettings;
     } else if (Pro) {
       if (perspective === PerspectiveIDs.GALLERY) {
         return Pro.Perspectives.GalleryDefaultSettings;

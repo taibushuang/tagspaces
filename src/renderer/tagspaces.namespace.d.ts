@@ -420,6 +420,7 @@ export namespace TS {
   type PerspectiveType =
     | 'grid'
     | 'list'
+    | 'notes'
     | 'gallery'
     | 'mapique'
     | 'kanban'

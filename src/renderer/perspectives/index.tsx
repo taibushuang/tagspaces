@@ -16,6 +16,7 @@
  *
  */
 import CalendarPerspectiveIcon from '@mui/icons-material/CalendarMonth';
+import EditNoteIcon from '@mui/icons-material/EditNote';
 import GalleryPerspectiveIcon from '@mui/icons-material/Camera';
 import ExtensionIcon from '@mui/icons-material/Extension';
 import FolderVizPerspectiveIcon from '@mui/icons-material/Hub';
@@ -37,6 +38,7 @@ export const PerspectiveIDs = {
   MAPIQUE: 'mapique',
   KANBAN: 'kanban',
   CALENDAR: 'calendar',
+  NOTES: 'notes',
 };
 
 export const GridPerspectiveMeta = {
@@ -56,6 +58,17 @@ export const ListPerspectiveMeta = {
   icon: <ListPerspectiveIcon />,
   title: 'List Perspective',
 };
+
+export const NotesPerspectiveMeta = {
+  id: PerspectiveIDs.NOTES,
+  key: 'openNotesPerspective',
+  pro: false,
+  beta: true,
+  icon: <EditNoteIcon />,
+  title: 'Notes Perspective',
+};
+
+export { EditNoteIcon };
 
 export const MapiquePerspectiveMeta = {
   id: PerspectiveIDs.MAPIQUE,
@@ -139,6 +152,7 @@ const ExternalPerspectiveMetas: PerspectiveMeta[] = externalPerspectives
 export const AvailablePerspectives: PerspectiveMeta[] = [
   GridPerspectiveMeta,
   ListPerspectiveMeta,
+  NotesPerspectiveMeta,
   GalleryPerspectiveMeta,
   MapiquePerspectiveMeta,
   KanbanPerspectiveMeta,

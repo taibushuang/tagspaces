@@ -356,6 +356,31 @@ run 后启动的窗口由 MenuItem disabled 兜住），`handleNewSession`/
   对话（网关侧确认 messages 2→4 条透传多轮）全部通过；脚本
   `manual/drive-subsidiary-verify.js`，截图 `manual/shots/subsidiary-0*.png`。
 
+### 笔记视角（notes perspective，2026-11-08 落地）
+
+OneNote/Joplin 式快速笔记：一键新建 Markdown 笔记、卡片流按修改时间倒序 + 日期分组
+（今天/昨天/本周/本月/更早）、点击卡片直接进 md 编辑器输入。笔记就是当前文件夹里的
+`.md/.markdown/.txt` 文件，不引入数据库。`pro: false, beta: true`（社区版可见）。
+
+- **核心文件**：`src/renderer/perspectives/notes/`（index + NotesMainContainer +
+  NoteCard + NotesToolbar）；纯逻辑 `src/renderer/utils/notesGrouping.ts`
+  （isNoteFile/newNoteBaseName/groupNotesByDate，单测
+  `tests/unit/notesGrouping.test.js`）。
+- **接入点**：`perspectives/index.tsx` 注册 `PerspectiveIDs.NOTES`；`RenderPerspective.tsx`
+  懒加载分支（PerspectiveSettingsContextProvider + SortedDirContextProvider 包裹）；
+  `DirectoryContentContextProvider.tsx` 的 `getDefaultPerspectiveSettings` 加 notes 分支
+  （默认 `byDateModified` 降序）。
+- **非 Pro 白名单**：`FolderContainer.tsx` 的 `switchPerspective` 和
+  `DirectoryMenu.tsx` 的 `perspectiveSwitch` 对非 Pro 只放行 grid/list/notes，漏了会弹
+  Pro teaser（踩过：首次真机验证按钮点了没反应就是这个白名单）。
+- **老用户迁移**：`reducers/index.ts` 在 REHYDRATE 后一次性把 `notes` 并入持久化的
+  `enabledPerspectives`（标志位 `notesPerspectiveMigrated` 防重复，用户手动禁用后不再
+  复活）；`ExtEnabledPerspectives` 锁定的部署不受影响。
+- **新建笔记**：`NotesToolbar`/空态按钮 → `createFileAdvanced(dir, note-YYYYMMDD-HHmmss,
+  '# 未命名笔记\n\n', 'md')` + `openEntry(path, undefined, undefined, true)`；秒级命名
+  防冲突。真机验证（CDP + `manual/drive-notes-verify.js`）：切视角、一键建卡、分组头、
+  编辑器输入、保存落盘全部通过。
+
 ### 待办（Todo）
 
 个人轻量待办清单，展示"还有哪些代办要做"。**入口（2026-10-02 起为"挤占式"）**：主工具栏 Checklist 按钮（带未完成数 Badge，打开时图标高亮）→ 点击后**中间原显示文件夹内容的区域切换为待办面板**（`RenderPerspective` 里 `isTodoOpen` 时渲染 `TodoListPanel` 替代内容），**再次点击按钮隐藏、恢复文件夹内容**。面板内：状态 tabs / 搜索 / 排序 / 勾选完成 / 标记进行中 / 编辑 / 删除 / 导出 Markdown；新建/编辑表单（`TodoEditDialog`）和删除确认仍用弹窗。
