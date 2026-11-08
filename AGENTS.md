@@ -336,8 +336,8 @@ run 后启动的窗口由 MenuItem disabled 兜住），`handleNewSession`/
   `data: {"content": "..."}` … `data: [DONE]`（非 OpenAI delta 结构）；模型列表
   `GET /chat-gen/models` → `data.models`（字符串数组）。网关侧校验 messages 每条必须
   带 `role`+`content`（assistant 工具调用消息 content=null 会被拒）。
-- **鉴权**：provider 的 authKey 同时以 `X-Api-Key` 头和 `Cookie: access-token=` 发送
-  （新旧部署基线都覆盖）。
+- **鉴权**：provider 的 authKey 以 `X-Api-Key` 头发送（生产网关唯一鉴权方式；
+  渲染层 fetch 无法自定义 Cookie 头，旧基线 Cookie 方案不存在）。
 - **多轮对话**：每次请求带独立随机 `job-ts<uuid>` session_id（`job-` 前缀 = 网关
   upstream 自管模式，`messages` 全量透传），不依赖网关侧会话记忆。
 - **核心文件**：`src/renderer/components/chat/LlmGatewayClient.ts`（协议适配：URL 归一、

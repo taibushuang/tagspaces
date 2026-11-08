@@ -21,7 +21,7 @@
  *
  * The gateway is NOT OpenAI-compatible on the wire — it exposes
  * `POST /chat-gen/conversation` with a flat `{message, session_id, messages?,
- * model?, stream?}` body, `X-Api-Key`/`Cookie: access-token` auth and replies
+ * model?, stream?}` body, `X-Api-Key` auth and replies
  * with `data: {"content": "…"}` SSE frames ending in `data: [DONE]`. All the
  * Sec-* /双层封装 group-protocol work happens inside the gateway; callers only
  * see this simplified surface.
@@ -54,10 +54,7 @@ function gatewayBase(url: string): string {
   return base;
 }
 
-/**
- * Gateway auth: production deployments authenticate `X-Api-Key`, older
- * baselines read `Cookie: access-token` — send both when a key is configured.
- */
+/** Gateway auth: the production llm_gateway authenticates `X-Api-Key`. */
 function buildHeaders(authKey?: string, withBody = false) {
   const headers: Record<string, string> = {};
   if (withBody) {
@@ -65,7 +62,6 @@ function buildHeaders(authKey?: string, withBody = false) {
   }
   if (authKey) {
     headers['X-Api-Key'] = authKey;
-    headers.Cookie = `access-token=${authKey}`;
   }
   return headers;
 }
@@ -214,8 +210,9 @@ export async function probeGatewayEndpoint(
  * One full conversation round-trip: POST /chat-gen/conversation and consume
  * the SSE stream (`data: {"content": …}` frames, `data: [DONE]` terminator).
  * Returns the accumulated content, or undefined on HTTP/network failure or
- * abort. Works for both stream and stream:false (the latter answers with a
- * single frame before [DONE]).
+ * abort. The request body always asks the gateway for `stream: true` and the
+ * response is always consumed as SSE (msg.stream is ignored) — the gateway
+ * answers with content frames before [DONE] regardless.
  */
 export async function chatGatewayCompletion(
   url: string,
@@ -255,6 +252,30 @@ export async function chatGatewayCompletion(
       return undefined;
     }
     let content = '';
+    // Parse one SSE line: accumulate `content` frames into `content` and
+    // forward each delta to chatMessageHandler.
+    const consumeSSELine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) {
+        return;
+      }
+      const data = trimmed.replace(/^data:\s*/, '');
+      if (data === '[DONE]') {
+        return;
+      }
+      try {
+        const json = JSON.parse(data);
+        if (typeof json?.content === 'string') {
+          content += json.content;
+          if (chatMessageHandler) {
+            chatMessageHandler(json.content);
+          }
+        }
+        // reasoning_content frames are not emitted by this upstream; ignored
+      } catch (e) {
+        // ignore keep-alive / non-JSON lines
+      }
+    };
     if (response.body) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -270,27 +291,12 @@ export async function chatGatewayCompletion(
         // keep the last (possibly partial) line in the buffer
         buffer = lines.pop() || '';
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) {
-            continue;
-          }
-          const data = trimmed.replace(/^data:\s*/, '');
-          if (data === '[DONE]') {
-            continue;
-          }
-          try {
-            const json = JSON.parse(data);
-            if (typeof json?.content === 'string') {
-              content += json.content;
-              if (chatMessageHandler) {
-                chatMessageHandler(json.content);
-              }
-            }
-            // reasoning_content frames are not emitted by this upstream; ignored
-          } catch (e) {
-            // ignore keep-alive / non-JSON lines
-          }
+          consumeSSELine(line);
         }
+      }
+      // flush a trailing line not terminated by \n (lenient SSE servers)
+      if (buffer) {
+        consumeSSELine(buffer);
       }
     }
     return content ? { content } : {};
@@ -349,6 +355,10 @@ export async function verifyGatewayModel(
   );
   if (result === undefined) {
     return { ok: false, message: 'gateway request failed' };
+  }
+  if (!result.content) {
+    // Reachable and authenticated, but the model produced no output frames.
+    return { ok: true, message: 'gateway reachable, empty model response' };
   }
   return { ok: true };
 }
