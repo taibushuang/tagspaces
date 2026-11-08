@@ -10,6 +10,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Lint**: `npm run lint`
 - **Run all tests**: `npm run test`
 - **Run a single test**: `npx jest path/to/test.ts`
+- **Windows packaging — portable zip only (rule, 2026-11-08)**: every Windows
+  package must be the green/portable build `tagspaces-win-x64-{version}.zip`
+  produced by `npm run package-win`. Never produce the NSIS installer (.exe):
+  `resources/builder.json` keeps `win.target: ["zip"]` — do not change it back.
+  Before packaging, bump the version in `release/app/package.json` whenever code
+  changed since the last version bump (patch for fixes, minor for features).
 
 ## Architecture
 
