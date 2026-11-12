@@ -52,8 +52,6 @@ import Button from '@mui/material/Button';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
 import InputAdornment from '@mui/material/InputAdornment';
-import Menu from '@mui/material/Menu';
-import MenuItem from '@mui/material/MenuItem';
 import { useTheme } from '@mui/material/styles';
 import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
 import { extractFileExtension } from '@tagspaces/tagspaces-common/paths';
@@ -68,7 +66,7 @@ import React, {
 import { NativeTypes } from 'react-dnd-html5-backend';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
-import TsMenuList from '../TsMenuList';
+import ChatModelMenu from '-/components/chat/ChatModelMenu';
 
 function ChatView() {
   const { t } = useTranslation();
@@ -78,15 +76,15 @@ function ChatView() {
     removeImage,
     newChatMessage,
     newAgentMessage,
-    changeCurrentModel,
-    setModel,
     currentModel,
-    models,
     isTyping,
     cancelMessage,
+    currentProvider,
+    selectChatModel,
   } = useChatContext();
   const { showNotification } = useNotificationContext();
-  const aiDefaultProvider: AIProvider = useSelector(getDefaultAIProvider);
+  const reduxDefaultProvider: AIProvider = useSelector(getDefaultAIProvider);
+  const aiDefaultProvider = currentProvider || reduxDefaultProvider;
   const { openedEntry } = useOpenedEntryContext();
   const isLoading = useRef<boolean>(false);
   const currentMode = useRef<ChatMode>(undefined);
@@ -108,27 +106,6 @@ function ChatView() {
       forceUpdate();
     },
     [],
-  );
-
-  // Model change handler
-  const handleChangeModel = useCallback(
-    (newModelName: string) => {
-      changeCurrentModel(newModelName)
-        .then((success) => {
-          if (success) {
-            setModel(newModelName);
-          }
-        })
-        .catch((err) => {
-          showNotification(
-            t('core:installCustomModel') + err.message + ': ' + newModelName,
-            'error',
-            false,
-          );
-          console.log(err);
-        });
-    },
-    [changeCurrentModel, setModel, showNotification, t],
   );
 
   // Chat message send handler
@@ -410,53 +387,28 @@ function ChatView() {
                             data-tid="modelPickerTID"
                             onClick={(e) => setModelMenuAnchor(e.currentTarget)}
                             endIcon={<ArrowDropUpIcon />}
+                            title={
+                              (aiDefaultProvider?.name || '') +
+                              (currentModel?.name
+                                ? ' · ' + currentModel.name
+                                : '')
+                            }
                             sx={{
                               minWidth: 0,
                               textTransform: 'none',
-                              maxWidth: 130,
+                              maxWidth: 160,
                               overflow: 'hidden',
                               paddingX: 0.5,
                             }}
                           >
                             {currentModel?.name || t('core:chooseModel')}
                           </Button>
-                          <Menu
-                            data-tid="modelPickerMenuTID"
+                          <ChatModelMenu
                             anchorEl={modelMenuAnchor}
                             open={Boolean(modelMenuAnchor)}
                             onClose={() => setModelMenuAnchor(null)}
-                            anchorOrigin={{
-                              vertical: 'bottom',
-                              horizontal: 'left',
-                            }}
-                            transformOrigin={{
-                              vertical: 'bottom',
-                              horizontal: 'left',
-                            }}
-                          >
-                            {Array.from(
-                              new Set<string>([
-                                ...(currentModel?.name
-                                  ? [currentModel.name]
-                                  : []),
-                                ...(aiDefaultProvider?.customModels || []),
-                                ...(models || [])
-                                  .map((m) => m.name)
-                                  .filter(Boolean),
-                              ]),
-                            ).map((name) => (
-                              <MenuItem
-                                key={name}
-                                selected={name === currentModel?.name}
-                                onClick={() => {
-                                  handleChangeModel(name);
-                                  setModelMenuAnchor(null);
-                                }}
-                              >
-                                {name}
-                              </MenuItem>
-                            ))}
-                          </Menu>
+                            onSelect={selectChatModel}
+                          />
                         </InputAdornment>
                       ),
                       endAdornment: (

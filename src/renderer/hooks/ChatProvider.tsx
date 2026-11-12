@@ -98,6 +98,7 @@ import React, {
   useMemo,
   useReducer,
   useRef,
+  useState,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
@@ -112,8 +113,12 @@ type ChatData = {
   models: ModelResponse[];
   images: ChatImage[];
   currentModel: ModelResponse;
+  /** Provider the chat/agent currently talks to (override-aware). */
+  currentProvider: AIProvider;
   chatHistoryItems: ChatItem[];
   isTyping: boolean;
+  /** Switch the chat provider + optionally pick one of its models. */
+  selectChatModel: (providerId: string, modelName?: string) => void;
   checkOllamaModels: () => Promise<boolean>;
   refreshOllamaModels: (modelName?: string) => Promise<boolean>;
   setModel: (model: ModelResponse | string) => Promise<boolean>;
@@ -169,7 +174,8 @@ export const ChatContext = createContext<ChatData>({
   models: [],
   images: [],
   currentModel: undefined,
-  //openedEntryModel: undefined,
+  currentProvider: undefined,
+  selectChatModel: undefined,
   chatHistoryItems: [],
   isTyping: false,
   checkOllamaModels: undefined,
@@ -240,7 +246,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     usePlatformFacadeContext();
   const { openedEntry } = useOpenedEntryContext();
   const models = useRef<ModelResponse[]>([]);
-  const defaultAiProvider: AIProvider = useSelector(getDefaultAIProvider);
+  const reduxDefaultProvider: AIProvider = useSelector(getDefaultAIProvider);
   const aiProviders: AIProvider[] = useSelector(getAIProviders);
   const interfaceLanguage = useSelector(getCurrentLanguage);
   const selectedTabName = useSelector(getEntryContainerTab);
@@ -260,18 +266,99 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const isTyping = useRef<boolean>(false);
   const aiClient = useRef<AiClient>(undefined);
   const agentAbortController = useRef<AbortController>(undefined);
-  const lastProviderId = useRef<string>(defaultAiProvider?.id);
+  const lastProviderKey = useRef<string>(
+    reduxDefaultProvider
+      ? `${reduxDefaultProvider.id}|${reduxDefaultProvider.url}|${reduxDefaultProvider.authKey || ''}|${reduxDefaultProvider.engine}`
+      : '',
+  );
   const dispatch: AppDispatch = useDispatch();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const currentLocation = findLocation();
   const firstRender = useFirstRender();
 
+  /**
+   * Chat provider override: which provider the chat/agent actually talks to.
+   * The AgentPanel/ChatView model menu groups models per enabled provider;
+   * picking a model from a non-default provider sets this override
+   * (persisted in localStorage). Falls back to the redux default engine when
+   * the overridden provider was removed or disabled.
+   */
+  const CHAT_PROVIDER_KEY = 'tsAiChatProviderId';
+  const [chatProviderId, setChatProviderId] = useState<string>(
+    () => localStorage.getItem(CHAT_PROVIDER_KEY) || '',
+  );
+  const chatProvider: AIProvider =
+    aiProviders.find((p) => p.id === chatProviderId && p.enable) ||
+    reduxDefaultProvider;
+  // All existing chat-path code reads `defaultAiProvider`; shadow it with the
+  // active (possibly overridden) provider so switching is a one-place change.
+  const defaultAiProvider = chatProvider;
+  const pendingSelectRef = useRef<{ model: string } | undefined>(undefined);
+
+  /** Switch the chat provider (and optionally immediately pick a model). */
+  function selectChatModel(providerId: string, modelName?: string) {
+    const target = aiProviders.find(
+      (p) => p.id === providerId && p.enable && p.url,
+    );
+    if (!target) {
+      return;
+    }
+    if (target.id === defaultAiProvider?.id) {
+      // Same provider: resolve the model through the existing path.
+      if (modelName) {
+        changeCurrentModel(modelName).then((ok) => {
+          if (ok) {
+            setModel(modelName);
+          }
+        });
+      }
+      return;
+    }
+    // Different provider: defer the model pick to the post-switch effect so
+    // changeCurrentModel sees the NEW provider (state updates are async).
+    pendingSelectRef.current = modelName ? { model: modelName } : undefined;
+    setChatProviderId(target.id);
+    localStorage.setItem(CHAT_PROVIDER_KEY, target.id);
+    forceUpdate();
+  }
+
+  // Runs after the provider-switch re-render: refs were reset by the
+  // [defaultAiProvider] effect below; now resolve the pending model against
+  // the freshly built client.
+  useEffect(() => {
+    if (!pendingSelectRef.current) {
+      return;
+    }
+    const modelName = pendingSelectRef.current.model;
+    pendingSelectRef.current = undefined;
+    aiClient.current = undefined;
+    models.current = [];
+    currentModel.current = undefined;
+    if (modelName) {
+      changeCurrentModel(modelName).then((ok) => {
+        if (ok) {
+          setModel(modelName);
+        }
+      });
+    }
+    forceUpdate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatProviderId]);
+
   useEffect(() => {
     images.current = [];
-    // When the active provider changes (e.g. Ollama → LM Studio), drop the
-    // cached client + model list so they are rebuilt for the new engine/url.
-    if (lastProviderId.current !== defaultAiProvider?.id) {
-      lastProviderId.current = defaultAiProvider?.id;
+    // When the active provider's identity OR connection settings change
+    // (id / url / authKey / engine), drop the cached client + model list so
+    // they are rebuilt with the NEW values. Comparing only the id used to
+    // keep a stale client alive after editing url/key in Settings → AI: the
+    // chat paths kept sending the OLD key/url (agent + verify paths read the
+    // provider fresh, so they worked — an inconsistency that made the
+    // failure impossible to locate).
+    const providerKey = defaultAiProvider
+      ? `${defaultAiProvider.id}|${defaultAiProvider.url}|${defaultAiProvider.authKey || ''}|${defaultAiProvider.engine}`
+      : '';
+    if (lastProviderKey.current !== providerKey) {
+      lastProviderKey.current = providerKey;
       aiClient.current = undefined;
       models.current = [];
       currentModel.current = undefined;
@@ -1758,6 +1845,8 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       models: models.current,
       images: images.current,
       currentModel: currentModel.current,
+      currentProvider: defaultAiProvider,
+      selectChatModel,
       chatHistoryItems: chatHistoryItems.current,
       generationSettings: generationSettings.current,
       newAgentMessage,
@@ -1789,6 +1878,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     };
   }, [
     defaultAiProvider,
+    chatProviderId,
     isTyping.current,
     models.current,
     images.current,

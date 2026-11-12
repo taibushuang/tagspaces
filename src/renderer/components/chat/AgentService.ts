@@ -22,9 +22,10 @@
  *
  * It speaks the standard `tools` / `tool_calls` protocol of
  * `/v1/chat/completions`: request → execute requested tools → append
- * `role:'tool'` results → repeat until the model answers with plain text or
- * the step budget is exhausted. Deliberately framework-free — the provider
- * abstraction already lives in AiClient/OpenAIClient.
+ * `role:'tool'` results → repeat until the model answers with plain text.
+ * No step budget: the loop runs until the model delivers its final answer,
+ * the user aborts, or the request fails. Deliberately framework-free — the
+ * provider abstraction already lives in AiClient/OpenAIClient.
  */
 import { ChatRequest } from 'ollama';
 import { chatOpenAICompletion } from '-/components/chat/OpenAIClient';
@@ -99,21 +100,12 @@ export type AgentInterruptQueue = {
   injections: number;
 };
 
-/** Hard budget of model round-trips per run (guards against tool loops). */
-export const MAX_AGENT_STEPS = 8;
 /**
- * Upper bound on how many step-boundary injections may grant a fresh step
- * budget in one run. Mirrors MAX_AGENT_CHECKPOINTS so a run that is fed new
- * instructions forever still terminates.
+ * Upper bound on how many step-boundary injections are delivered in one run.
+ * Guards against endless feeding of new instructions into a running task;
+ * queued messages beyond the cap are folded into a follow-up run instead.
  */
 export const MAX_AGENT_INJECTIONS = 4;
-/**
- * When the step budget is exhausted, the model gets a checkpoint prompt:
- * it must summarize progress and either continue (fresh budget) or wrap
- * up with the final answer. This caps how many times the budget can be
- * renewed, so a runaway loop still terminates (8 × (1+4) rounds max).
- */
-export const MAX_AGENT_CHECKPOINTS = 4;
 /** Tool results longer than this get truncated before going back to the model. */
 export const TOOL_RESULT_CHAR_LIMIT = 4000;
 
@@ -127,7 +119,6 @@ export type AgentRunOptions = {
   tools: AgentTool[];
   onEvent: (event: AgentEvent) => void;
   signal?: AbortSignal;
-  maxSteps?: number;
   /** Step-boundary injection channel (see AgentInterruptQueue). */
   interruptQueue?: AgentInterruptQueue;
   maxInjections?: number;
@@ -244,15 +235,12 @@ export async function runAgent(
     tools,
     onEvent,
     signal,
-    maxSteps = MAX_AGENT_STEPS,
     interruptQueue,
     maxInjections = MAX_AGENT_INJECTIONS,
   } = options;
   const conversation: AgentMessage[] = [...messages];
   let finalContent = '';
   let aborted = false;
-  let stepsSinceCheckpoint = 0;
-  let checkpointsUsed = 0;
 
   const request: ChatRequest = {
     model,
@@ -267,7 +255,7 @@ export async function runAgent(
   const completion =
     engine === 'llm-gateway' ? chatGatewayCompletion : chatOpenAICompletion;
 
-  // eslint-disable-next-line no-constant-condition -- bounded by checkpoints + abort
+  // eslint-disable-next-line no-constant-condition -- bounded by abort / final answer / request failure
   while (true) {
     if (signal?.aborted) {
       aborted = true;
@@ -275,36 +263,16 @@ export async function runAgent(
     }
     // Step-boundary injection: drain user messages queued while the agent
     // was working before the next model round-trip, so the model reacts to
-    // the new instruction immediately. A fresh instruction gets a new step
-    // window (budget-reset) unless the injection budget is exhausted.
+    // the new instruction immediately.
     if (interruptQueue) {
-      const { injected, grantedBudget } = drainInterruptQueue(
+      const { injected } = drainInterruptQueue(
         conversation,
         interruptQueue,
         maxInjections,
       );
-      if (grantedBudget) {
-        stepsSinceCheckpoint = 0;
-      }
       if (injected > 0) {
         onEvent({ type: 'interrupt_drained' });
       }
-    }
-    if (stepsSinceCheckpoint >= maxSteps) {
-      if (checkpointsUsed >= MAX_AGENT_CHECKPOINTS) {
-        break; // total budget exhausted — hard stop below
-      }
-      checkpointsUsed += 1;
-      // Checkpoint: the model must report progress and either continue
-      // with real work (fresh budget) or deliver the final answer. Its
-      // streamed reply makes the progress report visible to the user.
-      conversation.push({
-        role: 'user',
-        content:
-          `⏸️ Step budget of ${maxSteps} tool rounds reached. Before doing anything else, briefly summarize progress (what is done, what remains — in the user's language). ` +
-          'Then, if you are making real progress and not repeating the same calls, proceed with the next tool call to continue the task. ' +
-          'If the task is complete or you are stuck, reply with the final answer for the user instead.',
-      });
     }
     // eslint-disable-next-line no-await-in-loop -- each round depends on the previous tool results
     const result = await completion(
@@ -328,13 +296,6 @@ export async function runAgent(
     if (toolCalls.length === 0) {
       finalContent = result.content || '';
       break;
-    }
-    if (stepsSinceCheckpoint >= maxSteps) {
-      // The model answered the checkpoint by continuing to work — grant a
-      // fresh budget for the next stretch.
-      stepsSinceCheckpoint = 0;
-    } else {
-      stepsSinceCheckpoint += 1;
     }
 
     // Keep any text emitted alongside the tool calls in the transcript
@@ -378,13 +339,6 @@ export async function runAgent(
     }
   }
 
-  if (!finalContent && !aborted) {
-    const message =
-      checkpointsUsed > 0
-        ? `agent stopped: step budget exhausted even after ${checkpointsUsed} checkpoint continuation(s) without a final answer`
-        : `agent stopped after ${maxSteps} steps without a final answer`;
-    onEvent({ type: 'error', message });
-  }
   return { messages: conversation, content: finalContent, aborted };
 }
 

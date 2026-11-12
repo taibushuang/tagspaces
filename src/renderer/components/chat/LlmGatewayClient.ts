@@ -148,10 +148,21 @@ export async function getGatewayModels(
     }
     const json = await response.json();
     const data = json?.data || {};
-    const names: string[] = Array.isArray(data.models)
-      ? data.models.filter((m: any) => typeof m === 'string')
-      : [];
-    if (!names.length && typeof data.default_model === 'string') {
+    // Dedupe while preserving order: dirty site configs may repeat the same
+    // model line, which used to render as multiple indistinguishable rows.
+    const names: string[] = [];
+    if (Array.isArray(data.models)) {
+      for (const m of data.models) {
+        if (typeof m === 'string' && m && !names.includes(m)) {
+          names.push(m);
+        }
+      }
+    }
+    if (
+      !names.length &&
+      typeof data.default_model === 'string' &&
+      data.default_model
+    ) {
       names.push(data.default_model);
     }
     return names.map(
@@ -199,7 +210,11 @@ export async function probeGatewayEndpoint(
     }
     const json = await response.json().catch(() => undefined);
     const data = json?.data || {};
-    const names: string[] = Array.isArray(data.models) ? data.models : [];
+    const names: string[] = Array.isArray(data.models)
+      ? Array.from(
+          new Set(data.models.filter((m: any) => typeof m === 'string' && m)),
+        )
+      : [];
     return { ok: true, modelCount: names.length };
   } catch (e) {
     return { ok: false, message: e?.message || String(e) };
@@ -331,6 +346,9 @@ export type ProviderVerifyResult = { ok: boolean; message?: string };
 /**
  * Real availability check: one minimal conversation round-trip exercising
  * auth end-to-end. The gateway answers with SSE even for a tiny prompt.
+ * On conversation failure a GET /models probe classifies WHY — network
+ * unreachable vs edge 403 (IP whitelist) vs 401 (bad token) — so the user
+ * sees the actual HTTP status instead of a bare "request failed".
  */
 export async function verifyGatewayModel(
   url: string,
@@ -354,7 +372,31 @@ export async function verifyGatewayModel(
     authKey,
   );
   if (result === undefined) {
-    return { ok: false, message: 'gateway request failed' };
+    try {
+      const response = await fetch(`${gatewayBase(url)}/chat-gen/models`, {
+        method: 'GET',
+        headers: buildHeaders(authKey),
+      });
+      const text = (await response.text().catch(() => '')).slice(0, 160);
+      if (!response.ok) {
+        return {
+          ok: false,
+          message: `HTTP ${response.status}${text ? ': ' + text : ''}`,
+        };
+      }
+      // Models list works but the conversation round-trip failed — the
+      // endpoint is reachable and authenticated; blame the upstream/model.
+      return {
+        ok: true,
+        message:
+          'models list OK, conversation request failed (upstream/model?)',
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        message: 'network unreachable: ' + (e?.message || String(e)),
+      };
+    }
   }
   if (!result.content) {
     // Reachable and authenticated, but the model produced no output frames.

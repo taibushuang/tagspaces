@@ -271,8 +271,11 @@ export function AgentSessionsContextProvider(props: {
 }) {
   const { t } = useTranslation();
   const { showNotification, openConfirmDialog } = useNotificationContext();
-  const { currentModel } = useChatContext();
-  const defaultAiProvider = useSelector(getDefaultAIProvider);
+  const { currentModel, currentProvider } = useChatContext();
+  const reduxDefaultProvider = useSelector(getDefaultAIProvider);
+  // Follow the chat provider override picked in the model menu; fall back to
+  // the settings' default engine (e.g. before ChatProvider mounted a choice).
+  const defaultAiProvider = currentProvider || reduxDefaultProvider;
   const interfaceLanguage = useSelector(getCurrentLanguage);
   const { findLocation, findLocationByPath, locations, addLocation } =
     useCurrentLocationContext();

@@ -76,7 +76,9 @@ AgentTools（注册表）                        ← 新增
 
 - 输入：provider(url/authKey/model)、messages、tools、onEvent 回调、abortSignal。
 - 循环：请求 → 若返回 `tool_calls` → 逐个执行工具 → 以 `role:'tool'` 追加结果 → 继续；
-  若返回纯文本 → 结束。上限 `maxSteps = 8` 防失控。
+  若返回纯文本 → 结束。**无步数上限**（2026-11-10 移除原 `maxSteps = 8` 预算与
+  checkpoint 续跑机制——预算耗尽报 "agent stopped after 8 steps" 的体验差于失控风险；
+  终止条件 = 模型给出最终回答 / 用户 abort / 请求失败）。
 - 流式：`stream: true`，文本 delta 实时回调（与现聊天一致的打字机效果）；
   `tool_calls` 按 OpenAI 流式协议以 `delta.tool_calls[].index` 增量拼装。
 - 错误处理：HTTP 非 200 / 网络错误 / 单工具异常都转为 `role:'tool'` 的错误文本，
@@ -146,7 +148,7 @@ AgentTools（注册表）                        ← 新增
 ## 5. 实现清单
 
 - [x] `OpenAIClient.ts`：`toOpenAIRequest` 支持 `tools`；响应解析支持 `tool_calls`（流式增量拼装 + 非流式），新增 `chatOpenAICompletion()` 返回 `{ content, toolCalls }`
-- [x] `AgentService.ts`（新增）：agent 循环（`runAgent`，maxSteps=8，事件回调，abort 贯穿）+ `checkAgentSupport` 能力探测
+- [x] `AgentService.ts`（新增）：agent 循环（`runAgent`，无步数上限，事件回调，abort 贯穿）+ `checkAgentSupport` 能力探测
 - [x] `AgentTools.ts`（新增）：`createAgentTools(deps)` 工厂，6 个工具（search_files / list_folder / get_entry_tags / add_tags / remove_tags / read_file_text）
 - [x] `LocationIndexContextProvider.tsx`：新增 `agentSearch()`（无 UI 副作用）
 - [x] `ChatProvider.tsx`：新增 `newAgentMessage` / `agentMode`（localStorage 持久化）/ `setAgentMode`；系统提示词注入 location/当前文件夹/选中项/界面语言

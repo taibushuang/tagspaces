@@ -90,6 +90,7 @@ import { useSelector } from 'react-redux';
 import { describeSchedule } from '-/utils/agentSchedule';
 import type { AgentScheduledTask } from '-/utils/agentSchedule';
 import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
+import ChatModelMenu from '-/components/chat/ChatModelMenu';
 
 type AgentPanelView = 'agent' | 'scheduled';
 type LastResult = AgentScheduledTask['lastResults'][number];
@@ -110,9 +111,9 @@ function AgentPanel() {
   const { t } = useTranslation();
   const theme = useTheme();
   const { showNotification } = useNotificationContext();
-  const { currentModel, models, setModel, changeCurrentModel } =
-    useChatContext();
-  const defaultAiProvider = useSelector(getDefaultAIProvider);
+  const { currentModel, currentProvider, selectChatModel } = useChatContext();
+  const reduxDefaultProvider = useSelector(getDefaultAIProvider);
+  const defaultAiProvider = currentProvider || reduxDefaultProvider;
   const { findLocation } = useCurrentLocationContext();
   const { listChildren } = useLocationIndexContext();
   const {
@@ -305,25 +306,6 @@ function AgentPanel() {
     const list = fresh.map((p) => `${p.path} (${p.count})`).join('\n');
     handleSend(`${t('core:aiInboxOrganizeMessage')}\n${list}${more}`);
   }, [pendingInboxes, handleSend, t]);
-
-  const handleChangeModel = useCallback(
-    (newModelName: string) => {
-      changeCurrentModel(newModelName)
-        .then((success) => {
-          if (success) {
-            setModel(newModelName);
-          }
-        })
-        .catch((err) => {
-          showNotification(
-            t('core:installCustomModel') + err.message + ': ' + newModelName,
-            'error',
-            false,
-          );
-        });
-    },
-    [changeCurrentModel, setModel, showNotification, t],
-  );
 
   const saveAsMarkdown = useCallback(() => {
     setExportMenuAnchor(null);
@@ -1033,9 +1015,13 @@ function AgentPanel() {
           data-tid="modelPickerTID"
           onClick={(e) => setModelMenuAnchor(e.currentTarget)}
           endIcon={<ArrowDropUpIcon />}
+          title={
+            (defaultAiProvider?.name || '') +
+            (currentModel?.name ? ' · ' + currentModel.name : '')
+          }
           sx={{
             minWidth: 0,
-            maxWidth: 120,
+            maxWidth: 160,
             textTransform: 'none',
             paddingX: 0.5,
             overflow: 'hidden',
@@ -1044,33 +1030,12 @@ function AgentPanel() {
         >
           {currentModel?.name || t('core:chooseModel')}
         </Button>
-        <Menu
-          data-tid="modelPickerMenuTID"
+        <ChatModelMenu
           anchorEl={modelMenuAnchor}
           open={Boolean(modelMenuAnchor)}
           onClose={() => setModelMenuAnchor(null)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-          transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-        >
-          {Array.from(
-            new Set<string>([
-              ...(currentModel?.name ? [currentModel.name] : []),
-              ...(defaultAiProvider?.customModels || []),
-              ...(models || []).map((m) => m.name).filter(Boolean),
-            ]),
-          ).map((name) => (
-            <MenuItem
-              key={name}
-              selected={name === currentModel?.name}
-              onClick={() => {
-                handleChangeModel(name);
-                setModelMenuAnchor(null);
-              }}
-            >
-              {name}
-            </MenuItem>
-          ))}
-        </Menu>
+          onSelect={selectChatModel}
+        />
         <TsIconButton
           tooltip={t('core:aiAgentShowReasoning')}
           onClick={toggleShowReasoning}

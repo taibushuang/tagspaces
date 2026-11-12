@@ -257,14 +257,49 @@ npm install 后丢失。因此由宿主 `FileView.tsx` 在 iframe load 后向同
 **AI 技能与工具页面（2026-10-02 起"挤占式"）**：`AiCapabilitiesPanel.tsx`（浏览/搜索工具与技能、开关内置工具、自定义 HTTP 工具与 prompt 技能）不再是从 AI 弹窗里弹出的嵌套 Dialog，而是遵循通用"挤占式"原则——`AiCapabilitiesContextProvider`（isAiCapabilitiesOpen + toggleAiCapabilities）由 `RenderPerspective` 在内容区渲染面板替代文件夹内容。入口：AI Agent 弹窗右上角扩展按钮（Extension 图标，点击后关闭 AI 弹窗并打开内容区面板）、面板右上角 ✕ 关闭。旧 `AiCapabilitiesDialog.tsx` 已删除。**外部技能导入（2026-10-19）**：技能 tab 新增"从本机导入"——主进程 `skillScanner.ts` 扫描默认目录（`~/.agents/skills`、`~/.claude/skills`、`~/.qwenpaw/skills` 等）+ 用户/Agent 注册的额外目录（持久化 `userData/skillImport/scan-dirs.json`），把 SKILL.md 转换为自定义技能（剥 frontmatter、工具引用映射 Bash→run_command/Read→read_file_text/Web→web_search 等、12KB 截断），`ImportSkillsDialog` 勾选导入；**整目录导入**：`skillsImportDir` 把 SKILL.md 之外的支撑文件（scripts/模板/参考文档）复制到 `userData/skillImport/imported/<slug>/`，指令尾部附 destDir 注记让相对路径可解析；ref id 用 `importedSkillId`（agentCapabilities 共享 util，**按技能名派生**，源目录搬家重导仍是更新，`sourceDir` 字段记录来源）；Agent 侧配套 `scan_importable_skills`（含 addDir/removeDir）与 `import_skills`（≤20/批，同目录重导=更新）。
 
 **核心文件**：
-- `src/renderer/components/chat/AgentService.ts` — `runAgent()` 工具循环（maxSteps=8、流式 delta、tool_calls 增量拼装、abort、错误转 tool 结果）
+- `src/renderer/components/chat/AgentService.ts` — `runAgent()` 工具循环（流式 delta、tool_calls 增量拼装、abort、错误转 tool 结果）
 - `src/renderer/components/chat/AgentTools.ts` — `createAgentTools(deps)` 工厂：search_files / list_folder / get_entry_tags / add_tags / remove_tags / read_file_text（结果有截断护栏）
 - `src/renderer/components/chat/OpenAIClient.ts` — `chatOpenAICompletion()` 返回 `{ content, toolCalls }`（流式/非流式均支持 tool_calls）
 - `src/renderer/hooks/LocationIndexContextProvider.tsx` — `agentSearch()`：无 UI 副作用的搜索（不写 redux、不弹通知），直接返回结果
 
 **护栏（勿回退）**：删除仅限 `delete_files`（≤50/批）/`delete_folder`（仅限空文件夹），**只进系统回收站**（`shell.trashItem`，代码中无永久删除通道），按文件夹授权（`utils/agentDelete.ts`：确认弹窗列清单 + 可记住授权 `tsAgentDeleteAuth`；location 根/`.ts`/隐藏系统文件/授权外路径硬拒绝）；**`run_command` 受控 shell**（2026-10-19，授权闸门整体在主进程 `src/main/execAuth.ts`，渲染层只负责确认弹窗——`execAuthorize` 两档规则：简单行（无 shell 元字符）按记住的前缀静默放行、复合行（含 `& | ; < > \` $( 等）**按整行记忆、内容一变重弹**（防 `arkcli && 恶意命令` 绕过）、提权前缀（sudo/su/doas）永远弹窗且不可记忆；执行需一次性令牌（`execRun` 无令牌拒绝）；env 禁覆盖 PATH/HOME/USERPROFILE（防 shim 顶替）；超时树杀 ≤600s、输出 200KB/流截断、审计日志 `userData/exec/history.jsonl`（含 origin 来源）；授权持久化 `userData/exec/grants.json`（删除即全部撤销；2026-10-28 起 Agent 可用 `exec_grants` 工具 `list`/`revoke-all` 查看/重置授权，IPC `execGrantStatus`/`execRevokeAll` 已入 `ipcContracts.ts` 契约）；无交互 stdin，个人机器工具，术语为"按前缀/整行 opt-in 动态放行"而非固定白名单）；**确认弹窗共享 helper**（2026-10-28，`src/renderer/components/chat/agentConfirm.ts`：`requestExecConfirmationDialog`（两步「允许命令 → 记住前缀?」）+ `requestDeleteConfirmationDialog`，ChatProvider 与 AgentSessionsContextProvider 共用，消除两份拷贝漂移；两个陷阱已修：①嵌套弹窗用 `setTimeout(0)` 延迟一拍，绕开 React 18 同一事件处理器批处理把第二个弹窗的 open 状态覆盖掉（曾致 Promise 永久悬挂）；②dismiss（Esc/✕/遮罩）经 `ConfirmDialog.onDismiss`（`NotificationContextProvider.openConfirmDialog` 第 12 个参数）视为拒绝/不记住，不再悬挂；首个弹窗取消按钮文案统一为 Deny）；定时任务无人值守 run 恒拒绝删除/新增 exec 确认（仅复用已记住授权）；move_file 目标已存在时不覆盖；打标签可逆；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。详见 `DESIGN-ai-agent.md` §7.7。
 
+**无步数上限（2026-11-10，移除原 8 步预算）**：`runAgent` 的工具循环不再有
+`maxSteps=8` 预算与 checkpoint 续跑机制（"agent stopped after 8 steps without a
+final answer" 已随预算删除）——终止条件只有三个：模型给出最终回答（无 tool_calls
+的回复）、用户点「停止」（abort）、模型请求失败（error 事件）。代价是模型自我
+循环时只能靠用户手动停止，接受的取舍。`MAX_AGENT_INJECTIONS=4` 仍保留，只限
+补充指令注入条数。真机验证：脚本化 mock OpenAI 端点强制 10 轮 tool_calls
+（`manual/mock-openai-loop.js`），第 11 轮才给最终答案，循环完整跑通不再中途
+停止。
+
+**provider 连接参数变更即时生效（2026-11-11，勿回退）**：`ChatProvider` 缓存的
+`aiClient.current` 原来只在 provider **id 变化**时重建——在设置里改同 id 的
+URL/authKey 后，聊天链路（ChatView/newChatMessage 等）继续用旧 client 携带旧
+key/URL，而"保存并验证"和 Agent 面板是每次现取 provider 的，造成"验证通过但
+聊天 401"的精神分裂症状、无法定位。现在缓存失效条件是
+`id|url|authKey|engine` 四元组任一变化（`lastProviderKey`），改动即时生效。
+真机验证：mock 网关 + 错 key 发消息失败 → 不重启改对 key → 再发立即成功。
+
 **模型供给决策（2026-09-28）**：内网网关（OpenAI 兼容）为**唯一通道**，本地 Ollama 冻结——`OllamaClient.ts` 保留不删但不再投入，离线 AI 场景放弃。分层汇总等高调用量功能全部走网关计费，增量缓存为硬性要求。
+
+**按 provider 选模型聊天（2026-11-10 落地）**：模型选择不再锁定设置里的默认引擎——
+- `ChatProvider` 增加"当前聊天 provider"覆盖（`chatProviderId`，localStorage
+  `tsAiChatProviderId`），`selectChatModel(providerId, modelName)` 一次完成"切 provider +
+  选模型"；选非默认 provider 的模型时经 pendingSelectRef 在切 provider 渲染后二次解析
+  （state 异步，不能同事件内直接 `changeCurrentModel`）。覆盖目标被删/禁用时回退 redux
+  默认引擎；`defaultAiProvider` 在 ChatProvider 内被 shadow 成"激活 provider"，下游
+  发送/模型列表/持久化自动跟随。`currentProvider` 经 context 暴露。
+- `ChatModelMenu.tsx`（AgentPanel 与 ChatView 共用）：模型菜单按 enabled provider 分组
+  （ListSubheader = provider 名，当前组带 ✓），条目 = 该 provider 的 defaultTextModel +
+  customModels + 菜单打开时逐 provider 实时 `client.list()`；选择按钮 title 显示
+  "provider · model"。
+- Agent 运行链路（`AgentSessionsContextProvider.startRun`）与 ChatView 发送都跟随
+  `currentProvider`；`setModel` 把所选模型持久化到**激活 provider** 的 defaultTextModel
+  （每个 provider 记住自己上次用的模型）。
+- 真机验证（CDP + `manual/drive-provider-picker-verify.js`）：双 provider 分组、跨
+  provider 选择（label/title/✓ 切换）、消息真正发到所选 provider（mock 网关回显 + 日志
+  `[conv]`）全部通过；tsc + 752 单测绿。
 
 **分层汇总（2026-10-01 落地，详见 `DESIGN-office-ai-workflow.md` §7）**：
 map-reduce 三级金字塔（文件→子文件夹→父文件夹，向上只汇总描述不碰原文）。
@@ -275,12 +310,12 @@ map-reduce 三级金字塔（文件→子文件夹→父文件夹，向上只汇
 超大 folder（list_folder 截断）→ 完整汇总写独立笔记（write_deliverable），
 description 只放精华。单测 `tests/unit/agentDescription.test.js`。
 
-**Step 边界注入（2026-10-15 落地）**：Agent 工具循环运行中，输入框不再
+**Step 边界注入（2026-10-15 落地；2026-11-10 步数预算移除）**：Agent 工具循环运行中，输入框不再
 禁用——发送的补充指令进 `AgentInterruptQueue`（`AgentService.ts` 的
 `drainInterruptQueue` 纯函数），`runAgent` 在**每个 step 边界**（下一次模型
 请求前）drain 成 `role:'user'` 消息注入对话，模型无需等整个 run 结束就能
-看到新指令；注入会给新指令重置步骤预算（`MAX_AGENT_INJECTIONS=4` 上限防
-无限续跑），并发出 `interrupt_drained` 事件供 UI 更新排队计数
+看到新指令；`MAX_AGENT_INJECTIONS=4` 只限制单次 run 的注入条数（防无限喂
+指令，超限折叠续跑），并发出 `interrupt_drained` 事件供 UI 更新排队计数
 （AgentPanel 输入框上方 "⏳ N 条补充指令待送达" 提示条）。run 结束瞬间
 仍未注入的残留指令由 AgentPanel finally 折叠成一次续跑（不丢消息）；
 点「停止」会清空排队（中断语义，不喂新活，且不自动续跑）。续跑前校验
@@ -351,6 +386,19 @@ run 后启动的窗口由 MenuItem disabled 兜住），`handleNewSession`/
 - **能力边界（勿回退）**：该上游**无 tool-calling**——Agent 在此引擎下自动降级为纯对话
   （tools 字段不发送，模型不会返回 tool_calls）；设置页的 tool-calling 探测
   （`checkAgentSupport`）仅对 openai-compatible 触发，llm-gateway 天然跳过。
+- **模型列表去重（2026-11-10）**：`getGatewayModels`/`probeGatewayEndpoint` 对网关返回的
+  models 做保序去重——现场网关 config.yaml 曾把升级脚本的环境变量整行
+  `PROD_MODEL="DEEPSEEK-V4-..."` 粘进 supported_models，客户端列表出现多条同名脏条目。
+  根治在网关侧：`llm_gateway/gateway.py` 的 `_clean_model_name`（剥 `VAR=` 前缀与成对引号）
+  已应用于白名单构建、`_resolve_model` 请求校验与 `_default_model`，客户端发清洗前/后的
+  模型名都能命中白名单；TagSpaces 侧不做改名（防未升级网关回退默认模型），只去重。
+- **验证失败原因透出（2026-11-11）**：`verifyGatewayModel` 对话失败时补发一次
+  `GET /chat-gen/models` 探测，把真实 HTTP 状态/响应片段带进验证结果——区分
+  网络不可达 / 边缘 403（IP 白名单，HTML 错误页） / 401（token 错） / models 通但
+  conversation 失败（上游/模型问题），不再只报 "gateway request failed"。
+  实测：本机访问生产 `https://im5.ccbft.com` 整域 403（边缘 nginx 按来源封闭，
+  带/不带 token 都一样），办公网内 `http://10.10.10.3/node3/...` 才是网关可达路径——
+  TagSpaces 要在生产用，需在允许的网络来源上运行并给 provider 填 API Key。
 - **真机验证**（2026-11-05，CDP 驱动 dev 应用 + `manual/mock-gateway-subsidiary.js`）：
   预设菜单可见、建引擎、URL/Key/手动加模型、保存并验证、切默认引擎、Agent 面板两轮
   对话（网关侧确认 messages 2→4 条透传多轮）全部通过；脚本
@@ -373,12 +421,17 @@ OneNote/Joplin 式快速笔记：一键新建 Markdown 笔记、卡片流按修�
 - **非 Pro 白名单**：`FolderContainer.tsx` 的 `switchPerspective` 和
   `DirectoryMenu.tsx` 的 `perspectiveSwitch` 对非 Pro 只放行 grid/list/notes，漏了会弹
   Pro teaser（踩过：首次真机验证按钮点了没反应就是这个白名单）。
-- **老用户迁移**：`reducers/index.ts` 在 REHYDRATE 后一次性把 `notes` 并入持久化的
-  `enabledPerspectives`（标志位 `notesPerspectiveMigrated` 防重复，用户手动禁用后不再
-  复活）；`ExtEnabledPerspectives` 锁定的部署不受影响。
-- **新建笔记**：`NotesToolbar`/空态按钮 → `createFileAdvanced(dir, note-YYYYMMDD-HHmmss,
-  '# 未命名笔记\n\n', 'md')` + `openEntry(path, undefined, undefined, true)`；秒级命名
-  防冲突。真机验证（CDP + `manual/drive-notes-verify.js`）：切视角、一键建卡、分组头、
+- **老用户迁移**：`src/renderer/reducers/notesPerspectiveMigration.ts`（被
+  `reducers/index.ts` 包在 baseRootReducer 外）在 REHYDRATE 后一次性把 `notes` 并入
+  持久化的 `enabledPerspectives`（标志位 `notesPerspectiveMigrated` 防重复，**无论
+  notes 是否已在列表中都写标志**——否则全新安装用户手动禁用后重启会被复活）；
+  `ExtEnabledPerspectives` 锁定的部署不受影响。
+- **新建笔记**：`NotesToolbar`/空态按钮 → `createFileAdvanced(dir, note-YYYYMMDD-HHmmssSSS,
+  '# 未命名笔记\n\n', 'md')`，**await 创建成功后才** `openEntry(path, undefined, undefined, true)`
+  （失败不打开幽灵路径；`creatingRef` 在途防重入）。`createFileAdvanced` 返回
+  `Promise<FileSystemEntry | undefined>`（失败解析为 undefined 而非 reject，老调用方
+  `NewFileDialog` 忽略返回值不受影响）；毫秒级命名防同秒双击冲突。
+  真机验证（CDP + `manual/drive-notes-verify.js`）：切视角、一键建卡、分组头、
   编辑器输入、保存落盘全部通过。
 
 ### 待办（Todo）
