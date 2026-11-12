@@ -34,7 +34,8 @@ const NOTE_EXTENSIONS = ['md', 'markdown', 'txt'];
 
 export function isNoteFile(fileName: string): boolean {
   const dotIndex = fileName.lastIndexOf('.');
-  if (dotIndex < 0 || dotIndex === fileName.length - 1) {
+  // dotIndex === 0 excludes dotfiles like ".md" that have no base name.
+  if (dotIndex <= 0 || dotIndex === fileName.length - 1) {
     return false;
   }
   return NOTE_EXTENSIONS.includes(fileName.slice(dotIndex + 1).toLowerCase());
@@ -44,7 +45,15 @@ function pad2(n: number): string {
   return n < 10 ? '0' + n : String(n);
 }
 
-/** Auto name for a fresh note: note-YYYYMMDD-HHmmss (seconds → collision-safe). */
+function pad3(n: number): string {
+  return n < 10 ? '00' + n : n < 100 ? '0' + n : String(n);
+}
+
+/**
+ * Auto name for a fresh note: note-YYYYMMDD-HHmmssSSS. Milliseconds make a
+ * same-instant double click practically collision-free (a seconds-only
+ * stamp collided when two notes were created within the same second).
+ */
 export function newNoteBaseName(now: Date = new Date()): string {
   return (
     'note-' +
@@ -54,7 +63,8 @@ export function newNoteBaseName(now: Date = new Date()): string {
     '-' +
     pad2(now.getHours()) +
     pad2(now.getMinutes()) +
-    pad2(now.getSeconds())
+    pad2(now.getSeconds()) +
+    pad3(now.getMilliseconds())
   );
 }
 

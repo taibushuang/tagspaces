@@ -19,51 +19,14 @@ import AppConfig from '-/AppConfig';
 import { credentialsTransform } from '-/services/credentialsTransform';
 import { loadJSONString } from '@tagspaces/tagspaces-common/utils-io';
 import { persistCombineReducers, PersistConfig } from 'redux-persist';
-import { REHYDRATE } from 'redux-persist/lib/constants';
 import getStoredStateMigrateV4 from 'redux-persist/lib/integration/getStoredStateMigrateV4';
 import storage from 'redux-persist/lib/storage';
 import app from './app';
 import locations from './locations';
 import searches from './searches';
 import settings from './settings';
+import { migrateNotesPerspective } from './notesPerspectiveMigration';
 import { PerspectiveIDs } from '-/perspectives';
-
-// One-time migration for the notes perspective (2026-11): profiles persisted
-// before it existed have an enabledPerspectives list without it, which would
-// keep the new perspective hidden after upgrade. Rehydrated profiles get it
-// merged in once; the flag in settings prevents re-adding it after the user
-// deliberately disables it again.
-const NOTES_PERSPECTIVE_MIGRATION_FLAG = 'notesPerspectiveMigrated';
-
-function migrateRehydratedSettings(state: any, action: any) {
-  if (action.type !== REHYDRATE || action.key !== 'root') {
-    return state;
-  }
-  const rehydratedSettings = state?.settings;
-  if (
-    !rehydratedSettings ||
-    rehydratedSettings[NOTES_PERSPECTIVE_MIGRATION_FLAG]
-  ) {
-    return state;
-  }
-  const enabled: unknown = rehydratedSettings.enabledPerspectives;
-  // Fresh installs already carry 'notes' via DefaultEnabledPerspectives.
-  if (
-    !Array.isArray(enabled) ||
-    enabled.includes(PerspectiveIDs.NOTES) ||
-    AppConfig.ExtEnabledPerspectives
-  ) {
-    return state;
-  }
-  return {
-    ...state,
-    settings: {
-      ...rehydratedSettings,
-      enabledPerspectives: [...enabled, PerspectiveIDs.NOTES],
-      [NOTES_PERSPECTIVE_MIGRATION_FLAG]: true,
-    },
-  };
-}
 
 function configureApp(extConfigObj) {
   if (!extConfigObj) return;
@@ -348,6 +311,11 @@ const baseRootReducer = persistCombineReducers(rootPersistConfig, {
 });
 
 const rootReducer = (state: any, action: any) =>
-  migrateRehydratedSettings(baseRootReducer(state, action), action);
+  migrateNotesPerspective(
+    baseRootReducer(state, action),
+    action,
+    PerspectiveIDs.NOTES,
+    AppConfig.ExtEnabledPerspectives,
+  );
 
 export default rootReducer;

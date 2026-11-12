@@ -62,11 +62,11 @@ function NoteCard(props: Props) {
             flexWrap: 'wrap',
           }}
         >
-          {(fsEntry.tags || []).map((tag: TS.Tag) => (
+          {(fsEntry.tags || []).map((tag: TS.Tag, index: number) => (
             <TagContainer
               tag={tag}
               entry={fsEntry}
-              key={fsEntry.path + tag.title}
+              key={fsEntry.path + '_' + index}
             />
           ))}
           <Typography variant="caption" color="text.secondary">

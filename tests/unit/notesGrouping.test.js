@@ -27,12 +27,19 @@ describe('isNoteFile', () => {
     expect(isNoteFile('noextension')).toBe(false);
     expect(isNoteFile('dot.')).toBe(false);
   });
+
+  test('rejects dotfiles without a base name', () => {
+    expect(isNoteFile('.md')).toBe(false);
+    expect(isNoteFile('.txt')).toBe(false);
+  });
 });
 
 describe('newNoteBaseName', () => {
-  test('formats note-YYYYMMDD-HHmmss', () => {
-    const d = new Date(2026, 0, 2, 3, 4, 5);
-    expect(newNoteBaseName(d)).toBe('note-20260102-030405');
+  test('formats note-YYYYMMDD-HHmmssSSS', () => {
+    const d = new Date(2026, 0, 2, 3, 4, 5, 123);
+    expect(newNoteBaseName(d)).toBe('note-20260102-030405123');
+    const noMs = new Date(2026, 0, 2, 3, 4, 5);
+    expect(newNoteBaseName(noMs)).toBe('note-20260102-030405000');
   });
 
   test('matches the gateway-free charset ^[A-Za-z0-9_-]+$', () => {

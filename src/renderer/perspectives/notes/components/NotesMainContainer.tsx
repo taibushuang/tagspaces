@@ -79,26 +79,37 @@ function NotesMainContainer(props: Props) {
     setSortingMenuAnchorEl(undefined);
   };
 
-  const createNote = () => {
-    if (!currentDirectoryPath) {
+  const creatingRef = React.useRef(false);
+
+  const createNote = async () => {
+    if (!currentDirectoryPath || creatingRef.current) {
       return;
     }
-    const baseName = newNoteBaseName();
-    // Joplin-style one-click capture: create with a template head and open
-    // the note in edit mode right away.
-    createFileAdvanced(
-      currentDirectoryPath,
-      baseName,
-      '# ' + t('core:untitledNote') + '\n\n',
-      'md',
-    );
-    const sep = currentLocation?.getDirSeparator() || AppConfig.dirSeparator;
-    openEntry(
-      currentDirectoryPath + sep + baseName + '.md',
-      undefined,
-      undefined,
-      true,
-    );
+    creatingRef.current = true;
+    try {
+      const baseName = newNoteBaseName();
+      // Joplin-style one-click capture: create with a template head and open
+      // the note in edit mode only after the file exists on disk (a failed
+      // create must not open a phantom entry).
+      const created = await createFileAdvanced(
+        currentDirectoryPath,
+        baseName,
+        '# ' + t('core:untitledNote') + '\n\n',
+        'md',
+      );
+      if (!created) {
+        return;
+      }
+      const sep = currentLocation?.getDirSeparator() || AppConfig.dirSeparator;
+      openEntry(
+        currentDirectoryPath + sep + baseName + '.md',
+        undefined,
+        undefined,
+        true,
+      );
+    } finally {
+      creatingRef.current = false;
+    }
   };
 
   const groupTitle = (key: string) => {

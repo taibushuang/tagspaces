@@ -75,7 +75,11 @@ function NotesToolbar(props: Props) {
         }}
       />
       <Box sx={{ flex: 1 }} />
-      <IconButton data-tid="notesSortButton" onClick={onOpenSortMenu}>
+      <IconButton
+        data-tid="notesSortButton"
+        onClick={onOpenSortMenu}
+        disabled={disabled}
+      >
         <SortIcon />
       </IconButton>
     </Box>

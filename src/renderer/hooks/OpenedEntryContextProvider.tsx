@@ -131,7 +131,7 @@ type OpenedEntryContextData = {
     content: string,
     fileType?: TS.FileType,
     createMeta?: string,
-  ) => void;
+  ) => Promise<TS.FileSystemEntry | undefined>;
   createFile: () => void;
   getOpenedDirProps: () => Promise<TS.DirProp>;
 };
@@ -163,7 +163,7 @@ export const OpenedEntryContext = createContext<OpenedEntryContextData>({
   //goForward: () => {},
   //goBack: () => {},
   createFile: () => {},
-  createFileAdvanced: () => {},
+  createFileAdvanced: async () => undefined,
   getOpenedDirProps: undefined,
 });
 
@@ -1056,7 +1056,7 @@ export const OpenedEntryContextProvider = ({
     fileName: string,
     content: string,
     fileType: TS.FileType = 'md',
-  ) {
+  ): Promise<TS.FileSystemEntry | undefined> {
     const creationDate = new Date().toISOString();
     const fileNameAndExt = fileName + '.' + fileType;
     const filePath =
@@ -1077,14 +1077,14 @@ ${newHTMLFileContent.split('<body></body>')[1]}`;
     } else if (fileType === 'url') {
       fileContent = '[InternetShortcut]\n' + 'URL=' + content + '\n';
     }
-    saveFilePromise({ path: filePath }, fileContent, false, true)
+    return saveFilePromise({ path: filePath }, fileContent, false, true)
       .then((fsEntry: TS.FileSystemEntry) => {
         showNotification(
           t('core:fileCreated', { name: fileNameAndExt }),
           'default',
           true,
         );
-        return true;
+        return fsEntry;
       })
       .catch((error) => {
         console.log('Error creating file: ' + error);
@@ -1093,6 +1093,9 @@ ${newHTMLFileContent.split('<body></body>')[1]}`;
           'error',
           true,
         );
+        // Resolve to undefined instead of rejecting so fire-and-forget
+        // callers never end up with an unhandled promise rejection.
+        return undefined;
       });
   }
 
