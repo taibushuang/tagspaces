@@ -18,6 +18,8 @@
 
 import React, { useEffect } from 'react';
 
+import Box from '@mui/material/Box';
+
 import AppConfig from '-/AppConfig';
 
 import CustomDragLayer from '-/components/CustomDragLayer';
@@ -279,6 +281,19 @@ function WelcomePanelAsync(props) {
 
 interface Props {}
 
+/**
+ * The floating perspective switcher + folder chat bar (FolderContainer.tsx,
+ * position absolute, zIndex 1000) overlays the bottom strip of the content
+ * area. Squeeze-in panels (todo / issues) reach the container bottom, so
+ * their bottom action buttons (todoNewButton / issueNewButton) would sit
+ * under that overlay and become unclickable (elementFromPoint hits the
+ * overlay, not the button). Shrink the panel height instead of adding
+ * padding: height:100% + paddingBottom on the same wrapper resolves against
+ * the parent height in content-box terms here, so the inner panel keeps
+ * filling past the padding and nothing moves.
+ */
+const OVERLAY_PANEL_BOTTOM_INSET = '60px';
+
 function RenderPerspective(props: Props) {
   const { showNotification } = useNotificationContext();
   const { currentLocationId } = useCurrentLocationContext();
@@ -390,40 +405,44 @@ function RenderPerspective(props: Props) {
   // 待办"挤占式"展示：打开时整个内容区切换为待办面板，再次点击工具栏按钮恢复。
   if (isTodoOpen) {
     return (
-      <TodoListPanel
-        items={items}
-        stats={stats}
-        loading={loading}
-        error={error}
-        dataPath={dataPath}
-        createTodo={createTodo}
-        updateTodo={updateTodo}
-        removeTodo={removeTodo}
-        exportMarkdown={exportMarkdown}
-        onClose={toggleTodoList}
-      />
+      <Box sx={{ height: `calc(100% - ${OVERLAY_PANEL_BOTTOM_INSET})` }}>
+        <TodoListPanel
+          items={items}
+          stats={stats}
+          loading={loading}
+          error={error}
+          dataPath={dataPath}
+          createTodo={createTodo}
+          updateTodo={updateTodo}
+          removeTodo={removeTodo}
+          exportMarkdown={exportMarkdown}
+          onClose={toggleTodoList}
+        />
+      </Box>
     );
   }
 
   // 需求与缺陷收集"挤占式"展示（同待办面板模式）。
   if (isIssuesOpen) {
     return (
-      <IssueListPanel
-        items={issueItems}
-        stats={issueStats}
-        loading={issueLoading}
-        error={issueError}
-        dataPath={issueDataPath}
-        appInfo={appInfo}
-        createIssue={createIssue}
-        updateIssue={updateIssue}
-        updateManyIssues={updateManyIssues}
-        removeIssue={removeIssue}
-        exportMarkdown={exportIssuesMarkdown}
-        refresh={refreshIssues}
-        showNotification={showNotification}
-        onClose={toggleIssues}
-      />
+      <Box sx={{ height: `calc(100% - ${OVERLAY_PANEL_BOTTOM_INSET})` }}>
+        <IssueListPanel
+          items={issueItems}
+          stats={issueStats}
+          loading={issueLoading}
+          error={issueError}
+          dataPath={issueDataPath}
+          appInfo={appInfo}
+          createIssue={createIssue}
+          updateIssue={updateIssue}
+          updateManyIssues={updateManyIssues}
+          removeIssue={removeIssue}
+          exportMarkdown={exportIssuesMarkdown}
+          refresh={refreshIssues}
+          showNotification={showNotification}
+          onClose={toggleIssues}
+        />
+      </Box>
     );
   }
 
