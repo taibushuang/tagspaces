@@ -206,6 +206,27 @@
   回写时减掉，持久化值不含补偿）
 - 单测 `tests/unit/openedFileTabs.test.js`
 
+### 最近访问的文档菜单（Recent Documents Menu，2026-11-13 落地）
+
+文件夹工具栏（grid/list 视角共用的 `MainToolbar`）新增 History 图标按钮
+（`data-tid` = `*PerspectiveRecentDocuments`），点击弹出最近访问文档的下拉菜单，
+让"最近的工作"不必先回到欢迎页或左侧"快捷访问"面板。笔记视角使用独立的
+`NotesToolbar`，同一入口在那里为 `notesRecentDocumentsButton`。
+
+- `src/renderer/components/menus/RecentDocumentsMenu.tsx` — 菜单本体：按
+  `HistoryContextProvider` 的 `fileOpenHistory`（localStorage
+  `tsLastOpenedFilesHistory`，条数上限取设置里的最近文件数，默认 10）newest-first
+  列出文件名 + 位置内相对路径（同名文件靠 tooltip 里的绝对路径/位置/时间区分）；
+  空态显示 `noItems`；底部"清除历史记录"走 `openConfirmDialog` 确认后
+  `delAllHistory(historyKeys.fileOpenKey)`。
+- 打开条目走 `BrowserHistoryContextProvider.openHistoryItem(item)`（`ts://` 分享链接，
+  跨位置自动先切 location），编辑中未保存时由 `openFsEntry` 的 `fileChanged`
+  护栏拒绝并提示，不会丢改动。
+- i18n：`core:recentDocuments`、`core:clearRecentDocumentsConfirmation`（en +
+  zh_CN 已加，其余语言回退英文）。
+- 真机验证（CDP）：按钮/菜单均在视口内、6 条历史正确渲染（含相对路径）、
+  从 grid 打开 md → 历史记录写入 → 关闭 → 经此菜单重新打开同一文件全部通过。
+
 ### md 预览样式覆盖（标题字号 / 表格自适应，2026-11-01 落地）
 
 md-editor 扩展（`@tagspaces/extensions/md-editor`，Milkdown Crepe 主题）是 node_modules

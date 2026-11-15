@@ -741,6 +741,8 @@
   "byExtension": "按扩展名",
   "rename": "重命名",
   "fileOpenHistory": "最近打开的文件",
+  "recentDocuments": "最近访问的文档",
+  "clearRecentDocumentsConfirmation": "确定要清空最近访问的文档列表吗？",
   "folderOpenHistory": "最近打开的文件夹",
   "fileEditHistory": "最近编辑的文件",
   "clearHistory": "清除历史记录",

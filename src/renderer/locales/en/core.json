@@ -741,6 +741,8 @@
   "byExtension": "By Extension",
   "rename": "Rename",
   "fileOpenHistory": "Recently Opened Files",
+  "recentDocuments": "Recently Opened Documents",
+  "clearRecentDocumentsConfirmation": "Do you want to clear the list of recently opened documents?",
   "folderOpenHistory": "Recently Opened Folders",
   "fileEditHistory": "Recently Edited Files",
   "clearHistory": "Clear History",

@@ -27,6 +27,7 @@ import {
   EntryPropertiesIcon,
   ExportIcon,
   FeedbackIcon,
+  HistoryIcon,
   ParentFolderIcon,
   PerspectiveSettingsIcon,
   SelectedIcon,
@@ -37,6 +38,7 @@ import {
   UnSelectedIcon,
   VersionCleanupIcon,
 } from '-/components/CommonIcons';
+import RecentDocumentsMenu from '-/components/menus/RecentDocumentsMenu';
 import TsToolbarButton from '-/components/TsToolbarButton';
 import ZoomComponent from '-/components/ZoomComponent';
 import { useAiGenerationDialogContext } from '-/components/dialogs/hooks/useAiGenerationDialogContext';
@@ -59,6 +61,7 @@ import { Pro } from '-/pro';
 import { getKeyBindingObject, isHideProFeatures } from '-/reducers/settings';
 import { Box, Badge, Divider, Toolbar } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
+import React, { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 
@@ -115,6 +118,13 @@ function MainToolbar(props: Props) {
     openCount: issueOpenCount,
     toggleIssues,
   } = useIssueListContext();
+  const [recentAnchorEl, setRecentAnchorEl] = useState<Element | null>(null);
+  const openRecentMenu = useCallback(
+    (event: React.MouseEvent<HTMLElement>) =>
+      setRecentAnchorEl(event.currentTarget),
+    [],
+  );
+  const closeRecentMenu = useCallback(() => setRecentAnchorEl(null), []);
 
   function showProperties() {
     if (openedEntry?.path === currentDirectoryPath) {
@@ -217,6 +227,15 @@ function MainToolbar(props: Props) {
           }}
         >
           <SortingIcon />
+        </TsToolbarButton>
+        <TsToolbarButton
+          tooltip={t('core:recentDocuments')}
+          title={t('core:recentDocuments')}
+          aria-label={t('core:recentDocuments')}
+          data-tid={`${prefixDataTID}PerspectiveRecentDocuments`}
+          onClick={openRecentMenu}
+        >
+          <HistoryIcon />
         </TsToolbarButton>
         <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1.5 }} />
         <Box sx={{ display: selectedEntries.length < 1 ? 'none' : 'flex' }}>
@@ -430,6 +449,13 @@ function MainToolbar(props: Props) {
           )}
         </TsToolbarButton>
       </Box>
+      {recentAnchorEl && (
+        <RecentDocumentsMenu
+          anchorEl={recentAnchorEl}
+          open={Boolean(recentAnchorEl)}
+          onClose={closeRecentMenu}
+        />
+      )}
     </Toolbar>
   );
 }

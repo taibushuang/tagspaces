@@ -23,9 +23,11 @@ import {
   Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import HistoryIcon from '@mui/icons-material/History';
 import SearchIcon from '@mui/icons-material/Search';
 import SortIcon from '@mui/icons-material/Sort';
-import React from 'react';
+import RecentDocumentsMenu from '-/components/menus/RecentDocumentsMenu';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
@@ -40,6 +42,10 @@ function NotesToolbar(props: Props) {
   const { disabled, filter, onFilterChange, onCreateNote, onOpenSortMenu } =
     props;
   const { t } = useTranslation();
+  const [recentAnchorEl, setRecentAnchorEl] = useState<Element | null>(null);
+  const openRecentMenu = (event: React.MouseEvent<HTMLElement>) =>
+    setRecentAnchorEl(event.currentTarget);
+  const closeRecentMenu = () => setRecentAnchorEl(null);
   return (
     <Box
       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1 }}
@@ -75,6 +81,16 @@ function NotesToolbar(props: Props) {
         }}
       />
       <Box sx={{ flex: 1 }} />
+      <Tooltip title={t('core:recentDocuments')}>
+        <span>
+          <IconButton
+            data-tid="notesRecentDocumentsButton"
+            onClick={openRecentMenu}
+          >
+            <HistoryIcon />
+          </IconButton>
+        </span>
+      </Tooltip>
       <IconButton
         data-tid="notesSortButton"
         onClick={onOpenSortMenu}
@@ -82,6 +98,13 @@ function NotesToolbar(props: Props) {
       >
         <SortIcon />
       </IconButton>
+      {recentAnchorEl && (
+        <RecentDocumentsMenu
+          anchorEl={recentAnchorEl}
+          open={Boolean(recentAnchorEl)}
+          onClose={closeRecentMenu}
+        />
+      )}
     </Box>
   );
 }
