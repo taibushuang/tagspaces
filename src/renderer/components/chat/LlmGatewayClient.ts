@@ -38,6 +38,13 @@
  */
 import { ChatRequest, ModelResponse } from 'ollama';
 import type { OpenAIResult } from '-/components/chat/OpenAIClient';
+import {
+  ModelCallFailure,
+  createRequestIdleGuard,
+  describeRequestFailure,
+  httpFailureFromResponse,
+  readResponseErrorBody,
+} from '-/components/chat/agentRequestGuard';
 
 /**
  * Normalize the configured URL to the gateway root that precedes `/chat-gen`.
@@ -237,8 +244,10 @@ export async function chatGatewayCompletion(
   signal?: AbortSignal,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- signature parity with chatOpenAICompletion
   reasoningHandler?: (reasoningDelta: string) => void,
+  onFailure?: (failure: ModelCallFailure) => void,
 ): Promise<OpenAIResult | undefined> {
   if (!url) {
+    onFailure?.({ kind: 'invalid', message: 'no endpoint URL configured' });
     return undefined;
   }
   const body = {
@@ -250,20 +259,20 @@ export async function chatGatewayCompletion(
     ...(msg.model ? { model: msg.model } : {}),
     stream: true,
   };
+  const guard = createRequestIdleGuard(signal);
   try {
     const response = await fetch(`${gatewayBase(url)}/chat-gen/conversation`, {
       method: 'POST',
       headers: buildHeaders(authKey, true),
       body: JSON.stringify(body),
-      signal,
+      signal: guard.signal,
     });
+    guard.reset();
     if (!response.ok) {
-      console.error(
-        'chatGatewayCompletion HTTP ' +
-          response.status +
-          ': ' +
-          (await response.text().catch(() => '')),
-      );
+      const text = await readResponseErrorBody(response);
+      const failure = httpFailureFromResponse(response, text);
+      console.error(`chatGatewayCompletion HTTP ${response.status}: ${text}`);
+      onFailure?.(failure);
       return undefined;
     }
     let content = '';
@@ -298,6 +307,7 @@ export async function chatGatewayCompletion(
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
+        guard.reset();
         if (done) {
           break;
         }
@@ -316,11 +326,14 @@ export async function chatGatewayCompletion(
     }
     return content ? { content } : {};
   } catch (e) {
-    if ((e as any)?.name === 'AbortError') {
-      return undefined;
+    const failure = describeRequestFailure(e, guard);
+    if (failure.kind !== 'aborted') {
+      console.error('chatGatewayCompletion error', failure.message, e);
     }
-    console.error('chatGatewayCompletion error', e);
+    onFailure?.(failure);
     return undefined;
+  } finally {
+    guard.dispose();
   }
 }
 

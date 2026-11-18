@@ -18,6 +18,6 @@
 
 import { useContext } from 'react';
 
-import { NotificationContext } from '-/hooks/NotificationContextProvider';
+import { NotificationContext } from '-/hooks/notificationContext';
 
 export const useNotificationContext = () => useContext(NotificationContext);

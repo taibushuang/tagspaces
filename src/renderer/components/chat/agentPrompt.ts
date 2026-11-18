@@ -245,6 +245,15 @@ export type AgentPromptContext = {
     locations?: Array<{ name: string; path: string }>;
     rulesSummary?: string;
   };
+  /**
+   * Hard completion goal for todo-driven sessions: the todo is the final
+   * objective, and the run must not report success without completing it.
+   */
+  goal?: {
+    kind: 'todo';
+    todoId: string;
+    title: string;
+  };
 };
 
 export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
@@ -261,6 +270,18 @@ export function buildAgentSystemPrompt(ctx: AgentPromptContext): string {
     "Prefer calling tools over guessing about the user's files. Use concise, lowercase tag titles.",
     'Never invent file paths — only use paths returned by tools or given by the user.',
     'After tool calls, briefly summarize in text what you did or found.',
+    ...(ctx.goal
+      ? [
+          '### Session goal (hard requirement)',
+          `This session was started from a todo item, and that todo is the FINAL GOAL of the whole session:`,
+          `- title: ${ctx.goal.title}`,
+          `- todo id: ${ctx.goal.todoId}`,
+          'Work on this todo continuously until it is genuinely finished. Do not stop early, do not switch to unrelated work, and do not report success without having called todo_complete with exactly that id.',
+          'Extra user instructions during the session refine this goal; they do not replace it.',
+          'If you are blocked (missing data, permission or a user decision), state the exact blocker and what the user must do — that is the only legitimate way to end a turn unfinished.',
+          'When you start acting, mark it doing with todo_update_status; when the work is really done, mark it done with todo_complete.',
+        ]
+      : []),
     'When you need current or external information (facts, references, verification), use the web tools:',
     '- web_search — fast results (titles + URLs + snippets) for lookups and finding references;',
     '- fetch_web — read the body of the 1-2 pages web_search surfaced that you actually need in detail;',

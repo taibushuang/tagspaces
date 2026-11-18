@@ -30,6 +30,11 @@
 import { ChatRequest } from 'ollama';
 import { chatOpenAICompletion } from '-/components/chat/OpenAIClient';
 import { chatGatewayCompletion } from '-/components/chat/LlmGatewayClient';
+import { logAgentDebug } from '-/components/chat/agentDebugLog';
+import {
+  ModelCallFailure,
+  failureToUserMessage,
+} from '-/components/chat/agentRequestGuard';
 import type { AIProviders } from '-/components/chat/ChatTypes';
 
 export type AgentTool = {
@@ -106,12 +111,20 @@ export type AgentInterruptQueue = {
  * queued messages beyond the cap are folded into a follow-up run instead.
  */
 export const MAX_AGENT_INJECTIONS = 4;
+/**
+ * How many times a goal-driven run (todo session) may be nudged to keep working
+ * after the model ends its turn without completing the goal. Bounded so a model
+ * that genuinely cannot finish (or ignores the nudge) still terminates.
+ */
+export const MAX_GOAL_NUDGES = 2;
 /** Tool results longer than this get truncated before going back to the model. */
 export const TOOL_RESULT_CHAR_LIMIT = 4000;
 
 export type AgentRunOptions = {
   url: string;
   authKey?: string;
+  /** Provider display name, recorded in the debug log only. */
+  providerName?: string;
   /** Provider engine — selects the wire protocol (see completionEngine). */
   engine?: AIProviders;
   model: string;
@@ -122,12 +135,21 @@ export type AgentRunOptions = {
   /** Step-boundary injection channel (see AgentInterruptQueue). */
   interruptQueue?: AgentInterruptQueue;
   maxInjections?: number;
+  /**
+   * Todo id this session must complete. When set and the todo_complete tool is
+   * available, a turn that ends without a successful completion for this id is
+   * answered with a bounded "keep going / state the blocker" nudge instead of
+   * ending the run (see MAX_GOAL_NUDGES).
+   */
+  goalTodoId?: string;
 };
 
 export type AgentRunResult = {
   messages: AgentMessage[];
   content: string;
   aborted: boolean;
+  /** True once a successful todo_complete for `goalTodoId` ran in this run. */
+  goalCompleted: boolean;
 };
 
 function toOpenAITool(tool: AgentTool) {
@@ -204,6 +226,12 @@ async function executeToolCall(
       const parsed = JSON.parse(serialized);
       if (parsed && typeof parsed === 'object' && parsed.error) {
         recordFailedToolCall(tool.name, rawArgs, parsed.error);
+        logAgentDebug(
+          'warn',
+          `tool ${tool.name} returned an error`,
+          (rawArgs ? `args: ${rawArgs}\n` : '') +
+            String(parsed.error).slice(0, 2000),
+        );
       }
     } catch {
       // non-JSON result — nothing to record
@@ -214,8 +242,55 @@ async function executeToolCall(
     // crashing the whole run.
     console.error(`agent tool ${tool.name} failed`, e);
     recordFailedToolCall(tool.name, rawArgs, e?.message || String(e));
+    logAgentDebug(
+      'error',
+      `tool ${tool.name} failed`,
+      (rawArgs ? `args: ${rawArgs}\n` : '') +
+        (e?.stack || e?.message || String(e)).slice(0, 2000),
+    );
     return JSON.stringify({ error: e?.message || String(e) });
   }
+}
+
+/**
+ * True when this tool call successfully completed the session's goal todo:
+ * name must be todo_complete, its id argument must match the goal, and the
+ * tool result must not carry an `error`.
+ */
+function isGoalCompletion(
+  toolName: string,
+  rawArgs: string,
+  toolResult: string,
+  goalTodoId: string,
+): boolean {
+  if (toolName !== 'todo_complete') {
+    return false;
+  }
+  try {
+    const args = JSON.parse(rawArgs || '{}');
+    if (args?.id !== goalTodoId) {
+      return false;
+    }
+    const result = JSON.parse(toolResult || '{}');
+    return !result?.error;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Nudge appended as a user turn when the model ends its turn without
+ * completing the session goal. Keeps the todo as the single objective while
+ * still giving the model a legitimate exit when it is truly blocked.
+ */
+function buildGoalNudge(todoId: string, attempt: number): string {
+  return [
+    `Session goal check (${attempt}/${MAX_GOAL_NUDGES}): todo ${todoId} is still not marked done.`,
+    `This todo is the final goal of this session — continue working on it with tools.`,
+    `If the task is actually finished, call todo_complete with id "${todoId}" now.`,
+    `If you are genuinely blocked (missing information, permissions or user decision),`,
+    `state exactly what blocks you and what the user must do. Do not stop silently.`,
+  ].join(' ');
 }
 
 /**
@@ -230,6 +305,7 @@ export async function runAgent(
     url,
     authKey,
     engine,
+    providerName,
     model,
     messages,
     tools,
@@ -237,10 +313,29 @@ export async function runAgent(
     signal,
     interruptQueue,
     maxInjections = MAX_AGENT_INJECTIONS,
+    goalTodoId,
   } = options;
   const conversation: AgentMessage[] = [...messages];
   let finalContent = '';
   let aborted = false;
+  let runFailure = '';
+  let goalCompleted = false;
+  let goalNudges = 0;
+  // Enforcement needs a tool-calling engine and the completion tool; gateway
+  // runs (no tools) and runs without the todo tools fall back to prompt-only.
+  const canEnforceGoal =
+    !!goalTodoId &&
+    engine !== 'llm-gateway' &&
+    tools.some((t) => t.name === 'todo_complete');
+  let step = 0;
+  const runStartedAt = Date.now();
+  logAgentDebug(
+    'info',
+    `run started · ${providerName || 'agent'} · ${model}`,
+    `engine: ${engine || 'openai-compatible'}\nurl: ${url}\ntools: ${
+      tools.length
+    }\nmessages: ${messages.length}`,
+  );
 
   const request: ChatRequest = {
     model,
@@ -274,6 +369,14 @@ export async function runAgent(
         onEvent({ type: 'interrupt_drained' });
       }
     }
+    step += 1;
+    let callFailure: ModelCallFailure | undefined;
+    const requestStartedAt = Date.now();
+    logAgentDebug(
+      'info',
+      `request #${step} sent · ${model}`,
+      `messages: ${conversation.length}, tools: ${tools.length}, stream: true`,
+    );
     // eslint-disable-next-line no-await-in-loop -- each round depends on the previous tool results
     const result = await completion(
       url,
@@ -282,19 +385,61 @@ export async function runAgent(
       authKey,
       signal,
       (delta) => onEvent({ type: 'reasoning', delta }),
+      (failure) => {
+        callFailure = failure;
+      },
     );
+    const requestElapsed = `${((Date.now() - requestStartedAt) / 1000).toFixed(
+      1,
+    )}s`;
     if (result === undefined) {
       aborted = !!signal?.aborted;
       const message = aborted
         ? 'aborted by user'
-        : 'model request failed (HTTP error or network problem)';
+        : failureToUserMessage(callFailure);
+      runFailure = message;
+      logAgentDebug(
+        aborted ? 'warn' : 'error',
+        `request #${step} ${aborted ? 'aborted' : 'failed'} · ${requestElapsed}`,
+        [callFailure?.message, callFailure?.detail]
+          .filter(Boolean)
+          .join('\n') || message,
+      );
       onEvent({ type: 'error', message });
       break;
     }
+    logAgentDebug(
+      'info',
+      `request #${step} finished · ${requestElapsed}`,
+      `content: ${result.content?.length || 0} chars, tool calls: ${
+        result.toolCalls?.length || 0
+      }`,
+    );
 
     const toolCalls = result.toolCalls || [];
     if (toolCalls.length === 0) {
-      finalContent = result.content || '';
+      const answer = result.content || '';
+      if (canEnforceGoal && !goalCompleted && goalNudges < MAX_GOAL_NUDGES) {
+        // The model ended its turn but the session goal is not done: feed its
+        // answer plus an explicit goal-check turn and keep the loop alive.
+        goalNudges += 1;
+        conversation.push({
+          role: 'assistant',
+          ...(answer ? { content: answer } : {}),
+        });
+        conversation.push({
+          role: 'user',
+          content: buildGoalNudge(goalTodoId as string, goalNudges),
+        });
+        logAgentDebug(
+          'warn',
+          `goal check #${goalNudges} · todo ${goalTodoId} still open`,
+          `model ended turn without todo_complete; continuing`,
+        );
+        // eslint-disable-next-line no-continue -- next round asks the model to act on the goal
+        continue;
+      }
+      finalContent = answer;
       break;
     }
 
@@ -328,6 +473,22 @@ export async function runAgent(
         name: call.function.name,
         result: toolResult,
       });
+      if (
+        goalTodoId &&
+        isGoalCompletion(
+          call.function.name,
+          call.function.arguments,
+          toolResult,
+          goalTodoId,
+        )
+      ) {
+        goalCompleted = true;
+        logAgentDebug(
+          'info',
+          `goal completed · todo ${goalTodoId}`,
+          'todo_complete succeeded',
+        );
+      }
       conversation.push({
         role: 'tool',
         tool_call_id: call.id,
@@ -339,7 +500,29 @@ export async function runAgent(
     }
   }
 
-  return { messages: conversation, content: finalContent, aborted };
+  let outcome: 'completed' | 'failed' | 'aborted' = 'completed';
+  if (runFailure) {
+    outcome = 'failed';
+  } else if (aborted) {
+    outcome = 'aborted';
+  }
+  let level: 'info' | 'warn' | 'error' = 'info';
+  if (runFailure) {
+    level = 'error';
+  } else if (aborted) {
+    level = 'warn';
+  }
+  logAgentDebug(
+    level,
+    `run ${outcome} · ${((Date.now() - runStartedAt) / 1000).toFixed(1)}s`,
+    runFailure || `steps: ${step}, messages: ${conversation.length}`,
+  );
+  return {
+    messages: conversation,
+    content: finalContent,
+    aborted,
+    goalCompleted,
+  };
 }
 
 /**

@@ -47,6 +47,21 @@ export interface IssueContext {
   };
 }
 
+/** One release's resolved entries: bug/feature refs that version fixed. */
+export interface ResolvedIssuesManifestEntry {
+  bugs?: string[];
+  features?: string[];
+}
+
+/**
+ * Cumulative "what each release fixed" manifest, keyed by app version.
+ * Lives in resolvedIssues.json next to this module and is bundled into the
+ * main process, so every build carries the list of fixed/implemented refs.
+ */
+export interface ResolvedIssuesManifest {
+  [version: string]: ResolvedIssuesManifestEntry;
+}
+
 export interface IssueItem {
   id: string;
   /**
@@ -66,6 +81,12 @@ export interface IssueItem {
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
+  /**
+   * App version whose release manifest fixed/implemented this entry (set by
+   * auto-resolve). Kept when an entry is manually reopened so the same
+   * manifest does not close it again on the next start.
+   */
+  resolvedInVersion?: string;
 }
 
 export interface IssueFilter {
@@ -343,6 +364,63 @@ export function getHardwareMachineId(): string | undefined {
   return undefined;
 }
 
+function versionParts(version: string): number[] {
+  return String(version || '')
+    .trim()
+    .replace(/^v/i, '')
+    .replace(/-.*$/, '')
+    .split('.')
+    .map((part) => parseInt(part, 10) || 0);
+}
+
+/**
+ * Compare two dotted app versions numerically (missing segments count as 0;
+ * pre-release suffixes are ignored). Returns -1, 0 or 1.
+ */
+export function compareVersions(a: string, b: string): number {
+  const pa = versionParts(a);
+  const pb = versionParts(b);
+  const length = Math.max(pa.length, pb.length);
+  for (let i = 0; i < length; i += 1) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * Flatten the release manifest into `ref -> version` for every release up to
+ * and including the running version. Cumulative on purpose: a user can skip
+ * releases (6.19 -> 6.23), and entries fixed in a skipped release must still
+ * resolve. A ref listed in several releases counts once, at the earliest one.
+ */
+export function collectResolvedRefs(
+  manifest: ResolvedIssuesManifest,
+  currentVersion: string,
+): Map<string, string> {
+  const found: Array<{ ref: string; version: string }> = [];
+  Object.entries(manifest || {}).forEach(([version, entry]) => {
+    // Ignore hand-edited keys that are not dotted numeric versions.
+    if (!/^v?\d+(?:\.\d+)*$/.test(String(version).trim())) return;
+    if (!entry || typeof entry !== 'object') return;
+    if (compareVersions(version, currentVersion) > 0) return;
+    [entry.bugs, entry.features].forEach((list) => {
+      if (!Array.isArray(list)) return;
+      list.forEach((ref) => {
+        if (typeof ref === 'string' && ref.trim()) {
+          found.push({ ref: ref.trim(), version });
+        }
+      });
+    });
+  });
+  found.sort((a, b) => compareVersions(a.version, b.version));
+  const refs = new Map<string, string>();
+  found.forEach(({ ref, version }) => {
+    if (!refs.has(ref)) refs.set(ref, version);
+  });
+  return refs;
+}
+
 /**
  * Render the full collection as a handoff markdown document — everything a
  * developer (or an AI coding session) needs per entry: full description,
@@ -392,6 +470,9 @@ export function renderIssuesMarkdown(
         `- 上报时间: ${item.createdAt.slice(0, 19).replace('T', ' ')}` +
           (item.resolvedAt
             ? ` · 处理时间: ${item.resolvedAt.slice(0, 19).replace('T', ' ')}`
+            : '') +
+          (item.resolvedInVersion
+            ? ` · 修复版本: v${item.resolvedInVersion}`
             : ''),
       );
       const ctx = item.context;
@@ -605,6 +686,31 @@ export class IssueDatabase {
     return { updated, missing };
   }
 
+  /**
+   * Apply the release manifest at startup: every open entry whose ref is
+   * listed as fixed/implemented in a release up to the running version
+   * becomes done. Entries that already carry resolvedInVersion are left
+   * alone, so a manual reopen sticks instead of being undone on next start.
+   */
+  applyResolvedRefs(refs: Map<string, string>): {
+    resolved: number;
+    refs: string[];
+  } {
+    const now = new Date().toISOString();
+    const resolved: string[] = [];
+    this.issues.forEach((item) => {
+      const version = item.ref ? refs.get(item.ref) : undefined;
+      if (item.status !== 'open' || item.resolvedInVersion || !version) return;
+      item.status = 'done';
+      item.resolvedAt = now;
+      item.resolvedInVersion = version;
+      item.updatedAt = now;
+      resolved.push(item.ref);
+    });
+    if (resolved.length > 0) this.persist();
+    return { resolved: resolved.length, refs: resolved };
+  }
+
   /** In-memory update, no persist — callers decide when to write. */
   private applyUpdate(id: string, patch: IssueUpdateInput): IssueItem {
     const index = this.issues.findIndex((i) => i.id === id);
@@ -621,6 +727,7 @@ export class IssueDatabase {
       // report_issue tool can enrich it with the app version after create
       source: prev.source,
       ref: prev.ref,
+      resolvedInVersion: prev.resolvedInVersion,
       context: sanitized.context ?? prev.context,
     };
     if (merged.status === 'done' && prev.status !== 'done') {

@@ -212,13 +212,16 @@ function getSpellcheckLanguage(i18n: string) {
 }
 
 function showApp() {
-  const windows = BrowserWindow.getAllWindows();
-  windows.forEach((win, i) => {
-    if (win && i < 1) {
-      if (win.isMinimized()) win.restore();
-      else win.show();
-    }
-  });
+  const win =
+    mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow
+      : BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+  if (!win) return;
+  // show() does not restore a minimized window on Windows — restore first,
+  // then show/focus so a tray click actually brings the UI to the front.
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }
 
 function showMainWindow() {

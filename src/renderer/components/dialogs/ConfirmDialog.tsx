@@ -25,15 +25,17 @@ import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import { TS } from '-/tagspaces.namespace';
 import BulletIcon from '@mui/icons-material/Remove';
 import Box from '@mui/material/Box';
+import Checkbox from '@mui/material/Checkbox';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
-import { useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
@@ -47,9 +49,12 @@ interface Props {
   confirmDialogContentTID?: string;
   prompt?: string;
   helpText?: string;
-  list: string[];
+  list?: string[];
   entriesList?: TS.FileSystemEntry[];
-  confirmCallback: (result: boolean | string) => void;
+  /** Optional checkbox above the actions; `checked` is passed to the callback. */
+  checkLabel?: string;
+  checkDefaultChecked?: boolean;
+  confirmCallback: (result: boolean | string, checked?: boolean) => void;
   onClose: () => void;
   /**
    * Called when the dialog is dismissed WITHOUT a button click (Esc / ✕ /
@@ -75,27 +80,55 @@ function ConfirmDialog(props: Props) {
     customConfirmText,
     list,
     entriesList,
+    checkLabel,
+    checkDefaultChecked,
     confirmDialogContentTID,
     cancelDialogTID,
     confirmDialogTID,
   } = props;
   const { t } = useTranslation();
   const [promptValue, setPromptValue] = useState<string>('');
+  const [checked, setChecked] = useState<boolean>(!!checkDefaultChecked);
 
-  function onConfirm(result) {
-    confirmCallback(result && prompt ? promptValue : result);
-    onClose();
-  }
+  // Reset the optional checkbox every time the dialog opens (it stays mounted).
+  useEffect(() => {
+    if (open) {
+      setChecked(!!checkDefaultChecked);
+    }
+  }, [open, checkDefaultChecked]);
+
+  const onConfirm = useCallback(
+    (result: boolean | string) => {
+      confirmCallback(result && prompt ? promptValue : result, checked);
+      onClose();
+    },
+    [confirmCallback, prompt, promptValue, checked, onClose],
+  );
+
+  const handleToggleChecked = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      setChecked(event.target.checked);
+    },
+    [],
+  );
+
+  const handleCancel = useCallback(() => {
+    onConfirm(false);
+  }, [onConfirm]);
+
+  const handleOk = useCallback(() => {
+    onConfirm(true);
+  }, [onConfirm]);
 
   // Esc / ✕ / backdrop: no button was pressed. Route to onDismiss when the
   // caller needs to observe dismissal (else the async caller hangs).
-  function handleDismiss() {
+  const handleDismiss = useCallback(() => {
     if (onDismiss) {
       onDismiss();
     } else {
       onClose();
     }
-  }
+  }, [onDismiss, onClose]);
 
   return (
     <Dialog
@@ -147,12 +180,32 @@ function ConfirmDialog(props: Props) {
           )}
         </DialogContentText>
       </DialogContent>
+      {checkLabel && (
+        <Box sx={{ paddingX: 3 }}>
+          <FormControlLabel
+            control={
+              <Checkbox
+                data-tid="confirmDialogCheckboxTID"
+                checked={checked}
+                onChange={handleToggleChecked}
+              />
+            }
+            label={checkLabel}
+            sx={{
+              '& .MuiFormControlLabel-label': {
+                fontSize: '0.85rem',
+                lineHeight: 1.35,
+              },
+            }}
+          />
+        </Box>
+      )}
       <TsDialogActions>
-        <TsButton onClick={() => onConfirm(false)} data-tid={cancelDialogTID}>
-          {customCancelText ? customCancelText : t('core:no')}
+        <TsButton onClick={handleCancel} data-tid={cancelDialogTID}>
+          {customCancelText || t('core:no')}
         </TsButton>
-        <TsButton data-tid={confirmDialogTID} onClick={() => onConfirm(true)}>
-          {customConfirmText ? customConfirmText : t('core:yes')}
+        <TsButton data-tid={confirmDialogTID} onClick={handleOk}>
+          {customConfirmText || t('core:yes')}
         </TsButton>
       </TsDialogActions>
     </Dialog>
@@ -160,10 +213,19 @@ function ConfirmDialog(props: Props) {
 }
 
 ConfirmDialog.defaultProps = {
+  content: '',
+  customConfirmText: undefined,
+  customCancelText: undefined,
   cancelDialogTID: 'confirmDialogCancelButton',
   confirmDialogTID: 'confirmDialogOkButton',
   confirmDialogContentTID: 'confirmDialogContentTID',
   list: [],
+  prompt: undefined,
+  helpText: undefined,
+  entriesList: undefined,
+  checkLabel: undefined,
+  checkDefaultChecked: false,
+  onDismiss: undefined,
 };
 
 export default ConfirmDialog;

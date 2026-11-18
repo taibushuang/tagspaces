@@ -303,6 +303,16 @@ function IssueListPanel({
                     }
                     variant="outlined"
                   />
+                  {item.resolvedInVersion ? (
+                    <Chip
+                      size="small"
+                      color="success"
+                      label={t('core:issueResolvedInVersion', {
+                        version: item.resolvedInVersion,
+                      })}
+                      variant="outlined"
+                    />
+                  ) : null}
                 </Box>
               }
               secondary={

@@ -35,6 +35,10 @@ import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { useTodoListContext } from '-/components/todo/TodoListContextProvider';
+import { useAgentSessionsContext } from '-/components/chat/AgentSessionsContextProvider';
+import { useAiAgentDialogContext } from '-/components/dialogs/hooks/AiAgentDialogContextProvider';
+import { buildTodoAgentPrompt } from '-/components/todo/todoUtils';
+import type { TodoItem } from '-/components/todo/todoTypes';
 import { useIssueListContext } from '-/components/issues/IssueListContextProvider';
 import TodoListPanel from '-/components/todo/TodoListPanel';
 import IssueListPanel from '-/components/issues/IssueListPanel';
@@ -297,6 +301,8 @@ const OVERLAY_PANEL_BOTTOM_INSET = '60px';
 function RenderPerspective(props: Props) {
   const { showNotification } = useNotificationContext();
   const { currentLocationId } = useCurrentLocationContext();
+  const { startNewSessionRun } = useAgentSessionsContext();
+  const { openAgentChat } = useAiAgentDialogContext();
   const { currentPerspective, currentDirectory, isSearchMode } =
     useDirectoryContentContext();
   const { openedEntry } = useOpenedEntryContext();
@@ -402,6 +408,20 @@ function RenderPerspective(props: Props) {
     return wrap(PerspectiveIDs.GRID, <GridPerspectiveAsync />);
   }
 
+  // 单条待办 → 专属 Agent 会话：新建以待办标题命名的会话，用待办内容作为
+  // 首条指令并打开 AI 抽屉；若已有 run 在跑则只打开现有对话并提示。
+  const runTodoWithAgent = (item: TodoItem) => {
+    const accepted = startNewSessionRun({
+      title: item.title,
+      text: buildTodoAgentPrompt(item, (key, options) => i18n.t(key, options)),
+      goal: { kind: 'todo', todoId: item.id, title: item.title },
+    });
+    openAgentChat();
+    if (!accepted) {
+      showNotification(i18n.t('core:todoAgentBusy'), 'warning');
+    }
+  };
+
   // 待办"挤占式"展示：打开时整个内容区切换为待办面板，再次点击工具栏按钮恢复。
   if (isTodoOpen) {
     return (
@@ -416,6 +436,7 @@ function RenderPerspective(props: Props) {
           updateTodo={updateTodo}
           removeTodo={removeTodo}
           exportMarkdown={exportMarkdown}
+          onRunWithAgent={runTodoWithAgent}
           onClose={toggleTodoList}
         />
       </Box>

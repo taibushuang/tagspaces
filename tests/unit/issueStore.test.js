@@ -21,6 +21,8 @@ import os from 'os';
 import path from 'path';
 import {
   IssueDatabase,
+  collectResolvedRefs,
+  compareVersions,
   deriveTagFromMachineId,
   ensureMachineTag,
   renderIssuesMarkdown,
@@ -317,6 +319,112 @@ describe('ensureMachineTag（机器标识）', () => {
     expect(
       fs.readFileSync(path.join(dir, 'machine.tag'), 'utf8').trim(),
     ).toBe(tag);
+  });
+});
+
+describe('版本清单（修复/已实现 ref 自动销账）', () => {
+  test('compareVersions：按数字段比较，忽略预发布后缀', () => {
+    expect(compareVersions('6.9.0', '6.20.0')).toBe(-1);
+    expect(compareVersions('6.20.0', '6.20.0')).toBe(0);
+    expect(compareVersions('6.24.0', '6.20.0')).toBe(1);
+    expect(compareVersions('6.20', '6.20.0')).toBe(0);
+    expect(compareVersions('v6.20.0', '6.20.0')).toBe(0);
+    expect(compareVersions('6.20.0-beta.1', '6.20.0')).toBe(0);
+    expect(compareVersions('7.0.0', '6.20.0')).toBe(1);
+  });
+
+  test('collectResolvedRefs：只取当前版本及更早，集合内去重、取最早版本', () => {
+    const manifest = {
+      '6.20.0': { bugs: ['A-BUG-001'], features: ['A-REQ-001'] },
+      '6.22.0': { bugs: ['A-BUG-002', 'A-BUG-001'] },
+      '6.26.0': { features: ['A-REQ-002'] },
+      'not-a-version': { bugs: ['A-BUG-999'] },
+    };
+    const upTo622 = collectResolvedRefs(manifest, '6.22.3');
+    expect([...upTo622.keys()].sort()).toEqual([
+      'A-BUG-001',
+      'A-BUG-002',
+      'A-REQ-001',
+    ]);
+    expect(upTo622.get('A-BUG-001')).toBe('6.20.0'); // 最早修复版本优先
+    // 跳版本升级：6.19 -> 6.24 仍会应用中间所有版本
+    const upTo624 = collectResolvedRefs(
+      {
+        '6.20.0': { bugs: ['A-BUG-001'] },
+        '6.23.0': { features: ['A-REQ-001'] },
+      },
+      '6.24.0',
+    );
+    expect(upTo624.size).toBe(2);
+    // 当前版本更低时不应用未来版本
+    expect(collectResolvedRefs(manifest, '6.19.0').size).toBe(0);
+  });
+
+  test('applyResolvedRefs：匹配 ref 的 open 条目置 done 并记录修复版本，落盘可重载', () => {
+    const file = path.join(dir, 'issues.json');
+    const db = new IssueDatabase(file, () => 'A7F3');
+    const bug = db.create({ title: 'fixed bug', type: 'bug' });
+    const feature = db.create({ title: 'implemented', type: 'feature' });
+    const other = db.create({ title: 'still open', type: 'bug' });
+    const res = db.applyResolvedRefs(
+      new Map([
+        ['A7F3-BUG-001', '6.20.0'],
+        ['A7F3-REQ-001', '6.22.0'],
+      ]),
+    );
+    expect(res.resolved).toBe(2);
+    expect(res.refs.sort()).toEqual(['A7F3-BUG-001', 'A7F3-REQ-001']);
+    const byTitle = new Map(db.list().items.map((i) => [i.title, i]));
+    expect(byTitle.get('fixed bug').status).toBe('done');
+    expect(byTitle.get('fixed bug').resolvedInVersion).toBe('6.20.0');
+    expect(byTitle.get('implemented').resolvedAt).toBeTruthy();
+    expect(byTitle.get('still open').status).toBe('open');
+
+    const db2 = new IssueDatabase(file, () => 'A7F3');
+    db2.load();
+    expect(
+      db2.list({ status: 'done' }).items.map((i) => i.ref).sort(),
+    ).toEqual(['A7F3-BUG-001', 'A7F3-REQ-001']);
+  });
+
+  test('applyResolvedRefs：跳过已 done、未知 ref 与已手动重新打开的条目', () => {
+    const db = new IssueDatabase(path.join(dir, 'issues.json'), () => 'A7F3');
+    const a = db.create({ title: 'a' });
+    const b = db.create({ title: 'b' });
+    db.update(b.id, { status: 'done' }); // 手动处理，不应被改写版本
+    const refs = new Map([
+      ['A7F3-BUG-001', '6.20.0'],
+      ['A7F3-BUG-002', '6.20.0'],
+      ['A7F3-BUG-999', '6.20.0'],
+    ]);
+    expect(db.applyResolvedRefs(refs).resolved).toBe(1);
+    // 自动销账后手动重新打开：不会被同一清单再次关闭
+    db.update(a.id, { status: 'open' });
+    expect(db.applyResolvedRefs(refs).resolved).toBe(0);
+    const afterReopen = db.list().items;
+    expect(afterReopen.find((i) => i.id === a.id).status).toBe('open');
+    expect(
+      afterReopen.find((i) => i.id === b.id).resolvedInVersion,
+    ).toBeUndefined();
+  });
+
+  test('renderIssuesMarkdown：已处理条目输出修复版本', () => {
+    const md = renderIssuesMarkdown([
+      {
+        id: '1',
+        ref: 'A7F3-BUG-001',
+        type: 'bug',
+        title: '崩溃',
+        severity: 'high',
+        status: 'done',
+        source: 'ui',
+        createdAt: '2026-10-19T10:00:00.000Z',
+        updatedAt: '2026-10-19T10:00:00.000Z',
+        resolvedAt: '2026-11-01T00:00:00.000Z',
+        resolvedInVersion: '6.20.0',
+      },
+    ]);
+    expect(md).toContain('修复版本: v6.20.0');
   });
 });
 

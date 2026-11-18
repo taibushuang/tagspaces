@@ -35,6 +35,7 @@ import {
   AgentInterruptQueue,
   runAgent,
 } from '-/components/chat/AgentService';
+import { logAgentDebug } from '-/components/chat/agentDebugLog';
 import {
   requestDeleteConfirmationDialog,
   requestExecConfirmationDialog,
@@ -98,6 +99,14 @@ export type AgentChatMessage =
       reasoning?: string;
     };
 
+export type AgentSessionGoal = {
+  kind: 'todo';
+  todoId: string;
+  title: string;
+  /** Set once a successful todo_complete for `todoId` ran in this session. */
+  completedAt?: number;
+};
+
 export type AgentSession = {
   id: string;
   title: string;
@@ -105,6 +114,8 @@ export type AgentSession = {
   messages: AgentChatMessage[];
   /** OpenAI-format conversation carried across runs (incl. tool results). */
   apiMessages: Record<string, any>[];
+  /** Present on todo-driven sessions: the todo is the session's final goal. */
+  goal?: AgentSessionGoal;
 };
 
 export type AgentScheduledRunning = {
@@ -153,6 +164,17 @@ export type AgentSessionsContextData = {
   stopRun: () => void;
   enqueueInterrupt: (text: string) => void;
   newAgentSession: () => void;
+  /**
+   * Create a fresh session titled `title`, select it and start a run with
+   * `text`. Returns false when another run is already in flight (session
+   * operations are locked then), so callers can warn instead of silently
+   * doing nothing.
+   */
+  startNewSessionRun: (opts: {
+    title: string;
+    text: string;
+    goal?: AgentSessionGoal;
+  }) => boolean;
   deleteCurrentAgentSession: () => void;
   tasks: AgentScheduledTask[];
   refreshTasks: () => Promise<void>;
@@ -531,7 +553,7 @@ export function AgentSessionsContextProvider(props: {
         requestExecConfirmation: unattended
           ? () => Promise.resolve({ approved: false, remember: false })
           : (payload) =>
-              requestExecConfirmationDialog(openConfirmDialog, payload),
+              requestExecConfirmationDialog(openConfirmDialog, payload, t),
         moveToPath: (sourcePath: string, targetPath: string) => {
           const srcLoc = locationForPath(sourcePath);
           const tgtLoc = locationForPath(targetPath);
@@ -716,15 +738,21 @@ export function AgentSessionsContextProvider(props: {
       }
       if (!defaultAiProvider || !defaultAiProvider.url) {
         lastRunErrorRef.current = t('core:aiNoProviderConfigured');
+        logAgentDebug('error', 'run not started · no AI provider configured');
         showNotification(t('core:aiNoProviderConfigured'), 'warning');
         return 'failed';
       }
       const model = currentModel?.name || defaultAiProvider.defaultTextModel;
       if (!model) {
         lastRunErrorRef.current = 'no model selected';
+        logAgentDebug('error', 'run not started · no model selected');
         return 'failed';
       }
       const sessionId = session.id;
+      // Todo-driven sessions keep their todo as the final goal on every run
+      // (including follow-ups and folded resumes) until it is completed.
+      const activeGoal =
+        session.goal && !session.goal.completedAt ? session.goal : undefined;
 
       // A run is already in flight: queue this message for step-boundary
       // injection instead of starting a parallel run. Scheduled executions
@@ -763,6 +791,7 @@ export function AgentSessionsContextProvider(props: {
         : findLocation();
       if (overrideLocationId && !location) {
         lastRunErrorRef.current = 'location missing';
+        logAgentDebug('error', 'run not started · location missing');
         return 'failed';
       }
       const currentLocationUuid = findLocation()?.uuid ?? '';
@@ -835,6 +864,7 @@ export function AgentSessionsContextProvider(props: {
           url: defaultAiProvider.url,
           authKey: defaultAiProvider.authKey,
           engine: defaultAiProvider.engine,
+          providerName: defaultAiProvider.name,
           model,
           messages: [
             {
@@ -850,6 +880,7 @@ export function AgentSessionsContextProvider(props: {
                   instruction: s.instruction,
                 })),
                 diskInitState: readDiskInitState() ?? undefined,
+                goal: activeGoal,
               }),
             },
             ...session.apiMessages,
@@ -860,6 +891,7 @@ export function AgentSessionsContextProvider(props: {
           tools: buildTools(location, !!opts.unattended),
           signal: abortController.signal,
           interruptQueue: queue,
+          goalTodoId: activeGoal?.todoId,
           onEvent: (event: AgentEvent) => {
             if (event.type === 'text') {
               patchAssistant((msg) => {
@@ -909,6 +941,10 @@ export function AgentSessionsContextProvider(props: {
         updateSession(sessionId, (s) => ({
           ...s,
           apiMessages: result.messages,
+          goal:
+            s.goal && result.goalCompleted && !s.goal.completedAt
+              ? { ...s.goal, completedAt: Date.now() }
+              : s.goal,
         }));
         if (result.aborted) {
           outcome = 'aborted';
@@ -918,6 +954,11 @@ export function AgentSessionsContextProvider(props: {
       } catch (e: any) {
         outcome = 'failed';
         runError = e?.message || String(e);
+        logAgentDebug(
+          'error',
+          'run crashed',
+          (e?.stack || e?.message || String(e)).slice(0, 4000),
+        );
         patchAssistant((msg) => {
           msg.content +=
             (msg.content ? '\n\n' : '') + '> ⚠️ ' + (e?.message || String(e));
@@ -1015,6 +1056,35 @@ export function AgentSessionsContextProvider(props: {
     commitSessions([session, ...sessionsRef.current]);
     selectSession(session.id);
   }, [commitSessions, selectSession]);
+
+  const startNewSessionRun = useCallback(
+    ({
+      title,
+      text,
+      goal,
+    }: {
+      title: string;
+      text: string;
+      goal?: AgentSessionGoal;
+    }): boolean => {
+      if (isRunningRef.current) {
+        return false;
+      }
+      const session = newSession();
+      const titled: AgentSession = {
+        ...session,
+        title: (title || '').trim().slice(0, 120),
+        ...(goal ? { goal } : {}),
+      };
+      commitSessions([titled, ...sessionsRef.current]);
+      selectSession(titled.id);
+      // Fire-and-forget: startRun owns the run lifecycle; the caller only
+      // needs to know whether the session could be started.
+      void startRun({ sessionId: titled.id, text });
+      return true;
+    },
+    [commitSessions, selectSession, startRun],
+  );
 
   const deleteCurrentAgentSession = useCallback(() => {
     if (isRunningRef.current) {
@@ -1420,6 +1490,7 @@ export function AgentSessionsContextProvider(props: {
       stopRun,
       enqueueInterrupt,
       newAgentSession,
+      startNewSessionRun,
       deleteCurrentAgentSession,
       tasks,
       refreshTasks,
@@ -1445,6 +1516,7 @@ export function AgentSessionsContextProvider(props: {
       stopRun,
       enqueueInterrupt,
       newAgentSession,
+      startNewSessionRun,
       deleteCurrentAgentSession,
       tasks,
       refreshTasks,

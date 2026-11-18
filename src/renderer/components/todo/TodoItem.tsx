@@ -6,6 +6,7 @@ import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined';
 import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
 import UndoIcon from '@mui/icons-material/Undo';
+import { AIIcon } from '-/components/CommonIcons';
 import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
@@ -26,6 +27,8 @@ interface Props {
   onMarkDoing: (item: TodoItemType) => void;
   onEdit: (item: TodoItemType) => void;
   onDelete: (item: TodoItemType) => void;
+  /** Open a dedicated Agent session seeded with this todo. */
+  onRunWithAgent: (item: TodoItemType) => void;
 }
 
 const PRIORITY_COLOR = {
@@ -46,6 +49,7 @@ function TodoItem({
   onMarkDoing,
   onEdit,
   onDelete,
+  onRunWithAgent,
 }: Props) {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -73,6 +77,17 @@ function TodoItem({
       dense
       secondaryAction={
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          {!done && (
+            <Tooltip title={t('core:todoRunWithAgent')}>
+              <IconButton
+                size="small"
+                data-tid={`todoRunWithAgent-${item.id}`}
+                onClick={() => onRunWithAgent(item)}
+              >
+                <AIIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
           {!done && (
             <Tooltip title={t('core:todoMarkDoing')}>
               <IconButton size="small" onClick={() => onMarkDoing(item)}>

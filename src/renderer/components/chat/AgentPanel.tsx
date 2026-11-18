@@ -48,6 +48,15 @@ import {
   transcriptToMarkdown,
   useAgentSessionsContext,
 } from '-/components/chat/AgentSessionsContextProvider';
+import {
+  AgentDebugEntry,
+  clearAgentDebugLog,
+  formatAgentDebugLog,
+  formatElapsed,
+  getAgentDebugSnapshot,
+  subscribeAgentDebugLog,
+} from '-/components/chat/agentDebugLog';
+import { MODEL_REQUEST_IDLE_TIMEOUT_MS } from '-/components/chat/agentRequestGuard';
 import { readDiskInitState } from '-/components/chat/AgentTools';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
@@ -70,6 +79,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import ScheduleIcon from '@mui/icons-material/Schedule';
+import TerminalIcon from '@mui/icons-material/Terminal';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
@@ -84,7 +94,13 @@ import {
   saveAsTextFile,
 } from '-/services/utils-io';
 import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import { describeSchedule } from '-/utils/agentSchedule';
@@ -92,7 +108,7 @@ import type { AgentScheduledTask } from '-/utils/agentSchedule';
 import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 import ChatModelMenu from '-/components/chat/ChatModelMenu';
 
-type AgentPanelView = 'agent' | 'scheduled';
+type AgentPanelView = 'agent' | 'scheduled' | 'debug';
 type LastResult = AgentScheduledTask['lastResults'][number];
 
 const selectableTextSx = {
@@ -107,7 +123,12 @@ const selectableTextSx = {
   },
 };
 
-function AgentPanel() {
+interface AgentPanelProps {
+  /** Bumped by openAgentChat to force the chat view (see context docs). */
+  agentChatRequestId?: number;
+}
+
+function AgentPanel({ agentChatRequestId = 0 }: AgentPanelProps) {
   const { t } = useTranslation();
   const theme = useTheme();
   const { showNotification } = useNotificationContext();
@@ -173,6 +194,48 @@ function AgentPanel() {
   );
   const listRef = useRef<HTMLDivElement>(null);
   const detailListRef = useRef<HTMLDivElement>(null);
+  const debugListRef = useRef<HTMLDivElement>(null);
+
+  const debugEntries = useSyncExternalStore(
+    subscribeAgentDebugLog,
+    getAgentDebugSnapshot,
+  );
+  const [clockMs, setClockMs] = useState<number>(() => Date.now());
+
+  // Tick once a second while a run is active or the debug view is open so
+  // "last event Ns ago" stays live (it would otherwise freeze when idle).
+  useEffect(() => {
+    if (!isRunning && view !== 'debug') {
+      return undefined;
+    }
+    setClockMs(Date.now());
+    const timer = setInterval(() => setClockMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isRunning, view]);
+
+  // A fresh "open agent chat" request (e.g. a todo handed to the agent) must
+  // leave any scheduled-task detail / debug-log sub-view and show the chat.
+  useEffect(() => {
+    if (agentChatRequestId > 0) {
+      setView('agent');
+      setDetailTaskId(null);
+    }
+  }, [agentChatRequestId]);
+
+  // Console behavior: follow the tail unless the user scrolled away.
+  useEffect(() => {
+    if (view !== 'debug') {
+      return;
+    }
+    const el = debugListRef.current;
+    if (!el) {
+      return;
+    }
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (nearBottom || debugEntries.length === 0) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [view, debugEntries.length]);
 
   const toggleShowReasoning = useCallback(() => {
     setShowReasoning((prev) => {
@@ -181,6 +244,15 @@ function AgentPanel() {
       return next;
     });
   }, []);
+
+  const copyDebugLog = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(formatAgentDebugLog(debugEntries));
+      showNotification(t('core:aiAgentDebugCopied'), 'default');
+    } catch (e) {
+      showNotification((e as Error)?.message || String(e), 'error');
+    }
+  }, [debugEntries, showNotification, t]);
 
   // refresh the disk-init marker whenever an agent run finishes so the
   // intro card and its CTA chip disappear once the skill has run
@@ -906,7 +978,195 @@ function AgentPanel() {
     );
   };
 
+  const renderDebugEntry = (entry: AgentDebugEntry) => {
+    let levelColor = 'text.secondary';
+    if (entry.level === 'error') {
+      levelColor = 'error.main';
+    } else if (entry.level === 'warn') {
+      levelColor = 'warning.main';
+    }
+    const head = (
+      <Box
+        sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0 }}
+      >
+        <Box
+          component="span"
+          sx={{
+            flexShrink: 0,
+            fontSize: '0.72rem',
+            color: 'text.secondary',
+            fontFamily: 'monospace',
+          }}
+        >
+          {format(entry.at, 'HH:mm:ss.SSS')}
+        </Box>
+        <Box
+          component="span"
+          sx={{
+            flexShrink: 0,
+            fontSize: '0.72rem',
+            fontWeight: 700,
+            color: levelColor,
+          }}
+        >
+          {entry.level.toUpperCase()}
+        </Box>
+        <Box
+          component="span"
+          sx={{ fontSize: '0.8rem', wordBreak: 'break-word' }}
+        >
+          {entry.title}
+        </Box>
+      </Box>
+    );
+    if (!entry.detail) {
+      return (
+        <Box
+          key={entry.id}
+          data-tid={`agentDebugEntry-${entry.id}`}
+          sx={{ paddingY: 0.4 }}
+        >
+          {head}
+        </Box>
+      );
+    }
+    return (
+      <Accordion
+        key={entry.id}
+        data-tid={`agentDebugEntry-${entry.id}`}
+        defaultExpanded={entry.level === 'error'}
+        disableGutters
+        sx={{
+          '&:before': { display: 'none' },
+          borderBottom: `1px solid ${theme.palette.divider}`,
+        }}
+      >
+        <AccordionSummary
+          expandIcon={<ExpandMoreIcon fontSize="small" />}
+          sx={{
+            minHeight: 0,
+            '& .MuiAccordionSummary-content': { margin: '4px 0' },
+          }}
+        >
+          {head}
+        </AccordionSummary>
+        <AccordionDetails sx={{ padding: '0 8px 8px 8px' }}>
+          <Box
+            sx={{
+              fontSize: '0.75rem',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              maxHeight: 260,
+              overflow: 'auto',
+              ...selectableTextSx,
+            }}
+          >
+            {entry.detail}
+          </Box>
+        </AccordionDetails>
+      </Accordion>
+    );
+  };
+
+  const renderDebugView = () => {
+    const last = debugEntries[debugEntries.length - 1];
+    return (
+      <Box
+        data-tid="agentDebugViewTID"
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          gap: 1,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <TsIconButton
+            tooltip={t('core:aiAgentDebugBack')}
+            onClick={() => setView('agent')}
+            data-tid="agentDebugBackButtonTID"
+          >
+            <GoBackIcon fontSize="small" />
+          </TsIconButton>
+          <Box sx={{ flexGrow: 1, fontWeight: 600, minWidth: 0 }}>
+            {t('core:aiAgentDebugTitle')}
+          </Box>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.5,
+              fontSize: '0.75rem',
+              color: 'text.secondary',
+            }}
+          >
+            {isRunning && <CircularProgress size={12} />}
+            {isRunning
+              ? t('core:aiAgentDebugRunning')
+              : t('core:aiAgentDebugIdle')}
+          </Box>
+          <Button
+            size="small"
+            data-tid="agentDebugCopyButtonTID"
+            onClick={copyDebugLog}
+            disabled={debugEntries.length === 0}
+          >
+            {t('core:aiAgentDebugCopy')}
+          </Button>
+          <Button
+            size="small"
+            data-tid="agentDebugClearButtonTID"
+            onClick={clearAgentDebugLog}
+            disabled={debugEntries.length === 0}
+          >
+            {t('core:aiAgentDebugClear')}
+          </Button>
+        </Box>
+        <Box sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+          {t('core:aiAgentDebugHint', {
+            seconds: Math.round(MODEL_REQUEST_IDLE_TIMEOUT_MS / 1000),
+          })}
+        </Box>
+        {last && (
+          <Box
+            data-tid="agentDebugLastEventTID"
+            sx={{
+              fontSize: '0.75rem',
+              color: last.level === 'error' ? 'error.main' : 'text.secondary',
+              wordBreak: 'break-word',
+            }}
+          >
+            {t('core:aiAgentDebugLastEvent', {
+              event: last.title,
+              elapsed: formatElapsed(clockMs - last.at),
+            })}
+          </Box>
+        )}
+        <Box
+          ref={debugListRef}
+          sx={{
+            flexGrow: 1,
+            overflowY: 'auto',
+            padding: 1,
+            borderRadius: 1,
+            bgcolor: 'background.default',
+            ...selectableTextSx,
+          }}
+        >
+          {debugEntries.length === 0 ? (
+            <Box sx={{ fontSize: '0.8rem', color: 'text.secondary' }}>
+              {t('core:aiAgentDebugEmpty')}
+            </Box>
+          ) : (
+            debugEntries.map(renderDebugEntry)
+          )}
+        </Box>
+      </Box>
+    );
+  };
+
   const hasContent = currentSession && currentSession.messages.length > 0;
+  const lastDebugEntry = debugEntries[debugEntries.length - 1];
 
   if (view === 'scheduled') {
     return (
@@ -938,6 +1198,10 @@ function AgentPanel() {
         />
       </Box>
     );
+  }
+
+  if (view === 'debug') {
+    return renderDebugView();
   }
 
   return (
@@ -1088,9 +1352,17 @@ function AgentPanel() {
           </MenuItem>
         </Menu>
         <TsIconButton
+          tooltip={t('core:aiAgentDebugOpen')}
+          onClick={() => setView('debug')}
+          data-tid="agentDebugButtonTID"
+        >
+          <TerminalIcon />
+        </TsIconButton>
+        <TsIconButton
           tooltip={t('core:aiAgentNewSession')}
           disabled={isRunning}
           onClick={handleNewSession}
+          data-tid="agentNewSessionButtonTID"
         >
           <AddIcon />
         </TsIconButton>
@@ -1098,6 +1370,7 @@ function AgentPanel() {
           tooltip={t('core:aiAgentDeleteSession')}
           disabled={isRunning}
           onClick={handleDeleteSession}
+          data-tid="agentDeleteSessionButtonTID"
         >
           <DeleteIcon />
         </TsIconButton>
@@ -1258,13 +1531,33 @@ function AgentPanel() {
           <Box
             sx={{
               display: 'flex',
-              alignItems: 'center',
-              gap: 1,
+              flexDirection: 'column',
+              gap: 0.5,
               color: 'text.secondary',
             }}
           >
-            <CircularProgress size={14} />
-            <Box sx={{ fontSize: '0.8rem' }}>{t('core:aiAgentRunning')}</Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <CircularProgress size={14} />
+              <Box sx={{ fontSize: '0.8rem' }}>{t('core:aiAgentRunning')}</Box>
+            </Box>
+            {lastDebugEntry && (
+              <Box
+                data-tid="agentRunningLastEventTID"
+                sx={{
+                  fontSize: '0.72rem',
+                  color:
+                    lastDebugEntry.level === 'error'
+                      ? 'error.main'
+                      : 'text.secondary',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {t('core:aiAgentDebugLastEvent', {
+                  event: lastDebugEntry.title,
+                  elapsed: formatElapsed(clockMs - lastDebugEntry.at),
+                })}
+              </Box>
+            )}
           </Box>
         )}
       </Box>
@@ -1374,5 +1667,9 @@ function AgentPanel() {
     </Box>
   );
 }
+
+AgentPanel.defaultProps = {
+  agentChatRequestId: 0,
+};
 
 export default AgentPanel;

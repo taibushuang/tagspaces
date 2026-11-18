@@ -17,75 +17,29 @@
  */
 
 import React, {
-  createContext,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
 import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
+import { NotificationContext } from '-/hooks/notificationContext';
 import { setGlobalErrorNotifier } from '-/services/globalErrorHandlers';
-
-type NotificationStatus = {
-  visible: boolean;
-  text: string;
-  tid: string;
-  notificationType: 'default' | 'info' | 'warning' | 'error';
-  autohide: boolean;
-};
-
-export type NotificationContextData = {
-  openConfirmDialog: (
-    title: string,
-    description: string,
-    callback?: (result: boolean | string) => void,
-    cancelTID?: string,
-    confirmTID?: string,
-    confirmDialogContentTID?: string,
-    list?: string[],
-    prompt?: string,
-    help?: string,
-    customConfirmText?: string,
-    customCancelText?: string,
-    onDismiss?: () => void,
-  ) => void;
-  closeConfirmDialog: () => void;
-  notificationStatus: NotificationStatus;
-  showNotification: (
-    text: string,
-    notificationType?: 'default' | 'info' | 'warning' | 'error',
-    autohide?: boolean,
-    tid?: string,
-  ) => void;
-  hideNotifications: (excludeTypes?: string[]) => void;
-  isGeneratingThumbs: boolean;
-  setGeneratingThumbs: (isGen: boolean) => void;
-  //NotificationTypes: 'default' | 'error';
-};
-
-export const NotificationContext = createContext<NotificationContextData>({
-  openConfirmDialog: undefined,
-  closeConfirmDialog: undefined,
-  notificationStatus: undefined,
-  showNotification: () => {},
-  hideNotifications: () => {},
-  isGeneratingThumbs: false,
-  setGeneratingThumbs: () => {},
-  //NotificationTypes: 'default'
-});
 
 export type NotificationContextProviderProps = {
   children: React.ReactNode;
 };
 
-export const NotificationContextProvider = ({
+export function NotificationContextProvider({
   children,
-}: NotificationContextProviderProps) => {
+}: NotificationContextProviderProps) {
   const [isConfirmDialogOpened, setConfirmDialogOpened] =
     useState<boolean>(false);
   const confirmTitle = useRef<string>('Confirm Dialog');
   const confirmDescription = useRef<string>('');
-  const confirmCallback = useRef<(result: boolean | string) => void>(undefined);
+  const confirmCallback =
+    useRef<(result: boolean | string, checked?: boolean) => void>(undefined);
   const cancelDialogTID = useRef<string>('cancelDialogTID');
   const confirmDialogTID = useRef<string>('confirmDialogTID');
   const confirmDialogContentTID = useRef<string>('confirmDialogContentTID');
@@ -94,6 +48,8 @@ export const NotificationContextProvider = ({
   const help = useRef<string>(undefined);
   const customConfirmText = useRef<string>(undefined);
   const customCancelText = useRef<string>(undefined);
+  const checkLabelRef = useRef<string>(undefined);
+  const checkDefaultCheckedRef = useRef<boolean>(false);
   /** Caller-provided dismissal handler for the currently open dialog. */
   const dismissHandlerRef = useRef<(() => void) | undefined>(undefined);
   const [notificationStatus, setNotificationStatus] = useState<any>({
@@ -117,6 +73,8 @@ export const NotificationContextProvider = ({
     confirmText: string = undefined,
     cancelText: string = undefined,
     onDismiss = undefined,
+    checkLabelTxt: string = undefined,
+    checkDefault = false,
   ) {
     confirmTitle.current = title;
     confirmDescription.current = description;
@@ -129,6 +87,8 @@ export const NotificationContextProvider = ({
     customConfirmText.current = confirmText;
     customCancelText.current = cancelText;
     help.current = helpTxt;
+    checkLabelRef.current = checkLabelTxt;
+    checkDefaultCheckedRef.current = checkDefault;
     dismissHandlerRef.current = onDismiss;
     setConfirmDialogOpened(true);
   }
@@ -136,18 +96,18 @@ export const NotificationContextProvider = ({
   // Dismissal (Esc / ✕ / backdrop) fires no button callback — invoke the
   // caller's onDismiss so async callers (e.g. agent exec authorization) never
   // hang, then close. Consumed once per open.
-  function handleConfirmDismiss() {
+  const handleConfirmDismiss = useCallback(() => {
     const handler = dismissHandlerRef.current;
     dismissHandlerRef.current = undefined;
     if (handler) {
       handler();
     }
     setConfirmDialogOpened(false);
-  }
+  }, []);
 
-  function closeConfirmDialog() {
+  const closeConfirmDialog = useCallback(() => {
     setConfirmDialogOpened(false);
-  }
+  }, []);
 
   function showNotification(
     text: string,
@@ -177,26 +137,31 @@ export const NotificationContextProvider = ({
     return () => setGlobalErrorNotifier(null);
   }, []);
 
-  function hideNotifications(excludeTypes = []) {
-    if (
-      !excludeTypes.some((type) => type === notificationStatus.notificationType)
-    ) {
-      setNotificationStatus({
-        visible: false,
-        text: null,
-        notificationType: 'default',
-        autohide: true,
-      });
-    }
-  }
+  const hideNotifications = useCallback(
+    (excludeTypes: string[] = []) => {
+      if (
+        !excludeTypes.some(
+          (type) => type === notificationStatus.notificationType,
+        )
+      ) {
+        setNotificationStatus({
+          visible: false,
+          text: null,
+          notificationType: 'default',
+          autohide: true,
+        });
+      }
+    },
+    [notificationStatus],
+  );
 
   const context = useMemo(() => {
     return {
       notificationStatus,
-      /*NotificationTypes: {
+      /* NotificationTypes: {
         default: 'default',
         error: 'error'
-      },*/
+      }, */
       isGeneratingThumbs,
       setGeneratingThumbs,
       showNotification,
@@ -204,14 +169,19 @@ export const NotificationContextProvider = ({
       openConfirmDialog,
       closeConfirmDialog,
     };
-  }, [notificationStatus, isGeneratingThumbs]);
+  }, [
+    notificationStatus,
+    isGeneratingThumbs,
+    hideNotifications,
+    closeConfirmDialog,
+  ]);
 
   return (
     <NotificationContext.Provider value={context}>
       {children}
       <ConfirmDialog
         open={isConfirmDialogOpened}
-        onClose={() => setConfirmDialogOpened(false)}
+        onClose={closeConfirmDialog}
         onDismiss={handleConfirmDismiss}
         title={confirmTitle.current}
         content={confirmDescription.current}
@@ -224,7 +194,9 @@ export const NotificationContextProvider = ({
         helpText={help.current}
         customConfirmText={customConfirmText.current}
         customCancelText={customCancelText.current}
+        checkLabel={checkLabelRef.current}
+        checkDefaultChecked={checkDefaultCheckedRef.current}
       />
     </NotificationContext.Provider>
   );
-};
+}

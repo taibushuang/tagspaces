@@ -26,6 +26,13 @@
  * can dispatch to either by engine.
  */
 import { ChatRequest, ModelResponse } from 'ollama';
+import {
+  ModelCallFailure,
+  createRequestIdleGuard,
+  describeRequestFailure,
+  httpFailureFromResponse,
+  readResponseErrorBody,
+} from '-/components/chat/agentRequestGuard';
 
 /**
  * Resolve the OpenAI base URL. The configured URL is treated as the base that
@@ -305,25 +312,30 @@ export async function chatOpenAICompletion(
   authKey?: string,
   signal?: AbortSignal,
   reasoningHandler?: (reasoningDelta: string) => void,
+  onFailure?: (failure: ModelCallFailure) => void,
 ): Promise<OpenAIResult | undefined> {
   if (!url) {
+    onFailure?.({ kind: 'invalid', message: 'no endpoint URL configured' });
     return undefined;
   }
   const body = toOpenAIRequest(msg);
+  // Streaming requests get a stuck-connection guard: without one a gateway
+  // that accepts the request and then goes silent hangs the agent forever.
+  const guard = msg.stream ? createRequestIdleGuard(signal) : undefined;
+  const requestSignal = guard ? guard.signal : signal;
   try {
     const response = await fetch(`${apiBase(url)}/chat/completions`, {
       method: 'POST',
       headers: buildHeaders(authKey, true),
       body: JSON.stringify(body),
-      signal,
+      signal: requestSignal,
     });
+    guard?.reset();
     if (!response.ok) {
-      console.error(
-        'chatOpenAICompletion HTTP ' +
-          response.status +
-          ': ' +
-          (await response.text().catch(() => '')),
-      );
+      const text = await readResponseErrorBody(response);
+      const failure = httpFailureFromResponse(response, text);
+      console.error(`chatOpenAICompletion HTTP ${response.status}: ${text}`);
+      onFailure?.(failure);
       return undefined;
     }
 
@@ -337,6 +349,7 @@ export async function chatOpenAICompletion(
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read();
+        guard?.reset();
         if (done) {
           break;
         }
@@ -404,11 +417,14 @@ export async function chatOpenAICompletion(
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     };
   } catch (e) {
-    if ((e as any)?.name === 'AbortError') {
-      return undefined;
+    const failure = describeRequestFailure(e, guard);
+    if (failure.kind !== 'aborted') {
+      console.error('chatOpenAICompletion error', failure.message, e);
     }
-    console.error('chatOpenAICompletion error', e);
+    onFailure?.(failure);
     return undefined;
+  } finally {
+    guard?.dispose();
   }
 }
 

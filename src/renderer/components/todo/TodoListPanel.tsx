@@ -46,6 +46,8 @@ interface Props {
   updateTodo: (id: string, patch: TodoUpdateInput) => Promise<TodoItem>;
   removeTodo: (id: string) => Promise<number>;
   exportMarkdown: (includeDone: boolean) => void;
+  /** Open a dedicated Agent session seeded with the clicked todo. */
+  onRunWithAgent: (item: TodoItem) => void;
   onClose: () => void;
 }
 
@@ -59,6 +61,7 @@ function TodoListPanel({
   updateTodo,
   removeTodo,
   exportMarkdown,
+  onRunWithAgent,
   onClose,
 }: Props) {
   const { t } = useTranslation();
@@ -142,6 +145,7 @@ function TodoListPanel({
             onMarkDoing={markDoing}
             onEdit={(i) => setEditing({ open: true, item: i })}
             onDelete={setDeleteTarget}
+            onRunWithAgent={onRunWithAgent}
           />
         ))}
       </List>

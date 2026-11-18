@@ -31,6 +31,14 @@ import AiAgentDialog from '-/components/chat/AiAgentDialog';
 
 type AiAgentDialogContextData = {
   openAiAgentDialog: () => void;
+  /** Open the work area and force the Agent chat view (resets sub-views). */
+  openAgentChat: () => void;
+  /**
+   * Incremented by `openAgentChat`; AgentPanel/AiAgentDialog watch it and
+   * switch back to their chat view (e.g. after the user was in scheduled
+   * tasks or the debug log).
+   */
+  agentChatRequestId: number;
   closeAiAgentDialog: () => void;
   /** Whether the right-side AI work area is currently open. */
   aiPanelOpen: boolean;
@@ -40,6 +48,8 @@ type AiAgentDialogContextData = {
 
 export const AiAgentDialogContext = createContext<AiAgentDialogContextData>({
   openAiAgentDialog: () => undefined,
+  openAgentChat: () => undefined,
+  agentChatRequestId: 0,
   closeAiAgentDialog: () => undefined,
   aiPanelOpen: false,
   aiPanelWidth: 480,
@@ -54,6 +64,7 @@ export const AiAgentDialogContextProvider = ({
 }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [agentChatRequestId, setAgentChatRequestId] = useState(0);
   const [width, setWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem('tsAiAgentPanelWidth'));
     return Number.isFinite(stored) && stored >= 360 ? stored : 480;
@@ -64,11 +75,16 @@ export const AiAgentDialogContextProvider = ({
   const context = useMemo(
     () => ({
       openAiAgentDialog: () => setOpen(true),
+      openAgentChat: () => {
+        setOpen(true);
+        setAgentChatRequestId((id) => id + 1);
+      },
+      agentChatRequestId,
       closeAiAgentDialog: () => setOpen(false),
       aiPanelOpen: open,
       aiPanelWidth: width,
     }),
-    [open, width],
+    [open, width, agentChatRequestId],
   );
   return (
     <AiAgentDialogContext.Provider value={context}>
@@ -78,6 +94,7 @@ export const AiAgentDialogContextProvider = ({
         onClose={() => setOpen(false)}
         width={width}
         onWidthChange={setWidth}
+        agentChatRequestId={agentChatRequestId}
       />
       {!open && (
         <Tooltip title={t('core:aiAgentTitle')} placement="left">

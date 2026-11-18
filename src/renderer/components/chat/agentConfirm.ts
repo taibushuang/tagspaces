@@ -1,32 +1,33 @@
 /**
  * Shared agent confirmation dialogs (exec authorization + delete consent).
  *
- * Single source of truth for the two-step "allow command → remember prefix?"
- * flow and the delete confirmation. Both ChatProvider (file-sidebar chat) and
- * AgentSessionsContextProvider (AgentPanel) previously kept their own copies —
- * the drift already produced one bug (the second dialog never appeared) and
- * this helper fixes it once.
+ * Single source of truth for the run_command authorization flow and the
+ * delete confirmation. Both ChatProvider (file-sidebar chat) and
+ * AgentSessionsContextProvider (AgentPanel) use this helper.
  *
- * Two traps handled here:
- * - React 18 auto-batching: opening the SECOND dialog synchronously inside
- *   the first dialog's callback gets overwritten by the first dialog's
- *   onClose (same event handler → one batch → final open=false, promise
- *   never resolves). Deferring the second open by one tick (setTimeout 0)
- *   lets the first batch commit first.
- * - Dismissal (Esc / X / backdrop) never fires ConfirmDialog's button
- *   callback, so a promise keyed on it would hang forever. The confirm
- *   dialogs here pass an explicit `onDismiss` that resolves the promise
- *   (exec: treat as deny; remember-dialog: treat as "Ask every time").
+ * Exec authorization is a SINGLE dialog: allow/deny plus an explicit
+ * "remember, don't ask again" checkbox (checkbox state is passed to the
+ * confirm callback). The earlier two-step dialog ("allow → remember?")
+ * buried the permanent grant behind a second English-only prompt, which read
+ * as "you can only run once" and was easy to dismiss. Elevated commands still
+ * never get a checkbox.
+ *
+ * Dismissal (Esc / X / backdrop) never fires ConfirmDialog's button callback,
+ * so the confirm dialogs pass an explicit `onDismiss` that resolves the promise
+ * (exec: treat as deny; delete: treat as deny).
  */
 
-import type { NotificationContextData } from '-/hooks/NotificationContextProvider';
+import type { NotificationContextData } from '-/hooks/notificationContext';
 
 type OpenConfirm = NotificationContextData['openConfirmDialog'];
+type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 export type ExecConfirmPayload = {
   command: string;
   cwd?: string;
   prefix: string;
+  /** Key persisted on approval (prefix for simple lines, full line for compound ones). */
+  rememberKey?: string;
   canRemember: boolean;
 };
 
@@ -37,61 +38,40 @@ export type DeleteConfirmPayload = {
 };
 
 /**
- * Two-step authorization for run_command:
- * 1. "Allow the AI Agent to run this command?" — confirm = Run once, cancel = Deny;
- * 2. "Remember for future runs?" — SAFE DEFAULT is "Ask every time" (the
- *    right/confirm button); "Remember prefix" is the explicit left choice.
+ * One-step authorization for run_command. The optional checkbox remembers the
+ * grant (prefix for simple lines, exact line for compound ones) only when the
+ * user explicitly checks it; leaving it unchecked runs the command once.
  */
 export function requestExecConfirmationDialog(
   openConfirmDialog: OpenConfirm,
-  { command, cwd, prefix, canRemember }: ExecConfirmPayload,
+  { command, cwd, prefix, rememberKey, canRemember }: ExecConfirmPayload,
+  t: Translate = (key) => key,
 ): Promise<{ approved: boolean; remember: boolean }> {
+  const rememberIsPrefix =
+    !rememberKey ||
+    rememberKey === prefix ||
+    rememberKey === prefix.toLowerCase();
+  const checkLabel = canRemember
+    ? rememberIsPrefix
+      ? t('core:aiAgentExecRememberPrefix', { prefix })
+      : t('core:aiAgentExecRememberLine')
+    : undefined;
+
   return new Promise<{ approved: boolean; remember: boolean }>((resolve) => {
     openConfirmDialog(
-      'Allow the AI Agent to run this command?',
+      t('core:aiAgentExecTitle'),
       [
-        'The agent requests to execute the following shell command:',
+        t('core:aiAgentExecDescription'),
         command,
-        ...(cwd ? [`Working directory: ${cwd}`] : []),
-        `Prefix: "${prefix}"`,
-        ...(canRemember
-          ? []
-          : ['(elevated-privilege commands are never remembered)']),
+        ...(cwd ? [t('core:aiAgentExecCwd', { cwd })] : []),
+        t('core:aiAgentExecPrefix', { prefix }),
+        ...(canRemember ? [] : [t('core:aiAgentExecElevatedNote')]),
       ].join('\n'),
-      (result) => {
-        if (!result) {
-          resolve({ approved: false, remember: false });
-          return;
-        }
-        // Defer by one tick: opening the second dialog synchronously here is
-        // swallowed by React 18 batching (the first dialog's onClose runs in
-        // the same handler and overwrites the open state), leaving the
-        // promise pending forever. A fresh task lets the batch commit first.
-        setTimeout(() => {
-          openConfirmDialog(
-            'Remember for future runs?',
-            canRemember
-              ? `Remember = "${prefix}"-style authorization; future matching commands run WITHOUT asking. Compound lines are always re-confirmed when their content changes. Grants persist in userData/exec/grants.json (delete the file to revoke all).`
-              : 'This command cannot be remembered.',
-            (rememberResult) => {
-              resolve({
-                approved: true,
-                remember: canRemember && !rememberResult,
-              });
-            },
-            'agentExecRememberButton',
-            'agentExecAskButton',
-            'agentExecRememberContentTID',
-            undefined,
-            undefined,
-            undefined,
-            'Ask every time',
-            'Remember prefix',
-            // Dismissing the remember dialog is the conservative choice:
-            // approve the current run but do NOT remember.
-            () => resolve({ approved: true, remember: false }),
-          );
-        }, 0);
+      (result, checked) => {
+        resolve({
+          approved: !!result,
+          remember: !!result && canRemember && !!checked,
+        });
       },
       'agentExecCancelButton',
       'agentExecConfirmButton',
@@ -99,10 +79,12 @@ export function requestExecConfirmationDialog(
       undefined,
       undefined,
       undefined,
-      'Run once',
-      'Deny',
+      t('core:aiAgentExecAllow'),
+      t('core:aiAgentExecDeny'),
       // Dismissing the allow dialog = deny (never leaves the promise pending).
       () => resolve({ approved: false, remember: false }),
+      checkLabel,
+      false,
     );
   });
 }

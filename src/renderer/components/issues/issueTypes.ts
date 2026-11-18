@@ -51,6 +51,8 @@ export interface IssueItem {
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
+  /** Release version whose manifest fixed/implemented this entry (auto). */
+  resolvedInVersion?: string;
 }
 
 export interface IssueStats {

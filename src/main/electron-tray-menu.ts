@@ -125,6 +125,15 @@ export default function buildTrayMenu(
       icon = nativeImage.createFromDataURL(icon1x);
     }
     tray = new Tray(icon);
+
+    // Windows tray convention: left click activates the app, right click opens
+    // the context menu. Without this listener, clicking the icon after the
+    // window was minimized does nothing — the context menu bound below is only
+    // shown on right click on Windows (unlike macOS/Linux where a click opens
+    // the menu).
+    if (process.platform === 'win32') {
+      tray.on('click', () => mainPageProps.showTagSpaces());
+    }
   }
 
   // @ts-ignore

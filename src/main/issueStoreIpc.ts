@@ -8,7 +8,24 @@
 import { app, dialog, ipcMain } from 'electron';
 import os from 'os';
 import path from 'path';
-import { IssueDatabase, ensureMachineTag } from './issueStore';
+import versionMeta from '../renderer/version.json';
+import resolvedIssues from './resolvedIssues.json';
+import {
+  IssueDatabase,
+  collectResolvedRefs,
+  ensureMachineTag,
+} from './issueStore';
+
+/**
+ * app.getVersion() falls back to the Electron runtime version in unpackaged
+ * dev runs; that number would never match release versions in the manifest,
+ * so use the build-time version written by scripts/versionmeta.js instead.
+ */
+function resolveAppVersion(): string {
+  const version = app.getVersion();
+  if (version && version !== process.versions.electron) return version;
+  return versionMeta.version || version || '';
+}
 
 export default function initIssueStore(): IssueDatabase {
   const dir = path.join(app.getPath('userData'), 'issues');
@@ -23,6 +40,23 @@ export default function initIssueStore(): IssueDatabase {
   };
   const db = new IssueDatabase(path.join(dir, 'issues.json'), getMachineTag);
   db.load();
+  // Close the loop between the exported ref list and the app: entries fixed/
+  // implemented in a release are marked done the first time that (or a newer)
+  // build starts.
+  try {
+    const autoResolved = db.applyResolvedRefs(
+      collectResolvedRefs(resolvedIssues, resolveAppVersion()),
+    );
+    if (autoResolved.resolved > 0) {
+      console.log(
+        `[issues] auto-resolved ${autoResolved.resolved} entries from the ` +
+          `release manifest: ${autoResolved.refs.join(', ')}`,
+      );
+    }
+  } catch (err) {
+    // A read-only userData must not break startup — the store stays usable.
+    console.log('[issues] auto-resolve skipped:', err);
+  }
 
   ipcMain.handle('issue:list', async (_event, filter) => db.list(filter));
   ipcMain.handle('issue:create', async (_event, input) => db.create(input));
@@ -36,7 +70,7 @@ export default function initIssueStore(): IssueDatabase {
   ipcMain.handle('issue:getPath', async () => ({
     file: db.getPath(),
     dir,
-    version: app.getVersion(),
+    version: resolveAppVersion(),
     platform: process.platform,
     osVersion: os.release(),
     appLanguage: app.getLocale(),

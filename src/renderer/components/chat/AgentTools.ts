@@ -269,6 +269,7 @@ export type AgentToolDeps = {
     command: string;
     cwd?: string;
     prefix: string;
+    rememberKey?: string;
     canRemember: boolean;
   }) => Promise<{ approved: boolean; remember: boolean }>;
 };
@@ -2296,6 +2297,9 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
               status: i.status,
               severity: i.severity,
               source: i.source,
+              ...(i.resolvedInVersion && {
+                resolvedInVersion: i.resolvedInVersion,
+              }),
               ...(i.context?.appVersion && {
                 appVersion: i.context.appVersion,
               }),
@@ -2398,6 +2402,7 @@ export function createAgentTools(deps: AgentToolDeps): AgentTool[] {
               command,
               cwd,
               prefix: auth.prefix,
+              rememberKey: auth.rememberKey,
               canRemember: auth.canRemember,
             });
           } catch (e) {

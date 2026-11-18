@@ -283,7 +283,7 @@ npm install 后丢失。因此由宿主 `FileView.tsx` 在 iframe load 后向同
 - `src/renderer/components/chat/OpenAIClient.ts` — `chatOpenAICompletion()` 返回 `{ content, toolCalls }`（流式/非流式均支持 tool_calls）
 - `src/renderer/hooks/LocationIndexContextProvider.tsx` — `agentSearch()`：无 UI 副作用的搜索（不写 redux、不弹通知），直接返回结果
 
-**护栏（勿回退）**：删除仅限 `delete_files`（≤50/批）/`delete_folder`（仅限空文件夹），**只进系统回收站**（`shell.trashItem`，代码中无永久删除通道），按文件夹授权（`utils/agentDelete.ts`：确认弹窗列清单 + 可记住授权 `tsAgentDeleteAuth`；location 根/`.ts`/隐藏系统文件/授权外路径硬拒绝）；**`run_command` 受控 shell**（2026-10-19，授权闸门整体在主进程 `src/main/execAuth.ts`，渲染层只负责确认弹窗——`execAuthorize` 两档规则：简单行（无 shell 元字符）按记住的前缀静默放行、复合行（含 `& | ; < > \` $( 等）**按整行记忆、内容一变重弹**（防 `arkcli && 恶意命令` 绕过）、提权前缀（sudo/su/doas）永远弹窗且不可记忆；执行需一次性令牌（`execRun` 无令牌拒绝）；env 禁覆盖 PATH/HOME/USERPROFILE（防 shim 顶替）；超时树杀 ≤600s、输出 200KB/流截断、审计日志 `userData/exec/history.jsonl`（含 origin 来源）；授权持久化 `userData/exec/grants.json`（删除即全部撤销；2026-10-28 起 Agent 可用 `exec_grants` 工具 `list`/`revoke-all` 查看/重置授权，IPC `execGrantStatus`/`execRevokeAll` 已入 `ipcContracts.ts` 契约）；无交互 stdin，个人机器工具，术语为"按前缀/整行 opt-in 动态放行"而非固定白名单）；**确认弹窗共享 helper**（2026-10-28，`src/renderer/components/chat/agentConfirm.ts`：`requestExecConfirmationDialog`（两步「允许命令 → 记住前缀?」）+ `requestDeleteConfirmationDialog`，ChatProvider 与 AgentSessionsContextProvider 共用，消除两份拷贝漂移；两个陷阱已修：①嵌套弹窗用 `setTimeout(0)` 延迟一拍，绕开 React 18 同一事件处理器批处理把第二个弹窗的 open 状态覆盖掉（曾致 Promise 永久悬挂）；②dismiss（Esc/✕/遮罩）经 `ConfirmDialog.onDismiss`（`NotificationContextProvider.openConfirmDialog` 第 12 个参数）视为拒绝/不记住，不再悬挂；首个弹窗取消按钮文案统一为 Deny）；定时任务无人值守 run 恒拒绝删除/新增 exec 确认（仅复用已记住授权）；move_file 目标已存在时不覆盖；打标签可逆；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。详见 `DESIGN-ai-agent.md` §7.7。
+**护栏（勿回退）**：删除仅限 `delete_files`（≤50/批）/`delete_folder`（仅限空文件夹），**只进系统回收站**（`shell.trashItem`，代码中无永久删除通道），按文件夹授权（`utils/agentDelete.ts`：确认弹窗列清单 + 可记住授权 `tsAgentDeleteAuth`；location 根/`.ts`/隐藏系统文件/授权外路径硬拒绝）；**`run_command` 受控 shell**（2026-10-19，授权闸门整体在主进程 `src/main/execAuth.ts`，渲染层只负责确认弹窗——`execAuthorize` 两档规则：简单行（无 shell 元字符）按记住的前缀静默放行、复合行（含 `& | ; < > \` $( 等）**按整行记忆、内容一变重弹**（防 `arkcli && 恶意命令` 绕过）、提权前缀（sudo/su/doas）永远弹窗且不可记忆；执行需一次性令牌（`execRun` 无令牌拒绝）；env 禁覆盖 PATH/HOME/USERPROFILE（防 shim 顶替）；超时树杀 ≤600s、输出 200KB/流截断、审计日志 `userData/exec/history.jsonl`（含 origin 来源）；授权持久化 `userData/exec/grants.json`（删除即全部撤销；2026-10-28 起 Agent 可用 `exec_grants` 工具 `list`/`revoke-all` 查看/重置授权，IPC `execGrantStatus`/`execRevokeAll` 已入 `ipcContracts.ts` 契约）；无交互 stdin，个人机器工具，术语为"按前缀/整行 opt-in 动态放行"而非固定白名单）；**确认弹窗共享 helper**（2026-10-28，`src/renderer/components/chat/agentConfirm.ts`：`requestExecConfirmationDialog`（2026-11-17 起为**单弹窗 + 「记住，不再询问」复选框**，文案走 en/zh_CN i18n；旧的「两步：允许 → 记住前缀?」把永久授权藏在第二个英文弹窗里，容易被误认为只能执行一次；复选框默认不勾选，勾选后按 `rememberKey` 记前缀/整行，提权命令无复选框）+ `requestDeleteConfirmationDialog`，ChatProvider 与 AgentSessionsContextProvider 共用，消除两份拷贝漂移；dismiss（Esc/✕/遮罩）经 `ConfirmDialog.onDismiss`（`NotificationContextProvider.openConfirmDialog` 第 12 个参数）视为拒绝/不记住，不再悬挂；`ConfirmDialog` 新增可选 `checkLabel`/`checkDefaultChecked`，确认回调第二参数回传勾选状态；首个弹窗取消按钮文案统一为 Deny）；定时任务无人值守 run 恒拒绝删除/新增 exec 确认（仅复用已记住授权）；move_file 目标已存在时不覆盖；打标签可逆；搜索 ≤50 条、文件读取 ≤20000 字符且限 2MB 文本类型；工具异常以 `{error}` 回传模型而非中断；系统提示词要求模型不得编造文件路径。详见 `DESIGN-ai-agent.md` §7.7。
 
 **无步数上限（2026-11-10，移除原 8 步预算）**：`runAgent` 的工具循环不再有
 `maxSteps=8` 预算与 checkpoint 续跑机制（"agent stopped after 8 steps without a
@@ -293,6 +293,20 @@ final answer" 已随预算删除）——终止条件只有三个：模型给出
 补充指令注入条数。真机验证：脚本化 mock OpenAI 端点强制 10 轮 tool_calls
 （`manual/mock-openai-loop.js`），第 11 轮才给最终答案，循环完整跑通不再中途
 停止。
+
+**Agent 调试日志（2026-11-17 落地）**：AgentPanel 工具栏 Terminal 图标打开挤占式
+调试视图（`agentDebugButtonTID`）+ 返回按钮；记录 run 开始/结束、每次模型请求
+发出/完成/失败、HTTP 状态与响应体（含 Retry-After）、网络错误、工具失败。日志在
+`src/renderer/components/chat/agentDebugLog.ts`（模块级环形缓冲 500 条，面板卸载
+不丢，`useSyncExternalStore` 订阅），支持复制/清空。请求链路新增
+`agentRequestGuard.ts` 空闲超时（`MODEL_REQUEST_IDLE_TIMEOUT_MS=120s`）：流式读取
+120 秒无数据即 abort，把"永远正在工作"变成可诊断的 timeout 错误；
+`chatOpenAICompletion`/`chatGatewayCompletion` 均加 `onFailure` 回调回传
+HTTP/网络/超时详情，聊天气泡显示短消息、完整详情进日志。对话视图运行状态下方
+实时显示"最后事件 + 已等待时长"（`agentRunningLastEventTID`）。单测
+`tests/unit/agentDebugLog.test.js`（环形缓冲/超时/错误分类/HTTP 429）+
+`tests/unit/agentServiceDebug.test.js`（mock fetch：成功日志、429、网络错误、
+工具失败）。
 
 **provider 连接参数变更即时生效（2026-11-11，勿回退）**：`ChatProvider` 缓存的
 `aiClient.current` 原来只在 provider **id 变化**时重建——在设置里改同 id 的
@@ -472,6 +486,29 @@ OneNote/Joplin 式快速笔记：一键新建 Markdown 笔记、卡片流按修�
 
 **AI Agent 工具（2026-10-02 落地）**：`src/renderer/components/chat/AgentTools.ts` 新增 4 个待办工具（走 `todoApi` IPC，web 端无 electronIO 时返回不可用提示）：`todo_list`（列表 + stats，≤50 条护栏）、`todo_create`（title 必填，可选 priority/tags/project/dueDate/description）、`todo_complete`（按 id 标记 done）、`todo_update_status`（open/doing/done）。异常一律 `{ error }` 回传模型。
 
+**单条待办交给 Agent（2026-11-17 落地，2026-11-18 起带"最终目标"约束）**：每条未完成待办的 AI 图标
+（`data-tid=todoRunWithAgent-<id>`，tooltip `core:todoRunWithAgent`）→
+`RenderPerspective.runTodoWithAgent`：调用
+`AgentSessionsContextProvider.startNewSessionRun({title,text,goal})` 新建并选中一个以待办
+标题命名的会话、启动 run（已有 run 在跑时返回 false + `todoAgentBusy` 提示），再
+`AiAgentDialogContextProvider.openAgentChat()` 打开抽屉；`openAgentChat` 递增
+`agentChatRequestId`，AiAgentDialog 与 AgentPanel 监听后强制切回聊天视图（避免停留在
+定时任务列表/调试日志）。首条 prompt 由纯函数 `todoUtils.buildTodoAgentPrompt` 生成
+（标题/说明/状态/优先级/项目/标签/截止 + 指示 `todo_update_status`/`todo_complete`），
+单测 `tests/unit/todoAgentPrompt.test.js`。
+- **待办即最终目标**：会话落库 `goal: { kind:'todo', todoId, title, completedAt? }`（随
+  localStorage sessions 持久化）。每次 run（含后续追问与残留续跑）都把 goal 注入
+  `buildAgentSystemPrompt` 的 "Session goal (hard requirement)" 块，跨多轮不依赖首条消息
+  是否还在上下文里；已完成（`completedAt` 落库）后不再注入。
+- **完成约束（有界）**：`AgentService.runAgent` 收到 `goalTodoId` 且工具里有 `todo_complete`
+  时，模型若结束回合却未成功完成该 id（`todo_complete` 返回无 error 才算），会注入一条
+  "目标未完成，继续工作；真完成就调 todo_complete，真阻塞就说明原因"的 user 回合继续循环，
+  最多 `MAX_GOAL_NUDGES=2` 次（防无限自循环/真阻塞无法终止）；人工停止仍立即生效。
+  单测 `tests/unit/agentGoal.test.js`（未完成促跑/成功后停止/无工具不促跑/其他 id 不算完成）。
+- **待办实时刷新**：`todoService` 在 create/update/remove 后派发 `TODO_CHANGED_EVENT`
+  (`ts:todo-changed`)，`TodoListContextProvider` 监听后刷新——Agent 工具直接走 todoService，
+  面板与工具栏 Badge 会在 Agent 标 doing/完成时实时更新，不必重开面板。
+
 **数据模型预留**：`parentId` / `estimateMinutes` 字段已入 schema（v1 不暴露 UI），将来上子任务/估时免迁移。二期方向：TODO-*.md 导入（勾选回写）、`reminderAt` 到期系统通知。
 
 ### Pro 功能隐藏（2026-10-02 落地）
@@ -525,6 +562,7 @@ OneNote/Joplin 式快速笔记：一键新建 Markdown 笔记、卡片流按修�
 - **导出为交付文档**：`issue:exportMarkdown`（面板"导出"按钮，存到用户选的 .md）。`renderIssuesMarkdown` 输出开发/AI 可直接消费的全量文档：头部统计、每条 `### [{机器码}-BUG-001] 标题`（分组内 newest-first 编号 + 机器码前缀，可在对话中按编号引用）、状态/严重程度/来源/上报与处理时间、环境快照（版本/平台+OS/语言）、场景（位置/文件夹）、详情原文（含结构化复现信息）、相关文件清单、最近工具错误现场（工具/参数/错误/时间），条目间 `---` 分隔
 - **机器标识**：`ensureMachineTag(dir)` 生成 4 位机器码（无易混淆字符表，无 I/O/0/1），优先级：已有 `machine.tag` 文件 > 硬件机器 id 哈希（macOS IOPlatformUUID / Windows MachineGuid / Linux machine-id，SHA-256 后映射，确定性、跨目录一致，不泄露原始 UUID）> 随机回退。**惰性计算**（首次 issue:getPath/export/create 才探测，不拖慢启动）。**编号（ref）在 create 时分配并落库**（格式 `{机器码}-BUG-001`，计数器取同类型历史最大值+1，删除不复用；update 不可改写 ref；legacy 无 ref 条目 load 时按 newest-first 回填）——面板、导出文档、Agent `list_issues` 三处引用同一落库编号，永不错位/顺移；克隆 userData 会连 tag 文件一起带走（有意识接受的取舍：编号稳定性优先，删 machine.tag 可强制重派生）
 - **批量标记**：面板每条带复选框，选中后出现批量操作栏（标记已处理/重新打开），走 `issue:updateMany` IPC（`IssueDatabase.updateMany`：内部 applyUpdate 不落盘、最后统一 persist 一次；id 去重、未知 id 进 missing，返回 `{updated, missing}`）——导出 md 处理完后回客户端按编号勾选批量销账
+- **按版本清单自动销账（2026-11-18 定）**：`src/main/resolvedIssues.json` 记录每个版本「修复的 bug ref / 已实现的 feature ref」清单（格式 `{ "6.20.0": { "bugs": ["{机器码}-BUG-001"], "features": ["{机器码}-REQ-001"] } }`，随主进程打包进每个构建）。发布流程：从客户端导出 issues.md（带稳定 ref）→ 修完/实现后把对应 ref 填进**本次发布版本号**键下 → 打包。应用启动时 `initIssueStore()` 调 `collectResolvedRefs(manifest, resolveAppVersion())` + `IssueDatabase.applyResolvedRefs()`：把「清单中版本 ≤ 当前版本」且仍为 open、尚未记录 `resolvedInVersion` 的条目置 done，写 `resolvedAt`/`resolvedInVersion`。**累计语义**——用户跳过中间版本升级（6.19 → 6.24）也会应用中间所有版本的清单；同一 ref 出现在多个版本时取最早修复版本。手动重新打开的条目保留 `resolvedInVersion`，同一清单不会在下次启动时再关一遍。`resolveAppVersion()` 处理了未打包 dev 运行下 `app.getVersion()` 回退到 Electron 运行时版本的问题（与 renderer 的 `resolveAppVersion` 同源，用 `src/renderer/version.json` 兜底）。面板对已销账条目显示「已在 vX 修复」Chip，导出 md 输出「修复版本: vX」；单测在 `tests/unit/issueStore.test.js` 的「版本清单」块（compareVersions/collectResolvedRefs/applyResolvedRefs）。
 
 ### 打包注意事项（2026-09-25 起：无原生依赖）
 

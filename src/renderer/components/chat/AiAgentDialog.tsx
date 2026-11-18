@@ -47,15 +47,23 @@ interface Props {
   /** Controlled panel width (persisted by the parent context provider). */
   width: number;
   onWidthChange: (width: number) => void;
+  /** Bumped by openAgentChat to force the chat view (see context docs). */
+  agentChatRequestId?: number;
 }
 
 function AiAgentDialog(props: Props) {
   const { t } = useTranslation();
-  const { open, onClose, width, onWidthChange } = props;
+  const { open, onClose, width, onWidthChange, agentChatRequestId = 0 } = props;
   const [view, setView] = useState<
     'agent' | 'kb' | 'tools' | 'skills' | 'deepseek'
   >('agent');
   const resizing = useRef(false);
+
+  useEffect(() => {
+    if (agentChatRequestId > 0) {
+      setView('agent');
+    }
+  }, [agentChatRequestId]);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -169,7 +177,7 @@ function AiAgentDialog(props: Props) {
         }}
       >
         {view === 'agent' ? (
-          <AgentPanel />
+          <AgentPanel agentChatRequestId={agentChatRequestId} />
         ) : view === 'kb' ? (
           <KnowledgeBasePanel />
         ) : view === 'tools' || view === 'skills' ? (
@@ -182,11 +190,15 @@ function AiAgentDialog(props: Props) {
         ) : view === 'deepseek' ? (
           <DeepSeekWebPanel />
         ) : (
-          <AgentPanel />
+          <AgentPanel agentChatRequestId={agentChatRequestId} />
         )}
       </Box>
     </Drawer>
   );
 }
+
+AiAgentDialog.defaultProps = {
+  agentChatRequestId: 0,
+};
 
 export default AiAgentDialog;

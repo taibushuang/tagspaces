@@ -13,7 +13,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import todoApi from './todoService';
+import todoApi, { TODO_CHANGED_EVENT } from './todoService';
 import {
   TodoCreateInput,
   TodoItem,
@@ -99,6 +99,19 @@ export function TodoListContextProvider({
       .getPath()
       .then((p) => setDataPath(p.file))
       .catch(() => {});
+  }, [refresh]);
+
+  // Agent tools mutate todos through todoService directly; listen for those
+  // mutations so the panel and badge update while the agent is working.
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+    const onTodoChanged = () => {
+      refresh();
+    };
+    window.addEventListener(TODO_CHANGED_EVENT, onTodoChanged);
+    return () => window.removeEventListener(TODO_CHANGED_EVENT, onTodoChanged);
   }, [refresh]);
 
   const createTodo = useCallback(

@@ -97,3 +97,47 @@ export function isDueToday(item: TodoItem): boolean {
 export function pendingCount(stats: { open: number; doing: number }): number {
   return stats.open + stats.doing;
 }
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/**
+ * Prompt seeded into a fresh Agent session when the user runs a todo with the
+ * agent. Uses the same i18n taxonomy as the todo UI; optional fields only
+ * appear when set, so the model gets the full task context without noise.
+ */
+export function buildTodoAgentPrompt(item: TodoItem, t: Translate): string {
+  const lines = [
+    t('core:todoAgentRunIntro'),
+    `- ${t('core:todoFieldTitle')}: ${item.title}`,
+  ];
+  const description = (item.description || '').trim();
+  if (description) {
+    lines.push(`- ${t('core:todoDescription')}: ${description}`);
+  }
+  lines.push(
+    `- ${t('core:todoStatus')}: ${t(
+      `core:todoStatus${capitalize(item.status)}`,
+    )}`,
+  );
+  lines.push(
+    `- ${t('core:todoPriority')}: ${t(
+      `core:todoPriority${capitalize(item.priority)}`,
+    )}`,
+  );
+  if (item.project) {
+    lines.push(`- ${t('core:todoProject')}: ${item.project}`);
+  }
+  if (item.tags.length > 0) {
+    lines.push(`- ${t('core:todoTags')}: ${item.tags.join(', ')}`);
+  }
+  const due = [item.dueDate, item.dueTime].filter(Boolean).join(' ');
+  if (due) {
+    lines.push(`- ${t('core:todoDueDate')}: ${due}`);
+  }
+  lines.push(t('core:todoAgentRunInstruction'));
+  return lines.join('\n');
+}

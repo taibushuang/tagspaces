@@ -1411,7 +1411,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
           origin: 'chat',
         }),
       requestExecConfirmation: (payload) =>
-        requestExecConfirmationDialog(openConfirmDialog, payload),
+        requestExecConfirmationDialog(openConfirmDialog, payload, t),
       loadTextFile: (path: string) => {
         const loc = locationForPath(path);
         if (!loc) {
@@ -1553,6 +1553,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         url: defaultAiProvider.url,
         authKey: defaultAiProvider.authKey,
         engine: defaultAiProvider.engine,
+        providerName: defaultAiProvider.name,
         model,
         messages,
         tools: buildAgentTools(),
