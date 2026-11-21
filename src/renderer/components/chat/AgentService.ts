@@ -111,6 +111,18 @@ export type AgentInterruptQueue = {
  * queued messages beyond the cap are folded into a follow-up run instead.
  */
 export const MAX_AGENT_INJECTIONS = 4;
+
+/**
+ * Strip system turns from an API transcript before persisting it as
+ * `session.apiMessages`. Every run rebuilds the system prompt fresh (location,
+ * skills and the session goal can change between runs), so the caller must
+ * splice its own new system turn in front — if the stored transcript kept the
+ * old system turn, system prompts would accumulate one per run (and with them
+ * the token cost), while the real conversation turns drown underneath.
+ */
+export function stripSystemMessages(messages: AgentMessage[]): AgentMessage[] {
+  return messages.filter((m) => m.role !== 'system');
+}
 /**
  * How many times a goal-driven run (todo session) may be nudged to keep working
  * after the model ends its turn without completing the goal. Bounded so a model
@@ -419,6 +431,15 @@ export async function runAgent(
     const toolCalls = result.toolCalls || [];
     if (toolCalls.length === 0) {
       const answer = result.content || '';
+      // The final answer MUST become part of the API transcript: it is
+      // persisted into session.apiMessages and replayed on the next run.
+      // Without this push the transcript only ever accumulates user turns,
+      // so the model never sees its own earlier replies and re-answers every
+      // previous question on each new turn (user-visible as "the agent
+      // repeats my first and second questions").
+      if (answer) {
+        conversation.push({ role: 'assistant', content: answer });
+      }
       if (canEnforceGoal && !goalCompleted && goalNudges < MAX_GOAL_NUDGES) {
         // The model ended its turn but the session goal is not done: feed its
         // answer plus an explicit goal-check turn and keep the loop alive.

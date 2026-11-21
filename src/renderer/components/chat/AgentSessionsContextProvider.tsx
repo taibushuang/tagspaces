@@ -34,6 +34,7 @@ import {
   AgentEvent,
   AgentInterruptQueue,
   runAgent,
+  stripSystemMessages,
 } from '-/components/chat/AgentService';
 import { logAgentDebug } from '-/components/chat/agentDebugLog';
 import {
@@ -883,7 +884,9 @@ export function AgentSessionsContextProvider(props: {
                 goal: activeGoal,
               }),
             },
-            ...session.apiMessages,
+            // stripSystemMessages here also heals transcripts persisted by
+            // builds before the fix, which accumulated one system turn per run.
+            ...stripSystemMessages(session.apiMessages),
             // The user's message MUST be part of the API conversation — it is
             // only appended to session.apiMessages via the run result below.
             { role: 'user', content: text },
@@ -940,7 +943,10 @@ export function AgentSessionsContextProvider(props: {
         });
         updateSession(sessionId, (s) => ({
           ...s,
-          apiMessages: result.messages,
+          // system is rebuilt fresh on every run (location/skills/goal may
+          // change), so strip the run's own copy before persisting — keeping
+          // it would accumulate one system turn per run.
+          apiMessages: stripSystemMessages(result.messages),
           goal:
             s.goal && result.goalCompleted && !s.goal.completedAt
               ? { ...s.goal, completedAt: Date.now() }

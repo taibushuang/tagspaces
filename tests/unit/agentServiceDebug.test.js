@@ -15,7 +15,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 import { afterEach, beforeEach, describe, expect, test } from '@playwright/test';
-import { runAgent } from '-/components/chat/AgentService';
+import {
+  runAgent,
+  stripSystemMessages,
+} from '-/components/chat/AgentService';
 import {
   clearAgentDebugLog,
   getAgentDebugSnapshot,
@@ -40,6 +43,109 @@ function sseResponse(frames) {
 function titles() {
   return getAgentDebugSnapshot().map((entry) => entry.title);
 }
+
+describe('runAgent transcript integrity (repeat-answer regression)', () => {
+  beforeEach(() => {
+    clearAgentDebugLog();
+  });
+
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  test('final assistant answer is part of result.messages', async () => {
+    global.fetch = async () =>
+      sseResponse([
+        'data: {"choices":[{"delta":{"content":"answer one"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ]);
+    const result = await runAgent({
+      url: 'http://mock.local/v1',
+      model: 'mock-model',
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'q1' },
+      ],
+      tools: [],
+      onEvent: () => {},
+    });
+    // Before the fix the transcript ended at the user turn: the answer only
+    // reached the chat bubble, so the next run's apiMessages had no assistant
+    // turns and the model re-answered every earlier question.
+    expect(result.messages.map((m) => m.role)).toEqual([
+      'system',
+      'user',
+      'assistant',
+    ]);
+    expect(result.messages[2].content).toBe('answer one');
+  });
+
+  test('stripSystemMessages removes accumulated system turns', () => {
+    const transcript = [
+      { role: 'system', content: 'old' },
+      { role: 'system', content: 'older' },
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'system', content: 'current' },
+    ];
+    expect(stripSystemMessages(transcript).map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+    ]);
+  });
+
+  test('multi-run transcript keeps one system turn and full Q/A pairs', async () => {
+    global.fetch = async () =>
+      sseResponse([
+        'data: {"choices":[{"delta":{"content":"answer"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ]);
+    // run 1 — provider layer: [system, user] in, transcript stored stripped
+    const run1 = await runAgent({
+      url: 'http://mock.local/v1',
+      model: 'mock-model',
+      messages: [
+        { role: 'system', content: 'sys v1' },
+        { role: 'user', content: 'q1' },
+      ],
+      tools: [],
+      onEvent: () => {},
+    });
+    const stored1 = stripSystemMessages(run1.messages);
+    expect(stored1.map((m) => m.role)).toEqual(['user', 'assistant']);
+
+    // run 2 — provider layer: fresh system + stored transcript + new question
+    const run2 = await runAgent({
+      url: 'http://mock.local/v1',
+      model: 'mock-model',
+      messages: [
+        { role: 'system', content: 'sys v2' },
+        ...stored1,
+        { role: 'user', content: 'q2' },
+      ],
+      tools: [],
+      onEvent: () => {},
+    });
+    // Exactly one system turn and both Q/A pairs survive in the transcript.
+    const roles = run2.messages.map((m) => m.role);
+    expect(roles).toEqual([
+      'system',
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+    expect(
+      run2.messages.filter((m) => m.role === 'user').map((m) => m.content),
+    ).toEqual(['q1', 'q2']);
+    expect(
+      run2.messages.filter((m) => m.role === 'assistant').map((m) => m.content),
+    ).toEqual(['answer', 'answer']);
+    expect(
+      run2.messages.filter((m) => m.role === 'system').map((m) => m.content),
+    ).toEqual(['sys v2']);
+  });
+});
 
 describe('runAgent debug log', () => {
   beforeEach(() => {
